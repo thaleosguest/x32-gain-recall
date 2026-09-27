@@ -1,0 +1,13 @@
+# Donnees utilisateur (scenes de gains, profils de routing) : ne pas publier
+x32_presets.json
+x32_presets.json.tmp
+x32_routings.json
+x32_routings.json.tmp
+*.corrompu-*
+
+# Build
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc

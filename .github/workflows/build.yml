@@ -1,0 +1,54 @@
+name: Build Windows exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # necessaire pour attacher l'exe a la release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verifier que le tag correspond a APP_VERSION
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $m = Select-String -Path x32_gain_recall.py -Pattern 'APP_VERSION = "(.+)"'
+          $v = $m.Matches[0].Groups[1].Value
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} != APP_VERSION v$v" }
+
+      - name: Installer PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Compiler
+        run: python -m PyInstaller --onefile --name X32_Gain_Recall x32_gain_recall.py
+
+      - name: Test de fumee (l'exe demarre)
+        shell: pwsh
+        run: ./dist/X32_Gain_Recall.exe --version
+
+      - name: Somme de controle SHA-256
+        shell: pwsh
+        run: (Get-FileHash dist/X32_Gain_Recall.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii dist/X32_Gain_Recall.exe.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: X32_Gain_Recall-windows
+          path: dist/X32_Gain_Recall.exe*
+
+      - name: Publier la release (tags v* uniquement)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/X32_Gain_Recall.exe
+            dist/X32_Gain_Recall.exe.sha256
