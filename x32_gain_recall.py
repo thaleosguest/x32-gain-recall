@@ -23,6 +23,7 @@ Sources du protocole : "UNOFFICIAL X32/M32 OSC REMOTE PROTOCOL" (P.-G. Maillot),
 """
 import argparse
 import json
+import math
 import os
 import random
 import socket
@@ -36,7 +37,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -88,7 +89,8 @@ def osc_decode(data):
             s, pos = _read_str(data, pos); args.append(s)
         elif t == "b":
             n = struct.unpack(">i", data[pos:pos + 4])[0]
-            pos += 4 + ((n + 3) & ~3); args.append(b"")
+            args.append(bytes(data[pos + 4:pos + 4 + n]))
+            pos += 4 + ((n + 3) & ~3)
         else:
             break
     return addr, args
@@ -129,6 +131,12 @@ class X32Client:
         self.last_recall = None
         self.undo = None
         self.error = ""
+        self.ha_map = [None] * 32      # canal -> index de headamp (/-ha/NN/index), -1 = source interne
+        self.meters_on = True
+        self.meters_lin = [0.0] * 32   # niveaux d'entree lineaires (0..1 = pleine echelle), canaux 1..32
+        self.meter_ts = 0.0            # date de la derniere trame de meters recue
+        self.meter_req_ts = 0.0
+        self.meter_variant = 0
 
     # -- etat -------------------------------------------------------------
     def _bump(self):
@@ -145,13 +153,52 @@ class X32Client:
                 "info": self.info,
                 "gains": list(self.gains),
                 "phantom": list(self.phantom),
-                "names": list(self.names),
+                "names": self._names_by_headamp(),
+                "meters_on": self.meters_on,
                 "known": sum(1 for g in self.gains if g is not None),
                 "demo": self.demo,
                 "last_recall": self.last_recall,
                 "can_undo": self.undo is not None,
                 "error": self.error,
             }
+
+    def ch_of_ha(self, idx):
+        """Canal d'entree alimente par le headamp idx (via /-ha/NN/index). Tant que la console n'a
+        repondu pour aucun canal, on suppose un patch 1:1 (headamp n = canal n+1) pour les 32 entrees locales."""
+        if all(v is None for v in self.ha_map):
+            return idx if 0 <= idx < 32 else None
+        for ch, v in enumerate(self.ha_map):
+            if v == idx:
+                return ch
+        return None
+
+    def _names_by_headamp(self):
+        out = [None] * N_HA
+        for i in range(N_HA):
+            ch = self.ch_of_ha(i)
+            if ch is not None:
+                out[i] = self.names[ch]
+        return out
+
+    def meters_snapshot(self):
+        with self.lock:
+            live = self.meters_on and self.sock is not None and (time.time() - self.meter_ts) < 1.5
+            v = [None] * N_HA
+            if live:
+                for i in range(N_HA):
+                    ch = self.ch_of_ha(i)
+                    if ch is not None:
+                        lin = self.meters_lin[ch]
+                        v[i] = round(20.0 * math.log10(lin), 1) if lin > 1e-4 else -80.0
+            return {"on": self.meters_on, "live": bool(live), "v": v}
+
+    def set_meters(self, on):
+        with self.lock:
+            self.meters_on = bool(on)
+            self.meter_ts = 0.0
+            self._bump()
+        if on:
+            self._send_meters_request()
 
     # -- connexion --------------------------------------------------------
     def connect(self, ip, port=X32_PORT):
@@ -173,6 +220,10 @@ class X32Client:
             self.gains = [None] * N_HA
             self.phantom = [None] * N_HA
             self.names = [None] * 32
+            self.ha_map = [None] * 32
+            self.meters_lin = [0.0] * 32
+            self.meter_ts = 0.0
+            self.meter_variant = 0
             self.info = {}
             self._bump()
         threading.Thread(target=self._rx_loop, args=(s, gen), daemon=True).start()
@@ -221,7 +272,24 @@ class X32Client:
             self.last_rx = time.time()
             self._handle(addr, args)
 
+    def _parse_meters(self, args):
+        # /meters/1 : blob = <nb de floats : int32 little-endian> puis <floats little-endian>
+        # 96 valeurs : 32 entrees (niveau lineaire), 32 reductions de gate, 32 reductions de comp.
+        try:
+            blob = args[0]
+            n = struct.unpack("<i", blob[:4])[0]
+            if n < 32 or len(blob) < 4 + 4 * n:
+                return
+            vals = struct.unpack("<%df" % n, blob[4:4 + 4 * n])
+        except Exception:
+            return
+        self.meters_lin = [max(0.0, float(x)) for x in vals[:32]]
+        self.meter_ts = time.time()
+
     def _handle(self, addr, args):
+        if addr == "/meters/1" and args and isinstance(args[0], (bytes, bytearray)):
+            self._parse_meters(args)
+            return
         with self.lock:
             if addr.startswith("/headamp/") and args:
                 parts = addr.split("/")
@@ -242,6 +310,13 @@ class X32Client:
                     return
                 if 0 <= n < 32:
                     self.names[n] = str(args[0]).strip() or None; self._bump()
+            elif addr.startswith("/-ha/") and addr.endswith("/index") and args and isinstance(args[0], int):
+                try:
+                    n = int(addr.split("/")[2])
+                except ValueError:
+                    return
+                if 0 <= n < 32:
+                    self.ha_map[n] = args[0]; self._bump()
             elif addr == "/xinfo" and len(args) >= 4:
                 self.info = {"ip": args[0], "name": args[1], "model": args[2], "fw": args[3]}; self._bump()
             elif addr == "/info" and len(args) >= 4 and not self.info:
@@ -252,10 +327,28 @@ class X32Client:
         while self.gen == gen:
             self._send("/xremote")
             self._send("/info")
-            for _ in range(10):
+            self._send_meters_request()
+            for k in range(10):
                 if self.gen != gen:
                     return
                 time.sleep(0.5)
+                if self.gen != gen:
+                    return
+                # pas de trame de meters apres ~1,5 s : on essaie l'autre variante de requete
+                if k == 3 and self.meters_on and self.last_rx > 0 and self.meter_ts < self.meter_req_ts:
+                    self.meter_variant = (self.meter_variant + 1) % 2
+                    self._send_meters_request()
+
+    def _send_meters_request(self):
+        """/meters/1 : 32 entrees + reductions gate/comp. La console envoie ~200 trames en 10 s : on renouvelle
+        toutes les 5 s. Le format exact de la requete est reconstitue d'apres la doc (2 variantes essayees)."""
+        if not self.meters_on or not self.sock:
+            return
+        self.meter_req_ts = time.time()
+        if self.meter_variant == 0:
+            self._send("/meters", "/meters/1", 0, 0, 1)
+        else:
+            self._send("/meters", "/meters/1")
 
     def _initial_sync(self, gen):
         self._send("/xinfo")
@@ -284,6 +377,8 @@ class X32Client:
                 return
             if not only_missing or self.names[n - 1] is None:
                 self._send("/ch/%02d/config/name" % n)
+            if not only_missing or self.ha_map[n - 1] is None:
+                self._send("/-ha/%02d/index" % (n - 1))
             time.sleep(0.003)
 
     # -- commandes --------------------------------------------------------
@@ -394,12 +489,37 @@ class X32Sim(threading.Thread):
         super().__init__(daemon=True)
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("127.0.0.1", port))
-        self.sock.settimeout(0.5)
+        self.sock.settimeout(0.05)
+        self.meter_clients = {}
+        self.t0 = time.time()
         rnd = random.Random(32)
         self.gain = [quantize(rnd.uniform(8, 42)) for _ in range(N_HA)]
         self.phantom = [1 if i in (6, 7, 11) else 0 for i in range(N_HA)]
         self.names = {i + 1: n for i, n in enumerate(self.NAMES)}
         self.stop = False
+
+    def _meter_tick(self):
+        now = time.time()
+        for peer, st in list(self.meter_clients.items()):
+            if now > st[0]:
+                del self.meter_clients[peer]
+                continue
+            if now < st[2]:
+                continue
+            st[2] = now + 0.05 * st[1]
+            t = now - self.t0
+            vals = []
+            for c in range(32):
+                amp = 0.05 * (1.0 + (c % 5)) if c < 16 else 0.0004
+                v = amp * 10 ** ((self.gain[c] - 20.0) / 20.0) * (0.55 + 0.45 * abs(math.sin(t * (2.0 + c * 0.37))))
+                vals.append(min(v, 8.0))
+            vals += [0.0] * 64
+            blob = struct.pack("<i", len(vals)) + struct.pack("<%df" % len(vals), *vals)
+            pkt = _pad(b"/meters/1") + _pad(b",b") + struct.pack(">i", len(blob)) + blob
+            try:
+                self.sock.sendto(pkt, peer)
+            except OSError:
+                pass
 
     def run(self):
         while not self.stop:
@@ -407,13 +527,23 @@ class X32Sim(threading.Thread):
                 data, peer = self.sock.recvfrom(4096)
                 a, args = osc_decode(data)
             except socket.timeout:
+                self._meter_tick()
                 continue
             except OSError:
                 continue
             except Exception:
                 continue
+            self._meter_tick()
             send = lambda *m: self.sock.sendto(osc_encode(*m), peer)
-            if a == "/info":
+            if a == "/meters" and args and args[0] == "/meters/1":
+                tf = args[3] if len(args) >= 4 and isinstance(args[3], int) and 1 <= args[3] <= 99 else 1
+                self.meter_clients[peer] = [time.time() + 10, tf, 0.0]
+            elif a.startswith("/-ha/") and a.endswith("/index") and not args:
+                try:
+                    send(a, int(a.split("/")[2]))
+                except ValueError:
+                    pass
+            elif a == "/info":
                 send("/info", "V2.05", "osc-server", "X32", "4.06")
             elif a == "/xinfo":
                 send("/xinfo", "127.0.0.1", "X32-SIMULATEUR", "X32", "4.06")
@@ -595,6 +725,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
         elif path == "/api/state":
             self._json(CLIENT.snapshot())
+        elif path == "/api/meters":
+            self._json(CLIENT.meters_snapshot())
         elif path == "/api/presets":
             self._json({"presets": STORE.all(), "path": STORE.path})
         elif path == "/api/export":
@@ -653,6 +785,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/disconnect":
             CLIENT.disconnect()
+            return self._json({"ok": True})
+        if p == "/api/meters":
+            CLIENT.set_meters(bool(d.get("on")))
             return self._json({"ok": True})
         if p == "/api/refresh":
             threading.Thread(target=CLIENT.request_all, daemon=True).start()
@@ -743,7 +878,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .strip .ph{margin:5px 5px 3px;height:26px;background:#25282b;border:1px solid var(--line2);border-radius:4px;font-weight:700;color:#aeb6bd}
 .strip .ph.on{background:var(--blue);color:#001a2a;border-color:var(--blue)}
 .strip .ph:disabled{opacity:.35}
-.bar{position:relative;flex:1;margin:3px 10px;background:#000;border:1px solid #222;border-radius:3px;cursor:ns-resize;min-height:80px;touch-action:none}
+.bw{display:flex;flex:1;gap:3px;margin:3px 8px;min-height:80px}
+.bar{position:relative;flex:1;background:#000;border:1px solid #222;border-radius:3px;cursor:ns-resize;touch-action:none}
+.vu{position:relative;width:7px;background:#050606;border:1px solid #1f2224;border-radius:2px;overflow:hidden;opacity:.8}
+.vu .lv{position:absolute;inset:0;clip-path:inset(100% 0 0 0);
+  background:linear-gradient(to top,#1fa35a 0%,#1fa35a 68%,#d3ae3a 76%,#d3ae3a 90%,#e5483b 92%,#e5483b 100%)}
+.vu .pk{position:absolute;left:0;right:0;height:2px;background:#e9edf0;display:none;transform:translateY(1px)}
+.vu.clip{border-color:var(--warn);box-shadow:0 0 5px #ff5b4d99}
+.strip.na .vu{opacity:.25}
 .bar .fill{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(#17c4cc,var(--teal-d));opacity:.85}
 .bar .zero{position:absolute;left:0;right:0;height:1px;background:#ffffff55}
 .bar .tgt{position:absolute;left:-6px;right:-6px;height:0;border-top:2px solid var(--amber);display:none;pointer-events:none}
@@ -816,6 +958,7 @@ select.inp{padding:6px}
     <button class="pill on" id="bconn">Connecter</button>
     <button class="pill" id="bdemo" title="Simulateur de X32 en local pour essayer l'appli sans console">D&eacute;mo</button>
     <button class="mini" id="bref" title="Relire tous les gains depuis la console">&#8635; Relire</button>
+    <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
     <div class="logo">X32 GAIN RECALL<small>OSC &middot; UDP 10023</small></div>
@@ -898,7 +1041,8 @@ function buildStrips(){
     const i=BANKS[bank][1]+k;
     const el=document.createElement("div");el.className="strip na";el.dataset.i=i;
     el.innerHTML=`<div class="hd"></div><button class="ph" title="Alimentation fantôme +48 V">48V</button>
-      <div class="bar"><div class="fill"></div><div class="zero"></div><div class="tgt"></div></div>
+      <div class="bw"><div class="bar"><div class="fill"></div><div class="zero"></div><div class="tgt"></div></div>
+      <div class="vu" title="Niveau d'entrée après préampli (dBFS) · vert jusqu'à −18, ambre jusqu'à −6, rouge au-delà"><i class="lv"></i><b class="pk"></b></div></div>
       <div class="kn">${knobSVG()}</div><input class="val" value="—" spellcheck="false">
       <div class="step"><button data-d="-0.5">&minus;</button><button data-d="0.5">+</button></div>
       <div class="dl"></div><div class="ft">${label(i)}</div>`;
@@ -958,7 +1102,7 @@ function updateStrip(i){
   const el=document.querySelector(`.strip[data-i="${i}"]`);if(!el)return;
   const v=cur(i),known=v!==null;
   el.classList.toggle("na",!known);
-  const nm=i<32?(S.names[i]||"Ch "+(i+1)):(i<80?"AES50-A "+(i-31):"AES50-B "+(i-79));
+  const nm=S.names[i]||(i<32?"Ch "+(i+1):(i<80?"AES50-A "+(i-31):"AES50-B "+(i-79)));
   el.querySelector(".hd").textContent=nm;el.querySelector(".hd").title=nm;
   const val=el.querySelector(".val");if(document.activeElement!==val)val.value=known?fmt(v):"—";
   const p=known?(v-GMIN)/(GMAX-GMIN):0;
@@ -982,6 +1126,7 @@ function update(){
   $("#bconn").textContent=(S.connected||S.trying)?"Déconnecter":"Connecter";
   $("#bconn").className="pill"+((S.connected||S.trying)?"":" on");
   ["#bref"].forEach(s=>$(s).disabled=!S.connected);
+  $("#bvu").classList.toggle("act",!!S.meters_on);
   const w=$("#welcome");
   if(S.connected){w.style.display="none";}
   else{w.style.display="block";w.innerHTML=S.trying?"<b>Connexion en cours…</b><br>En attente d'une réponse de la console sur "+esc(S.ip)+" (UDP 10023). Si rien n'arrive : vérifiez l'IP (X32 : Setup → Network), que le PC est sur le même réseau/sous-réseau, et le pare-feu Windows."
@@ -994,7 +1139,7 @@ function renderStatus(){
   let r="";const lr=S.last_recall;
   if(lr){r=` · Dernier rappel « ${esc(lr.name)} » : ${lr.sent_gain} gains`+(lr.sent_phantom?`, ${lr.sent_phantom} 48V`:"")+" envoyés — "+
     (lr.verified===null?"vérification…":(lr.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${lr.bad.length} écart(s) à la relecture : ${lr.bad.slice(0,8).map(label).join(", ")}</b>`));}
-  $("#status").innerHTML=c+r+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span>';
+  $("#status").innerHTML=c+r+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span>';
 }
 
 /* ---------- scenes ---------- */
@@ -1058,15 +1203,43 @@ $("#bconn").onclick=()=>{
 $("#ip").addEventListener("keydown",e=>{if(e.key==="Enter")$("#bconn").click();});
 $("#bdemo").onclick=()=>{$("#ip").value="127.0.0.1";api("/api/demo",{}).then(r=>{if(!r.ok)toast(r.error,"err");});};
 $("#bref").onclick=()=>{api("/api/refresh",{});toast("Relecture des gains…");};
+$("#bvu").onclick=()=>api("/api/meters",{on:!S.meters_on});
 $("#block").onclick=()=>{locked=!locked;document.body.classList.toggle("locked",locked);$("#block").classList.toggle("act",locked);
   $("#block").innerHTML=locked?"&#128274; Verrouillé":"&#128274; Verrou";update();};
+
+/* ---------- vumetre (poll leger ~16 Hz, attaque instantanee, retombee 24 dB/s, crete 1,2 s) ---------- */
+const VU={};let vuDead=false,lastLive=performance.now();
+function drawMeters(m){
+  const now=performance.now(),pc=x=>Math.max(0,Math.min(1,(x+60)/60))*100;
+  document.querySelectorAll(".strip").forEach(el=>{
+    const i=+el.dataset.i,lv=el.querySelector(".lv"),pk=el.querySelector(".pk"),vu=el.querySelector(".vu");
+    const v=(m&&m.live)?m.v[i]:null;
+    if(v===null||v===undefined){lv.style.clipPath="inset(100% 0 0 0)";pk.style.display="none";vu.classList.remove("clip");delete VU[i];return;}
+    const st=VU[i]||(VU[i]={lvl:v,pk:v,pt:now,t:now});
+    const dt=Math.min(0.5,(now-st.t)/1000);st.t=now;
+    st.lvl=v>=st.lvl?v:Math.max(v,st.lvl-24*dt);
+    if(v>=st.pk){st.pk=v;st.pt=now;}else if(now-st.pt>1200){st.pk=Math.max(v,st.pk-30*dt);}
+    lv.style.clipPath="inset("+(100-pc(st.lvl))+"% 0 0 0)";
+    pk.style.display="block";pk.style.bottom=pc(st.pk)+"%";
+    vu.classList.toggle("clip",st.pk>-1);
+  });
+}
+async function meterLoop(){
+  const active=S.connected&&S.meters_on;let m=null;
+  if(active){try{m=await api("/api/meters");}catch(_){}}
+  const now=performance.now();
+  if(!active||(m&&m.live))lastLive=now;
+  const dead=active&&now-lastLive>4000;if(dead!==vuDead){vuDead=dead;renderStatus();}
+  drawMeters(m);
+  setTimeout(meterLoop,active?60:300);
+}
 
 /* ---------- init ---------- */
 (function(){
   const b=$("#banks");BANKS.forEach((x,n)=>{const e=document.createElement("button");e.className="bank";e.textContent=x[0].replace("AES50-","");
     e.title=x[0];e.onclick=()=>{bank=n;buildStrips();};b.appendChild(e);});
   try{const ip=localStorage.getItem("x32ip");if(ip)$("#ip").value=ip;}catch(_){}
-  buildStrips();loadPresets();
+  buildStrips();loadPresets();meterLoop();
   let rev=-1;
   async function poll(){
     try{const s=await api("/api/state");
