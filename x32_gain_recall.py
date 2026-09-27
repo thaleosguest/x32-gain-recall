@@ -26,6 +26,7 @@ import json
 import math
 import os
 import random
+import re
 import socket
 import struct
 import sys
@@ -37,7 +38,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -111,6 +112,230 @@ def quantize(db):
 
 
 # --------------------------------------------------------------------------
+#  Routing : lecture d'un fichier .scn, description lisible, ecriture par "nodes" OSC
+# --------------------------------------------------------------------------
+ROUTING_GROUPS = {"io": "Routing E/S (blocs + patchs utilisateur)", "out": "Patch de sortie console (/outputs)"}
+SEED_SCN = r'''#4.0# "Routing LV1" "" %000000000 1
+/config/userrout/out 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+/config/userrout/in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48
+/config/routing REC
+/config/routing/IN UIN1-8 UIN9-16 UIN17-24 UIN25-32 UIN1-6
+/config/routing/AES50A UOUT1-8 UOUT9-16 UOUT17-24 UOUT25-32 UOUT33-40 UOUT41-48
+/config/routing/AES50B A17-24 A25-32 A17-24 OUT9-16 P161-8 P169-16
+/config/routing/CARD UIN1-8 UIN9-16 UIN17-24 UIN25-32
+/config/routing/OUT UOUT1-4 UOUT5-8 UOUT9-12 UOUT13-16
+/config/routing/PLAY CARD1-8 CARD9-16 CARD17-24 CARD25-32 AUX1-4
+/outputs/main/01 4 POST OFF
+/outputs/main/01/delay OFF 0.3
+/outputs/main/02 5 POST OFF
+/outputs/main/02/delay OFF 0.3
+/outputs/main/03 6 POST OFF
+/outputs/main/03/delay OFF 0.3
+/outputs/main/04 7 POST OFF
+/outputs/main/04/delay OFF 0.3
+/outputs/main/05 8 POST OFF
+/outputs/main/05/delay OFF 0.3
+/outputs/main/06 9 POST OFF
+/outputs/main/06/delay OFF 0.3
+/outputs/main/07 10 POST OFF
+/outputs/main/07/delay OFF 0.3
+/outputs/main/08 11 POST OFF
+/outputs/main/08/delay OFF 0.3
+/outputs/main/09 12 POST OFF
+/outputs/main/09/delay OFF 0.3
+/outputs/main/10 13 POST OFF
+/outputs/main/10/delay OFF 0.3
+/outputs/main/11 14 POST OFF
+/outputs/main/11/delay OFF 0.3
+/outputs/main/12 15 POST OFF
+/outputs/main/12/delay OFF 0.3
+/outputs/main/13 16 POST OFF
+/outputs/main/13/delay OFF 0.3
+/outputs/main/14 17 POST OFF
+/outputs/main/14/delay OFF 0.3
+/outputs/main/15 18 POST OFF
+/outputs/main/15/delay OFF 0.3
+/outputs/main/16 19 POST OFF
+/outputs/main/16/delay OFF 0.3
+/outputs/aux/01 0 POST OFF
+/outputs/aux/02 0 POST OFF
+/outputs/aux/03 0 POST OFF
+/outputs/aux/04 0 POST OFF
+/outputs/aux/05 54 IN/LC+M OFF
+/outputs/aux/06 55 IN/LC+M OFF
+/outputs/p16/01 26 <-EQ OFF
+/outputs/p16/01/iQ OFF none Linear 0
+/outputs/p16/02 27 <-EQ OFF
+/outputs/p16/02/iQ OFF none Linear 0
+/outputs/p16/03 28 <-EQ OFF
+/outputs/p16/03/iQ OFF none Linear 0
+/outputs/p16/04 29 <-EQ OFF
+/outputs/p16/04/iQ OFF none Linear 0
+/outputs/p16/05 30 <-EQ OFF
+/outputs/p16/05/iQ OFF none Linear 0
+/outputs/p16/06 31 <-EQ OFF
+/outputs/p16/06/iQ OFF none Linear 0
+/outputs/p16/07 32 <-EQ OFF
+/outputs/p16/07/iQ OFF none Linear 0
+/outputs/p16/08 33 <-EQ OFF
+/outputs/p16/08/iQ OFF none Linear 0
+/outputs/p16/09 34 <-EQ OFF
+/outputs/p16/09/iQ OFF none Linear 0
+/outputs/p16/10 35 <-EQ OFF
+/outputs/p16/10/iQ OFF none Linear 0
+/outputs/p16/11 36 <-EQ OFF
+/outputs/p16/11/iQ OFF none Linear 0
+/outputs/p16/12 37 <-EQ OFF
+/outputs/p16/12/iQ OFF none Linear 0
+/outputs/p16/13 38 <-EQ OFF
+/outputs/p16/13/iQ OFF none Linear 0
+/outputs/p16/14 39 <-EQ OFF
+/outputs/p16/14/iQ OFF none Linear 0
+/outputs/p16/15 40 <-EQ OFF
+/outputs/p16/15/iQ OFF none Linear 0
+/outputs/p16/16 41 <-EQ OFF
+/outputs/p16/16/iQ OFF none Linear 0
+/outputs/aes/01 1 POST OFF
+/outputs/aes/02 2 POST OFF
+/outputs/rec/01 1 <-EQ
+/outputs/rec/02 2 <-EQ'''
+
+
+def norm_val(v):
+    return " ".join(str(v).split())
+
+
+def same_val(a, b):
+    return a is not None and b is not None and norm_val(a).lower() == norm_val(b).lower()
+
+
+def parse_scn(text):
+    """Extrait d'une scene X32 (.scn) uniquement les lignes de routing. Renvoie (nom, version, {groupe: {chemin: valeurs}})."""
+    name, fw = None, None
+    nodes = {"io": {}, "out": {}}
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("#") and name is None:
+            m = re.match(r'^#([\d.]+)#\s+"([^"]*)"', line)
+            if m:
+                fw, name = m.group(1), m.group(2)
+            continue
+        if not line.startswith("/"):
+            continue
+        parts = line.split(None, 1)
+        path, val = parts[0], (norm_val(parts[1]) if len(parts) > 1 else "")
+        if path.startswith("/config/routing") or path.startswith("/config/userrout"):
+            nodes["io"][path] = val
+        elif path.startswith("/outputs/"):
+            nodes["out"][path] = val
+    return name, fw, nodes
+
+
+def _user_name(v, kind):
+    if v == 0:
+        return "OFF"
+    if 1 <= v <= 32:
+        return "Local In %d" % v
+    if 33 <= v <= 80:
+        return "AES50-A %d" % (v - 32)
+    if 81 <= v <= 128:
+        return "AES50-B %d" % (v - 80)
+    if 129 <= v <= 160:
+        return "Carte In %d" % (v - 128)
+    if 161 <= v <= 166:
+        return "Aux In %d" % (v - 160)
+    if v == 167:
+        return "Talkback int."
+    if v == 168:
+        return "Talkback ext."
+    if kind == "out":
+        if 169 <= v <= 184:
+            return "Sortie console %d" % (v - 168)
+        if 185 <= v <= 200:
+            return "P16 %d" % (v - 184)
+        if 201 <= v <= 206:
+            return "Aux %d" % (v - 200)
+        if v == 207:
+            return "Monitor L"
+        if v == 208:
+            return "Monitor R"
+    return "?%d" % v
+
+
+def _split_num(name):
+    m = re.match(r"^(.*?)(\d+)$", name)
+    return (m.group(1), int(m.group(2))) if m else (name, None)
+
+
+def compress(names):
+    out, i, n = [], 0, len(names)
+    while i < n:
+        pre, num = _split_num(names[i])
+        j = i
+        if num is not None:
+            while j + 1 < n:
+                p2, n2 = _split_num(names[j + 1])
+                if p2 == pre and n2 is not None and n2 == _split_num(names[j])[1] + 1:
+                    j += 1
+                else:
+                    break
+            label = names[i] if j == i else "%s%d–%d" % (pre, num, _split_num(names[j])[1])
+        else:
+            while j + 1 < n and names[j + 1] == names[i]:
+                j += 1
+            label = names[i]
+        out.append({"a": i + 1, "b": j + 1, "src": label})
+        i = j + 1
+    return out
+
+
+_BLOCKS = {"IN": ["1-8", "9-16", "17-24", "25-32", "AUX"],
+           "AES50A": ["1-8", "9-16", "17-24", "25-32", "33-40", "41-48"],
+           "AES50B": ["1-8", "9-16", "17-24", "25-32", "33-40", "41-48"],
+           "CARD": ["1-8", "9-16", "17-24", "25-32"],
+           "OUT": ["1-4", "5-8", "9-12", "13-16"]}
+_LAB = {"CARD": "Carte In ", "OUT": "Sortie console ", "P16": "P16 ", "AUX": "Aux ", "AN": "Local In ", "A": "AES50-A ", "B": "AES50-B "}
+
+
+def _tok_names(tok, count, uin, uout):
+    m = re.match(r"^(UOUT|UIN|CARD|OUT|P16|AUX|AN|A|B)(\d+)-(\d+)", tok)
+    if not m:
+        return [tok] * count
+    pre, a, b = m.group(1), int(m.group(2)), int(m.group(3))
+    nums = list(range(a, b + 1))[:count]
+    if pre == "UOUT":
+        return [uout[k - 1] if 0 < k <= len(uout) else "?" for k in nums]
+    if pre == "UIN":
+        return [uin[k - 1] if 0 < k <= len(uin) else "?" for k in nums]
+    return [_LAB[pre] + str(k) for k in nums]
+
+
+def describe_routing(io):
+    """Description lisible du routing : qui alimente quoi (patchs utilisateur + blocs)."""
+    def ints(path):
+        try:
+            return [int(x) for x in io.get(path, "").split()]
+        except ValueError:
+            return []
+    uin_raw, uout_raw = ints("/config/userrout/in"), ints("/config/userrout/out")
+    uin = [_user_name(v, "in") for v in uin_raw]
+    uout = [_user_name(v, "out") for v in uout_raw]
+    d = {"mode": io.get("/config/routing", ""), "userin": compress(uin) if uin else [], "userout": compress(uout) if uout else [], "ports": {}}
+    for port, labels in _BLOCKS.items():
+        toks = io.get("/config/routing/" + port, "").split()
+        if len(toks) < len(labels):
+            continue
+        names = []
+        for tok, lab in zip(toks, labels):
+            cnt = 6 if lab == "AUX" else (int(lab.split("-")[1]) - int(lab.split("-")[0]) + 1)
+            names += _tok_names(tok, cnt, uin, uout)
+        d["ports"][port] = compress(names)
+    return d
+
+
+# --------------------------------------------------------------------------
 #  Client X32
 # --------------------------------------------------------------------------
 class X32Client:
@@ -137,6 +362,9 @@ class X32Client:
         self.meter_ts = 0.0            # date de la derniere trame de meters recue
         self.meter_req_ts = 0.0
         self.meter_variant = 0
+        self.node_cache = {}           # chemin -> valeurs (reponses /node)
+        self.routing_last = None
+        self.routing_undo = None
 
     # -- etat -------------------------------------------------------------
     def _bump(self):
@@ -155,6 +383,8 @@ class X32Client:
                 "phantom": list(self.phantom),
                 "names": self._names_by_headamp(),
                 "meters_on": self.meters_on,
+                "routing_last": self.routing_last,
+                "routing_can_undo": self.routing_undo is not None,
                 "known": sum(1 for g in self.gains if g is not None),
                 "demo": self.demo,
                 "last_recall": self.last_recall,
@@ -287,6 +517,11 @@ class X32Client:
         self.meter_ts = time.time()
 
     def _handle(self, addr, args):
+        if addr in ("node", "/node") and args and isinstance(args[0], str):
+            parts = args[0].strip().split(None, 1)
+            if parts:
+                self.node_cache[parts[0]] = norm_val(parts[1]) if len(parts) > 1 else ""
+            return
         if addr == "/meters/1" and args and isinstance(args[0], (bytes, bytearray)):
             self._parse_meters(args)
             return
@@ -380,6 +615,69 @@ class X32Client:
             if not only_missing or self.ha_map[n - 1] is None:
                 self._send("/-ha/%02d/index" % (n - 1))
             time.sleep(0.003)
+
+    # -- routing (nodes X32 : /node pour lire, / pour ecrire) ---------------
+    def get_nodes(self, paths, timeout=2.0):
+        for p in paths:
+            self.node_cache.pop(p, None)
+        t0 = time.time()
+        sent = 0.0
+        while time.time() - t0 < timeout:
+            if time.time() - sent > 0.7:      # (re)demande ce qui manque : UDP peut perdre des paquets
+                for p in paths:
+                    if p not in self.node_cache:
+                        self._send("/node", p.lstrip("/"))
+                        time.sleep(0.004)
+                sent = time.time()
+            if all(p in self.node_cache for p in paths):
+                break
+            time.sleep(0.05)
+        return {p: self.node_cache.get(p) for p in paths}
+
+    def routing_diff(self, nodes):
+        cur = self.get_nodes(list(nodes))
+        rows = [{"path": p, "current": cur[p], "target": v, "same": same_val(cur[p], v)} for p, v in nodes.items()]
+        return rows
+
+    def apply_routing(self, nodes, label=""):
+        rows = self.routing_diff(nodes)
+        changed = [r for r in rows if not r["same"]]
+        if changed:  # une application "a vide" ne doit pas ecraser le point d'annulation precedent
+            with self.lock:
+                self.routing_undo = {"label": label, "lines": {r["path"]: r["current"] for r in changed if r["current"] is not None}}
+        for r in changed:
+            self._send("/", "%s %s" % (r["path"], r["target"]))
+            time.sleep(0.03)
+        res = {"t": time.time(), "name": label, "sent": len(changed), "total": len(rows),
+               "unreadable": [r["path"] for r in changed if r["current"] is None], "verified": None, "bad": []}
+        self.routing_last = res
+        self._bump()
+        threading.Thread(target=self._verify_routing, args=(res, {r["path"]: r["target"] for r in changed}), daemon=True).start()
+        return res
+
+    def _verify_routing(self, res, targets):
+        time.sleep(0.6)
+        new = self.get_nodes(list(targets))
+        with self.lock:
+            res["bad"] = [p for p, v in targets.items() if not same_val(new.get(p), v)]
+            res["verified"] = len(res["bad"]) == 0
+            self._bump()
+
+    def undo_routing(self):
+        with self.lock:
+            u, self.routing_undo = self.routing_undo, None
+        if not u or not u["lines"]:
+            return False
+        for p, v in u["lines"].items():
+            self._send("/", "%s %s" % (p, v))
+            time.sleep(0.03)
+        with self.lock:
+            self.routing_last = {"t": time.time(), "name": "Annulation : " + u["label"], "sent": len(u["lines"]),
+                                 "total": len(u["lines"]), "unreadable": [], "verified": None, "bad": []}
+            self._bump()
+        res = self.routing_last
+        threading.Thread(target=self._verify_routing, args=(res, dict(u["lines"])), daemon=True).start()
+        return True
 
     # -- commandes --------------------------------------------------------
     def set_gain(self, idx, db):
@@ -497,6 +795,20 @@ class X32Sim(threading.Thread):
         self.phantom = [1 if i in (6, 7, 11) else 0 for i in range(N_HA)]
         self.names = {i + 1: n for i, n in enumerate(self.NAMES)}
         self.stop = False
+        # etat "usine" du routing (different du profil LV1) + patch de sortie
+        _n = parse_scn(SEED_SCN)[2]
+        self.nodes = dict(_n["out"])
+        self.nodes.update({
+            "/config/routing": "REC",
+            "/config/routing/IN": "AN1-8 AN9-16 A1-8 A9-16 AN1-6",
+            "/config/routing/AES50A": "OUT1-8 OUT9-16 A17-24 A25-32 A33-40 A41-48",
+            "/config/routing/AES50B": "B1-8 B9-16 B17-24 B25-32 B33-40 B41-48",
+            "/config/routing/CARD": "CARD1-8 CARD9-16 CARD17-24 CARD25-32",
+            "/config/routing/OUT": "OUT1-4 OUT5-8 OUT9-12 OUT13-16",
+            "/config/routing/PLAY": "AN1-8 AN9-16 AN17-24 AN25-32 AUX1-4",
+            "/config/userrout/in": " ".join(str(i) for i in range(1, 33)),
+            "/config/userrout/out": " ".join(["0"] * 48)})
+        self.node_log = []
 
     def _meter_tick(self):
         now = time.time()
@@ -535,7 +847,16 @@ class X32Sim(threading.Thread):
                 continue
             self._meter_tick()
             send = lambda *m: self.sock.sendto(osc_encode(*m), peer)
-            if a == "/meters" and args and args[0] == "/meters/1":
+            if a == "/" and args and isinstance(args[0], str):
+                parts = args[0].strip().split(None, 1)
+                if parts and parts[0] in self.nodes:
+                    self.nodes[parts[0]] = norm_val(parts[1]) if len(parts) > 1 else ""
+                    self.node_log.append(parts[0])
+            elif a == "/node" and args and isinstance(args[0], str):
+                path = "/" + args[0].lstrip("/")
+                if path in self.nodes:
+                    send("node", "%s %s\n" % (path, self.nodes[path]))
+            elif a == "/meters" and args and args[0] == "/meters/1":
                 tf = args[3] if len(args) >= 4 and isinstance(args[3], int) and 1 <= args[3] <= 99 else 1
                 self.meter_clients[peer] = [time.time() + 10, tf, 0.0]
             elif a.startswith("/-ha/") and a.endswith("/index") and not args:
@@ -672,11 +993,86 @@ class PresetStore:
         return added
 
 
+class RoutingStore:
+    """Profils de routing (extraits de scenes .scn), stockes en JSON. Un profil integre 'Routing LV1' est cree au 1er lancement."""
+
+    def __init__(self, path):
+        self.path = path
+        self.lock = threading.RLock()
+        self.items, self.seeded = [], False
+        self.load()
+        if not self.seeded:
+            name, fw, nodes = parse_scn(SEED_SCN)
+            self._add(name or "Routing LV1", fw, nodes, "intégré (Routing_LV1.scn)")
+            self.seeded = True
+            self._write()
+
+    def load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            self.items, self.seeded = d.get("profiles", []), bool(d.get("seeded"))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            try:
+                os.replace(self.path, self.path + ".corrompu-" + datetime.now().strftime("%Y%m%d-%H%M%S"))
+            except OSError:
+                pass
+
+    def _write(self):
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"version": 1, "seeded": self.seeded, "profiles": self.items}, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, self.path)
+
+    def _add(self, name, fw, nodes, source):
+        pr = {"id": uuid.uuid4().hex[:12], "name": name[:60], "created": datetime.now().isoformat(timespec="seconds"),
+              "source": source, "fw": fw, "nodes": nodes}
+        self.items.append(pr)
+        return pr
+
+    def add(self, name, fw, nodes, source):
+        with self.lock:
+            pr = self._add(name, fw, nodes, source)
+            self._write()
+            return pr
+
+    def get(self, pid):
+        with self.lock:
+            return next((json.loads(json.dumps(x)) for x in self.items if x["id"] == pid), None)
+
+    def summaries(self):
+        with self.lock:
+            return [{"id": x["id"], "name": x["name"], "created": x["created"], "source": x.get("source", ""), "fw": x.get("fw"),
+                     "counts": {g: len(x["nodes"].get(g, {})) for g in ROUTING_GROUPS},
+                     "desc": describe_routing(x["nodes"].get("io", {}))} for x in self.items]
+
+    def rename(self, pid, name):
+        with self.lock:
+            for x in self.items:
+                if x["id"] == pid:
+                    x["name"] = name
+                    self._write()
+                    return True
+        return False
+
+    def delete(self, pid):
+        with self.lock:
+            n = len(self.items)
+            self.items = [x for x in self.items if x["id"] != pid]
+            if len(self.items) != n:
+                self._write()
+                return True
+        return False
+
+
 # --------------------------------------------------------------------------
 #  Serveur HTTP local + API
 # --------------------------------------------------------------------------
 CLIENT = X32Client()
 STORE = None
+ROUTINGS = None
 SIM = None
 ALLOWED_HOSTS = set()
 
@@ -727,6 +1123,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(CLIENT.snapshot())
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
+        elif path == "/api/routings":
+            self._json({"profiles": ROUTINGS.summaries(), "groups": ROUTING_GROUPS, "path": ROUTINGS.path})
         elif path == "/api/presets":
             self._json({"presets": STORE.all(), "path": STORE.path})
         elif path == "/api/export":
@@ -755,6 +1153,46 @@ class Handler(BaseHTTPRequestHandler):
             self._route(self.path.split("?")[0], d)
         except (KeyError, ValueError, TypeError) as e:
             self._json({"error": "requete invalide : %s" % e}, 400)
+
+    def _routing_nodes(self, d):
+        pr = ROUTINGS.get(d["id"])
+        if not pr:
+            return None, None
+        groups = [g for g in d.get("groups", ["io"]) if g in ROUTING_GROUPS]
+        nodes = {}
+        for g in groups:
+            nodes.update(pr["nodes"].get(g, {}))
+        return pr, nodes
+
+    def _routing_route(self, p, d):
+        if p == "/api/routings/import":
+            name, fw, nodes = parse_scn(str(d.get("text", "")))
+            if not nodes["io"]:
+                return self._json({"ok": False, "error": "Aucune ligne de routing (/config/routing, /config/userrout) trouvee : est-ce bien une scene X32 (.scn) ?"})
+            fname = os.path.splitext(str(d.get("filename", "")))[0]
+            pr = ROUTINGS.add(name or fname or "Routing importe", fw, nodes, "import : %s" % (d.get("filename") or "?"))
+            return self._json({"ok": True, "id": pr["id"], "io": len(nodes["io"]), "out": len(nodes["out"])})
+        if p == "/api/routings/rename":
+            return self._json({"ok": ROUTINGS.rename(d["id"], str(d["name"]).strip()[:60] or "Sans nom")})
+        if p == "/api/routings/delete":
+            return self._json({"ok": ROUTINGS.delete(d["id"])})
+        if p == "/api/routings/undo":
+            if not CLIENT.snapshot()["connected"]:
+                return self._json({"ok": False, "error": "Non connecte a la console"})
+            return self._json({"ok": CLIENT.undo_routing()})
+        pr, nodes = self._routing_nodes(d)
+        if not pr or not nodes:
+            return self._json({"ok": False, "error": "Profil introuvable ou aucun groupe selectionne"})
+        if not CLIENT.snapshot()["connected"]:
+            return self._json({"ok": False, "error": "Non connecte a la console"})
+        if p == "/api/routings/preview":
+            rows = CLIENT.routing_diff(nodes)
+            return self._json({"ok": True, "name": pr["name"], "rows": rows,
+                               "changed": sum(1 for r in rows if not r["same"]),
+                               "unreadable": sum(1 for r in rows if r["current"] is None)})
+        if p == "/api/routings/apply":
+            return self._json({"ok": True, "result": CLIENT.apply_routing(nodes, pr["name"])})
+        self._json({"error": "introuvable"}, 404)
 
     def _capture(self):
         s = CLIENT.snapshot()
@@ -789,6 +1227,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/meters":
             CLIENT.set_meters(bool(d.get("on")))
             return self._json({"ok": True})
+        if p.startswith("/api/routings/"):
+            return self._routing_route(p, d)
         if p == "/api/refresh":
             threading.Thread(target=CLIENT.request_all, daemon=True).start()
             return self._json({"ok": True})
@@ -852,7 +1292,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .pill{background:var(--lite);color:#111;border:0;border-radius:6px;height:38px;padding:0 18px;font-weight:600;font-size:15px}
 .pill.on{background:var(--blue);color:#001a2a}
 .pill:disabled{opacity:.4;cursor:default}
-.sel{background:var(--teal);color:#032;border-radius:6px;height:38px;padding:0 16px;border:0;font-weight:700;font-size:15px;min-width:210px;text-align:left}
+.sel{background:var(--teal);color:#032;border-radius:6px;height:38px;padding:0 16px;border:0;font-weight:700;font-size:15px;min-width:180px;text-align:left}
 .screen{background:#000;border:1px solid var(--line2);border-radius:5px;height:38px;padding:0 10px;display:flex;align-items:center;gap:8px}
 .screen input{background:transparent;border:0;color:var(--cyan);font:600 14px "Consolas","Segoe UI",monospace;width:130px;outline:none;user-select:text}
 .led{width:10px;height:10px;border-radius:50%;background:#555;box-shadow:0 0 0 1px #000 inset}
@@ -949,11 +1389,31 @@ select.inp{padding:6px}
 #toast.err{border-left-color:var(--warn)} #toast.ok{border-left-color:var(--ok)}
 #welcome{position:absolute;left:20px;top:80px;max-width:560px;color:#aab2b8;line-height:1.55;font-size:14px;pointer-events:none}
 #welcome b{color:#fff}
+
+/* ---- onglet Routing ---- */
+#rview{grid-column:1/-1;display:none;grid-template-columns:290px 1fr 330px;gap:10px;padding:10px;min-height:0;overflow:hidden}
+body.v-rout #stripwrap,body.v-rout #side{display:none}
+body.v-rout #rview{display:grid}
+.rcol{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:auto}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:8px;align-content:start}
+.rsec{background:#0d0e0f;border:1px solid var(--line2);border-radius:5px;padding:8px 10px}
+.rsec h4{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);font-weight:600}
+.rrow{display:flex;gap:10px;padding:3px 0;border-top:1px solid #1a1c1e;font-size:13px}
+.rrow:first-of-type{border-top:0}
+.rrow .rg{flex:0 0 66px;color:var(--cyan);font:700 13px Consolas,monospace}
+.rrow.off .rs{color:#6b737a}
+.rnote{margin-top:6px;color:var(--mut);font-size:11.5px;line-height:1.35}
+.rmeta{color:#b9c0c6;font-size:12.5px;margin-bottom:8px}
+.diflist{max-height:260px;overflow:auto;background:#0d0e0f;border:1px solid var(--line2);border-radius:5px;padding:6px 8px;font:12px Consolas,monospace;margin:8px 0;user-select:text}
+.dif{margin-bottom:7px;color:#c9cfd4}.dif code{color:var(--cyan)}
+#rlast{font-size:12.5px;color:#c9cfd4;line-height:1.4;min-height:34px}
+@media(max-width:1500px){.logo{display:none}}
 </style></head>
 <body>
 <div id="app">
   <div id="top">
-    <div class="sel" style="display:flex;align-items:center">Gains &middot; <span id="bankname" style="margin-left:6px">Local 1-16</span></div>
+    <div class="sel" style="display:flex;align-items:center"><span id="selg">Gains &middot; <span id="bankname">Local 1-16</span></span><span id="selr" style="display:none">Routing</span></div>
+    <button class="pill on" id="tgains">Gains</button><button class="pill" id="trout">Routing</button>
     <div class="screen"><span class="led" id="led"></span><input id="ip" placeholder="IP de la X32" spellcheck="false"></div>
     <button class="pill on" id="bconn">Connecter</button>
     <button class="pill" id="bdemo" title="Simulateur de X32 en local pour essayer l'appli sans console">D&eacute;mo</button>
@@ -990,6 +1450,26 @@ select.inp{padding:6px}
           <button class="btn" id="pimp">Importer</button>
           <input type="file" id="pfile" accept=".json,application/json" style="display:none">
         </div>
+      </div>
+    </div>
+    <div id="rview">
+      <div class="rcol">
+        <div class="h">Profils de routing</div>
+        <div id="rlist" style="display:flex;flex-direction:column;gap:4px"></div>
+        <button class="btn" id="rimp">Importer une scène .scn…</button>
+        <input type="file" id="rfile" accept=".scn,.txt" style="display:none">
+        <div class="row"><button class="btn" id="rren" disabled>Renommer</button><button class="btn dng" id="rdel" disabled>Suppr.</button></div>
+        <div class="rnote">Seules les lignes de routing sont lues dans la scène (mixage, EQ, faders… ne sont jamais envoyés).</div>
+      </div>
+      <div class="rcol" id="rdetail"></div>
+      <div class="rcol">
+        <div class="h">Charger sur la console</div>
+        <label class="opt"><input type="checkbox" id="rio" checked disabled> Routing E/S : blocs + patchs utilisateur</label>
+        <label class="opt warn"><input type="checkbox" id="rout"> Patch de sortie console (/outputs)</label>
+        <button class="btn go" id="rload" disabled>Charger ce routing</button>
+        <button class="btn" id="rundo" disabled>&#8630; Annuler le dernier routing</button>
+        <div id="rlast"></div>
+        <div class="rnote">Avant l'envoi, l'appli lit le routing actuel et vous montre les lignes qui changent. Après l'envoi, elle relit la console pour confirmer. Les réglages du S16 (encodeur des sorties) ne font pas partie d'une scène : à régler sur le boîtier.</div>
       </div>
     </div>
   </div>
@@ -1131,7 +1611,7 @@ function update(){
   if(S.connected){w.style.display="none";}
   else{w.style.display="block";w.innerHTML=S.trying?"<b>Connexion en cours…</b><br>En attente d'une réponse de la console sur "+esc(S.ip)+" (UDP 10023). Si rien n'arrive : vérifiez l'IP (X32 : Setup → Network), que le PC est sur le même réseau/sous-réseau, et le pare-feu Windows."
     :"<b>1.</b> Sur la X32 : <b>Setup → Network</b> pour lire son adresse IP.<br><b>2.</b> Entrez-la en haut puis <b>Connecter</b>.<br><b>3.</b> Réglez les gains, sauvez une scène, rappelez-la plus tard.<br><br>Pas de console sous la main ? Le bouton <b>Démo</b> lance une X32 simulée.";}
-  renderStatus();renderPresetButtons();
+  renderStatus();renderPresetButtons();routingButtons();
 }
 function renderStatus(){
   const i=S.info||{};const c=S.connected?`<b class="good">● Connecté</b> ${esc(i.model||"X32")} ${esc(i.name||"")} ${i.fw?"· fw "+esc(i.fw):""} · ${S.known}/128 gains lus`+(S.demo?' · <b style="color:var(--amber)">SIMULATEUR</b>':""):
@@ -1139,7 +1619,7 @@ function renderStatus(){
   let r="";const lr=S.last_recall;
   if(lr){r=` · Dernier rappel « ${esc(lr.name)} » : ${lr.sent_gain} gains`+(lr.sent_phantom?`, ${lr.sent_phantom} 48V`:"")+" envoyés — "+
     (lr.verified===null?"vérification…":(lr.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${lr.bad.length} écart(s) à la relecture : ${lr.bad.slice(0,8).map(label).join(", ")}</b>`));}
-  $("#status").innerHTML=c+r+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span>';
+  $("#status").innerHTML=c+r+routingMsg()+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span>';
 }
 
 /* ---------- scenes ---------- */
@@ -1207,6 +1687,76 @@ $("#bvu").onclick=()=>api("/api/meters",{on:!S.meters_on});
 $("#block").onclick=()=>{locked=!locked;document.body.classList.toggle("locked",locked);$("#block").classList.toggle("act",locked);
   $("#block").innerHTML=locked?"&#128274; Verrouillé":"&#128274; Verrou";update();};
 
+/* ---------- onglet Routing ---------- */
+let RP=[],rsel=null,view="gains";
+function setView(v){
+  view=v;document.body.classList.toggle("v-rout",v==="routing");
+  $("#tgains").classList.toggle("on",v==="gains");$("#trout").classList.toggle("on",v==="routing");
+  $("#selg").style.display=v==="gains"?"":"none";$("#selr").style.display=v==="routing"?"":"none";
+  if(v==="routing")loadRoutings();
+}
+function loadRoutings(){return api("/api/routings").then(r=>{RP=r.profiles;if(!RP.find(p=>p.id===rsel))rsel=RP.length?RP[0].id:null;renderRouting();});}
+function rrows(list){return (list||[]).map(r=>`<div class="rrow${r.src==="OFF"?" off":""}"><span class="rg">${r.a===r.b?r.a:r.a+"\u2013"+r.b}</span><span class="rs">${esc(r.src)}</span></div>`).join("")||'<div style="color:var(--mut)">\u2014</div>';}
+function detailHTML(p){
+  const d=p.desc,P=d.ports||{};
+  const sec=(t,l,n)=>`<div class="rsec"><h4>${t}</h4>${rrows(l)}${n?`<div class="rnote">${n}</div>`:""}</div>`;
+  return `<div class="h" style="text-align:left">${esc(p.name)}</div><div class="rmeta">Mode de routage : <b>${esc(d.mode||"?")}</b> · scène fw ${esc(p.fw||"?")} · ${p.counts.io} lignes E/S · ${p.counts.out} lignes de patch de sortie</div><div class="rgrid">`+
+    sec("Entrées utilisateur (User In 1–32)",d.userin,"Ce que la X32 utilise comme entrées 1–32 (Local = XLR de la X32, AES50-A = S16).")+
+    sec("Départs vers la carte (→ LV1)",P.CARD,"Ce que la carte envoie à la LV1, canal par canal.")+
+    sec("Sorties XLR locales (OUT 1–16)",P.OUT,"La X32 Rack n'a que 8 XLR de sortie : seules les 8 premières sont physiques.")+
+    sec("Sorties AES50-A (→ S16)",P.AES50A,"Le S16 choisit ses 8 sorties avec son encodeur (blocs 1–8, 9–16…).")+
+    sec("Voies internes de la X32 (IN)",P.IN,"Voies 1–32 puis Aux 1–6 de la X32.")+
+    sec("Sorties utilisateur (User Out 1–48)",d.userout,"« Carte In » = retours venant de la carte.")+
+    (P.AES50B?sec("Sorties AES50-B",P.AES50B,"Non utilisé si rien n'est branché sur AES50-B."):"")+`</div>`;
+}
+function renderRouting(){
+  const l=$("#rlist");l.innerHTML="";
+  RP.forEach(p=>{const d=document.createElement("div");d.className="pi"+(p.id===rsel?" on":"");
+    d.innerHTML=`<b>${esc(p.name)}</b><span>${p.counts.io} lignes E/S · ${p.counts.out} sorties · ${esc(p.source)}</span>`;
+    d.onclick=()=>{rsel=p.id;renderRouting();};l.appendChild(d);});
+  const p=RP.find(x=>x.id===rsel);
+  $("#rdetail").innerHTML=p?detailHTML(p):'<div style="color:var(--mut);padding:12px">Aucun profil. Importez une scène X32 (.scn).</div>';
+  routingButtons();
+}
+function routingMsg(){
+  const rl=S.routing_last;if(!rl)return"";
+  return ` · Routing « ${esc(rl.name)} » : ${rl.sent}/${rl.total} lignes envoyées — `+(rl.verified===null?"vérification…":(rl.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${rl.bad.length} écart(s) : ${rl.bad.map(esc).join(", ")}</b>`));
+}
+function routingButtons(){
+  const has=!!RP.find(x=>x.id===rsel);
+  $("#rren").disabled=!has;$("#rdel").disabled=!has;
+  $("#rload").disabled=!(has&&S.connected&&!locked);$("#rundo").disabled=!(S.routing_can_undo&&S.connected&&!locked);
+  const rl=S.routing_last;
+  $("#rlast").innerHTML=rl?routingMsg().replace(/^ · /,""):"";
+}
+$("#tgains").onclick=()=>setView("gains");$("#trout").onclick=()=>setView("routing");
+$("#rimp").onclick=()=>$("#rfile").click();
+$("#rfile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
+  rd.onload=()=>api("/api/routings/import",{text:String(rd.result),filename:f.name}).then(r=>{
+    if(!r.ok)return toast(r.error,"err");rsel=r.id;toast("Routing importé : "+r.io+" lignes E/S, "+r.out+" lignes de sortie","ok");loadRoutings();});
+  rd.readAsText(f);e.target.value="";};
+$("#rren").onclick=()=>{const p=RP.find(x=>x.id===rsel);if(!p)return;
+  modal("Renommer","<input class='inp' id='rn2' value='"+esc(p.name)+"' maxlength='60'>",
+   [{t:"Annuler"},{t:"OK",go:1,f:()=>api("/api/routings/rename",{id:p.id,name:$("#rn2").value}).then(loadRoutings)}]);
+  setTimeout(()=>{const e=$("#rn2");if(e){e.focus();e.select();}},30);};
+$("#rdel").onclick=()=>{const p=RP.find(x=>x.id===rsel);if(!p)return;
+  modal("Supprimer ?","<p>Supprimer le profil <b>"+esc(p.name)+"</b> ?</p>",
+   [{t:"Annuler"},{t:"Supprimer",go:1,f:()=>api("/api/routings/delete",{id:p.id}).then(()=>{rsel=null;loadRoutings();})}]);};
+$("#rload").onclick=async()=>{
+  const p=RP.find(x=>x.id===rsel);if(!p||locked)return;
+  const groups=["io"].concat($("#rout").checked?["out"]:[]);
+  toast("Lecture du routing actuel de la console…");
+  const r=await api("/api/routings/preview",{id:p.id,groups});
+  if(!r.ok)return toast(r.error,"err");
+  if(r.changed===0)return toast("Rien à changer : la console a déjà ce routing.","ok");
+  const sh=x=>x===null?"<i>non lu</i>":esc(x.length>48?x.slice(0,48)+"…":x);
+  const list=r.rows.filter(x=>!x.same).map(x=>`<div class="dif"><code>${esc(x.path)}</code><br>${sh(x.current)} <b>→</b> ${sh(x.target)}</div>`).join("");
+  modal("Charger « "+p.name+" » ?",`<p><b>${r.changed}</b> ligne(s) sur ${r.rows.length} vont changer.`+(r.unreadable?` <span class="bad">${r.unreadable} non lue(s) : pas d'annulation possible pour celles-ci.</span>`:"")+`</p><div class="diflist">${list}</div>
+    <p style="color:var(--amber)">À faire de préférence hors signal : un changement de routing peut couper ou perturber l'audio en cours. « Annuler le dernier routing » remet les valeurs lues à l'instant.</p>`,
+   [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
+};
+$("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
+
 /* ---------- vumetre (poll leger ~16 Hz, attaque instantanee, retombee 24 dB/s, crete 1,2 s) ---------- */
 const VU={};let vuDead=false,lastLive=performance.now();
 function drawMeters(m){
@@ -1271,7 +1821,7 @@ def pick_data_path():
 
 
 def main():
-    global STORE, X32_PORT
+    global STORE, ROUTINGS, X32_PORT
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--version", action="version", version="%s %s" % (APP_NAME, APP_VERSION))
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
@@ -1282,6 +1832,7 @@ def main():
     a = ap.parse_args()
 
     STORE = PresetStore(a.data or pick_data_path())
+    ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_routings.json"))
 
     srv = None
     for port in range(a.web_port, a.web_port + 20):
