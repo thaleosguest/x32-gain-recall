@@ -36,7 +36,6 @@ import struct
 import sys
 import threading
 import time
-import urllib.parse
 import uuid
 import webbrowser
 from datetime import datetime
@@ -1080,34 +1079,37 @@ STORE = None
 ROUTINGS = None
 SIM = None
 ALLOWED_HOSTS = set()
-ALLOW_ANY_HOST = False  # active par --lan : accepte tout Host: (protection deplacee sur le token, cf. LAN_TOKEN)
-LAN_TOKEN = None  # jeton d'acces requis quand --lan est utilise ; None = --lan sans mot de passe (--lan-sans-mdp)
-LAN_COOKIE = "x32lantok"
+ALLOW_ANY_HOST = False  # active par --lan : accepte tout Host: (protection deplacee sur le code de connexion)
+LAN_CODE = None  # code a 4 chiffres requis pour se connecter en --lan ; None = --lan-sans-mdp (aucune protection)
+LAN_COOKIE = "x32lansess"
+SESSIONS = set()  # jetons de session valides, en memoire seulement (perdus a l'arret du script)
+LOGIN_ATTEMPTS = {}  # ip -> {"fails": int, "locked_until": epoch, "seen": epoch} - limite le brute-force du code
+LOGIN_MAX_TRACKED_IPS = 500  # purge grossiere si depasse (usage reseau local, pas cense arriver)
 
 
 def load_or_create_lan_config(path, regenerate=False):
-    """Fichier de config JSON {"token": "..."} conservant le jeton d'acces entre deux lancements en --lan.
-    Cree un nouveau jeton si le fichier n'existe pas, est illisible, ou si regenerate=True."""
+    """Fichier de config JSON {"code": "1234"} conservant le code d'acces entre deux lancements en --lan.
+    Cree un nouveau code a 4 chiffres si le fichier n'existe pas, est illisible, ou si regenerate=True."""
     if not regenerate:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            tok = data.get("token")
-            if isinstance(tok, str) and len(tok) >= 16:
-                return tok
+            code = data.get("code")
+            if isinstance(code, str) and code.isdigit() and len(code) == 4:
+                return code
         except (OSError, ValueError):
             pass
-    tok = secrets.token_urlsafe(24)
+    code = "%04d" % secrets.randbelow(10000)
     try:
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"token": tok, "cree_le": datetime.now().isoformat(timespec="seconds")}, f, ensure_ascii=False, indent=1)
+            json.dump({"code": code, "cree_le": datetime.now().isoformat(timespec="seconds")}, f, ensure_ascii=False, indent=1)
         try:
             os.chmod(path, 0o600)  # best-effort : illisible par les autres comptes de la machine
         except OSError:
             pass
     except OSError as e:
-        print("Attention : jeton --lan non sauvegarde sur disque (%s). Il changera au prochain lancement." % e)
-    return tok
+        print("Attention : code --lan non sauvegarde sur disque (%s). Il changera au prochain lancement." % e)
+    return code
 
 
 def _local_ipv4_addresses():
@@ -1155,12 +1157,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return self.headers.get("Host", "") in ALLOWED_HOSTS  # anti DNS-rebinding
 
-    def _request_token(self):
-        qs = self.path.split("?", 1)
-        if len(qs) > 1:
-            params = urllib.parse.parse_qs(qs[1])
-            if "token" in params and params["token"]:
-                return params["token"][0]
+    def _session_token(self):
         for part in self.headers.get("Cookie", "").split(";"):
             part = part.strip()
             if part.startswith(LAN_COOKIE + "="):
@@ -1168,60 +1165,87 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def _auth_ok(self):
-        if not ALLOW_ANY_HOST or not LAN_TOKEN:
+        if not ALLOW_ANY_HOST or not LAN_CODE:
             # pas de --lan (deja protege par 127.0.0.1), ou --lan-sans-mdp assume explicitement
             return True
-        token = self._request_token()
-        return token is not None and hmac.compare_digest(token, LAN_TOKEN)
+        tok = self._session_token()
+        return tok is not None and tok in SESSIONS
 
-    def _reject_auth(self):
-        path = self.path.split("?")[0]
-        if path in ("/", "/index.html"):
-            body = (
-                "<!doctype html><meta charset=utf-8>"
-                "<body style='background:#111;color:#eee;font-family:sans-serif;padding:2em'>"
-                "<h2>Acces refuse</h2><p>Cette interface est protegee par un jeton. "
-                "Utilise le lien complet affiche au demarrage du script (avec <code>?token=...</code>).</p></body>"
-            ).encode("utf-8")
-            self.send_response(401)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+    def _reject_auth_api(self):
+        self._json({"error": "session --lan manquante ou expiree, se reconnecter avec le code"}, 401)
+
+    def _login_rate_limited(self, ip, now):
+        e = LOGIN_ATTEMPTS.get(ip)
+        if not e:
+            return None
+        if e["locked_until"] > now:
+            return e["locked_until"] - now
+        return None
+
+    def _login_record_fail(self, ip, now):
+        if len(LOGIN_ATTEMPTS) > LOGIN_MAX_TRACKED_IPS:
+            for k, v in list(LOGIN_ATTEMPTS.items()):
+                if now - v["seen"] > 3600:
+                    del LOGIN_ATTEMPTS[k]
+        e = LOGIN_ATTEMPTS.setdefault(ip, {"fails": 0, "locked_until": 0, "seen": now})
+        e["fails"] += 1
+        e["seen"] = now
+        if e["fails"] >= 5:
+            # verrou croissant : 30 s, 60 s, 120 s ... plafonne a 15 min - ralentit un brute-force du code 4 chiffres
+            e["locked_until"] = now + min(900, 30 * (2 ** (e["fails"] - 5)))
+
+    def _login_record_success(self, ip):
+        LOGIN_ATTEMPTS.pop(ip, None)
+
+    def _do_login(self):
+        try:
+            n = int(self.headers.get("Content-Length", "0"))
+            d = json.loads(self.rfile.read(n) or b"{}")
+        except (ValueError, OSError):
+            return self._json({"error": "requete invalide"}, 400)
+        ip = self.client_address[0]
+        now = time.time()
+        wait = self._login_rate_limited(ip, now)
+        if wait is not None:
+            return self._json({"error": "trop de tentatives, reessayer plus tard", "retry_after": int(wait) + 1}, 429)
+        code = str(d.get("code", ""))
+        if LAN_CODE and hmac.compare_digest(code, LAN_CODE):
+            self._login_record_success(ip)
+            tok = secrets.token_urlsafe(24)
+            SESSIONS.add(tok)
+            self._json({"ok": True}, 200, set_cookie="%s=%s; Path=/; Max-Age=2592000; SameSite=Strict" % (LAN_COOKIE, tok))
         else:
-            self._json({"error": "jeton --lan manquant ou invalide"}, 401)
+            self._login_record_fail(ip, now)
+            self._json({"error": "code incorrect"}, 401)
 
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, set_cookie=None):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if set_cookie:
+            self.send_header("Set-Cookie", set_cookie)
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
         if not self._host_ok():
             return self._json({"error": "host refuse"}, 403)
-        if not self._auth_ok():
-            return self._reject_auth()
         path = self.path.split("?")[0]
+        needs_login = ALLOW_ANY_HOST and LAN_CODE and not self._auth_ok()
         if path in ("/", "/index.html"):
-            body = HTML.encode("utf-8")
+            body = (LOGIN_HTML if needs_login else HTML).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
-            if ALLOW_ANY_HOST and LAN_TOKEN:
-                # rafraichit le cookie a chaque chargement de page : la tablette n'a besoin du ?token=
-                # que la toute premiere fois (favori/onglet epingle ensuite).
-                self.send_header(
-                    "Set-Cookie",
-                    "%s=%s; Path=/; Max-Age=2592000; SameSite=Strict" % (LAN_COOKIE, LAN_TOKEN),
-                )
             self.end_headers()
             self.wfile.write(body)
-        elif path == "/api/state":
+            return
+        if needs_login:
+            return self._reject_auth_api()
+        if path == "/api/state":
             self._json(CLIENT.snapshot())
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
@@ -1243,8 +1267,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self._json({"error": "host refuse"}, 403)
-        if not self._auth_ok():
-            return self._reject_auth()
+        path = self.path.split("?")[0]
+        if path == "/api/login":
+            return self._do_login()
+        if ALLOW_ANY_HOST and LAN_CODE and not self._auth_ok():
+            return self._reject_auth_api()
         # application/json impose un "preflight" CORS pour un site tiers -> bloque les requetes cross-site
         if "application/json" not in self.headers.get("Content-Type", ""):
             return self._json({"error": "content-type"}, 415)
@@ -1370,6 +1397,59 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/import":
             return self._json({"ok": True, "added": STORE.import_items(d.get("presets", []))})
         self._json({"error": "introuvable"}, 404)
+
+
+# --------------------------------------------------------------------------
+#  Page de connexion --lan : code a 4 chiffres, clavier tactile, pas de copier-coller
+# --------------------------------------------------------------------------
+LOGIN_HTML = r"""<!doctype html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
+<title>X32 Gain Recall</title>
+<style>
+:root{--bg:#0b0c0d;--panel:#171819;--line:#2a2c2e;--cyan:#38d0e0;--mut:#8a9096;--danger:#e0555a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:#eee;font-family:-apple-system,Segoe UI,Roboto,sans-serif;
+  display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px 26px;width:100%;max-width:340px;text-align:center}
+h1{font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 4px;font-weight:600}
+h2{font-size:13px;color:var(--mut);margin:0 0 22px;font-weight:400}
+#code{width:100%;font-size:34px;letter-spacing:.5em;text-align:center;background:#0d0e0f;border:1px solid var(--line);
+  border-radius:8px;color:var(--cyan);padding:14px 0 14px 0.5em;font-family:Consolas,monospace}
+#code:focus{outline:2px solid var(--cyan)}
+button{width:100%;margin-top:16px;background:var(--cyan);color:#04262b;border:0;border-radius:8px;
+  font-size:16px;font-weight:700;padding:14px 0;cursor:pointer}
+button:disabled{opacity:.5}
+#msg{min-height:20px;margin-top:12px;font-size:13px;color:var(--danger)}
+</style></head>
+<body>
+<div class="card">
+  <h1>X32 Gain Recall</h1>
+  <h2>Acces reseau local &middot; code a 4 chiffres</h2>
+  <form id="f" autocomplete="off">
+    <input id="code" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="&middot;&middot;&middot;&middot;" autofocus>
+    <button id="go" type="submit">Entrer</button>
+  </form>
+  <div id="msg"></div>
+</div>
+<script>
+const f=document.getElementById("f"),c=document.getElementById("code"),m=document.getElementById("msg"),go=document.getElementById("go");
+c.addEventListener("input",()=>{c.value=c.value.replace(/\D/g,"").slice(0,4);});
+f.addEventListener("submit",e=>{
+  e.preventDefault();
+  if(c.value.length!==4){m.textContent="Code a 4 chiffres.";return;}
+  go.disabled=true;m.textContent="";
+  fetch("/api/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code:c.value})})
+    .then(r=>r.json().then(j=>({status:r.status,j})))
+    .then(({status,j})=>{
+      if(status===200){location.reload();return;}
+      go.disabled=false;c.value="";c.focus();
+      m.textContent=status===429?("Trop de tentatives, reessayer dans "+j.retry_after+" s."):"Code incorrect.";
+    })
+    .catch(()=>{go.disabled=false;m.textContent="Connexion au serveur impossible.";});
+});
+</script></body></html>
+"""
 
 
 # --------------------------------------------------------------------------
@@ -1597,7 +1677,10 @@ function fmt(v){return (v>0?"+":"")+v.toFixed(1);}
 function clamp(v){return Math.max(GMIN,Math.min(GMAX,Math.round(v*2)/2));}
 function api(p,body){
   const o=body===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)};
-  return fetch(p,o).then(r=>r.json());
+  return fetch(p,o).then(r=>{
+    if(r.status===401){location.reload();return new Promise(()=>{});} // session --lan expiree -> retour a l'ecran de code
+    return r.json();
+  });
 }
 function toast(msg,kind,ms){const t=$("#toast");t.textContent=msg;t.className=kind||"";t.style.display="block";
   clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display="none",ms||4200);}
@@ -1939,30 +2022,31 @@ def main():
         action="store_true",
         help=(
             "ouvre l'interface au reseau local (tablette, telephone, autre PC) au lieu de cette seule machine. "
-            "Protegee par un jeton d'acces genere automatiquement (voir --lan-sans-mdp pour le desactiver)."
+            "Protegee par un code a 4 chiffres, saisi une fois sur l'appareil (voir --lan-sans-mdp pour le desactiver)."
         ),
     )
     ap.add_argument(
         "--lan-sans-mdp",
         action="store_true",
-        help="avec --lan : desactive le jeton d'acces. AUCUNE protection, a reserver a un reseau vraiment de confiance.",
+        help="avec --lan : desactive le code d'acces. AUCUNE protection, a reserver a un reseau vraiment de confiance.",
     )
     ap.add_argument(
-        "--lan-nouveau-jeton",
+        "--lan-nouveau-code",
         action="store_true",
-        help="avec --lan : regenere le jeton d'acces (invalide les liens/favoris precedents).",
+        help="avec --lan : regenere le code d'acces (deconnecte tous les appareils deja connectes).",
     )
     a = ap.parse_args()
 
-    global ALLOW_ANY_HOST, LAN_TOKEN
+    global ALLOW_ANY_HOST, LAN_CODE
     ALLOW_ANY_HOST = bool(a.lan)
 
     STORE = PresetStore(a.data or pick_data_path())
     ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_routings.json"))
 
+    code_path = None
     if a.lan and not a.lan_sans_mdp:
-        token_path = os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_lan_config.json")
-        LAN_TOKEN = load_or_create_lan_config(token_path, regenerate=a.lan_nouveau_jeton)
+        code_path = os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_lan_config.json")
+        LAN_CODE = load_or_create_lan_config(code_path, regenerate=a.lan_nouveau_code)
 
     bind_host = "0.0.0.0" if a.lan else "127.0.0.1"
     srv = None
@@ -1981,10 +2065,9 @@ def main():
 
     lan_urls = []
     if a.lan:
-        suffix = ("?token=%s" % LAN_TOKEN) if LAN_TOKEN else ""
         for ip in _local_ipv4_addresses():
             ALLOWED_HOSTS.add("%s:%d" % (ip, port))
-            lan_urls.append("http://%s:%d/%s" % (ip, port, suffix))
+            lan_urls.append("http://%s:%d/" % (ip, port))
 
     if a.sim:
         ok, err = start_sim()
@@ -1999,17 +2082,19 @@ def main():
     print("%s v%s  -  interface : %s" % (APP_NAME, APP_VERSION, url))
     if a.lan:
         print("")
-        if LAN_TOKEN:
-            print("Mode --lan actif, protege par un jeton d'acces (pas de https : reseau de confiance recommande).")
-            print("Jeton sauvegarde dans : %s" % token_path)
-            print("Pour un nouveau jeton (revoquer l'ancien) : relancer avec --lan-nouveau-jeton")
+        if LAN_CODE:
+            print("Mode --lan actif, protege par un code (pas de https : reseau de confiance recommande).")
+            print("CODE D'ACCES : %s" % LAN_CODE)
+            print("(sauvegarde dans %s ; pour un nouveau code : relancer avec --lan-nouveau-code)" % code_path)
         else:
             print("!!! Mode --lan-sans-mdp actif : AUCUNE protection, AUCUN chiffrement (http, pas https). !!!")
             print("!!! Toute personne sur ce reseau peut piloter la console via cette adresse.               !!!")
         if lan_urls:
-            print("Accessible depuis une tablette/telephone sur le meme reseau (ouvrir ce lien complet) :")
+            print("Accessible depuis une tablette/telephone sur le meme reseau :")
             for u in lan_urls:
                 print("  - %s" % u)
+            if LAN_CODE:
+                print("(ouvrir simplement ce lien, puis taper le code ci-dessus sur l'ecran de connexion)")
         else:
             print("Aucune adresse reseau locale detectee automatiquement (verifier la connexion Wi-Fi/Ethernet).")
         print("")
