@@ -1363,6 +1363,15 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/refresh":
             threading.Thread(target=CLIENT.request_all, daemon=True).start()
             return self._json({"ok": True})
+        if p == "/api/probe":
+            # Lecture seule : /node <chemin> sur la console, sans jamais rien ecrire. Sert a decouvrir des
+            # chemins OSC non documentes (ex. horloge) directement sur le materiel, plutot que de deviner.
+            paths = [str(x)[:200] for x in d.get("paths", [])][:8]
+            paths = [x for x in paths if x.startswith("/")]
+            if not CLIENT.snapshot()["connected"]:
+                return self._json({"ok": False, "error": "Non connecte a la console"})
+            nodes = CLIENT.get_nodes(paths, timeout=2.5) if paths else {}
+            return self._json({"ok": True, "nodes": nodes})
         if p == "/api/gain":
             v = CLIENT.set_gain(int(d["idx"]), float(d["db"]))
             return self._json({"ok": v is not None, "db": v})
@@ -1592,6 +1601,18 @@ body.v-rout #rview{display:grid}
 .dif{margin-bottom:7px;color:#c9cfd4}.dif code{color:var(--cyan)}
 #rlast{font-size:12.5px;color:#c9cfd4;line-height:1.4;min-height:34px}
 @media(max-width:1500px){.logo{display:none}}
+/* Tactile (tablette/telephone) : agrandit les cibles tactiles sans toucher a l'affichage souris/trackpad. */
+@media (hover:none) and (pointer:coarse){
+  .pill,.mini{height:46px;padding:0 16px}
+  .step button{height:34px;font-size:16px}
+  .strip .ph{height:36px}
+  .btn{padding:11px 6px;font-size:13.5px}
+  .inp{padding:11px 10px}
+  #modal .row .btn{padding:12px 18px}
+  .pi{padding:10px 10px}
+  .bank{height:46px}
+  .kn svg{width:min(72px,90%)}
+}
 </style></head>
 <body>
 <div id="app">
@@ -1654,6 +1675,19 @@ body.v-rout #rview{display:grid}
         <button class="btn" id="rundo" disabled>&#8630; Annuler le dernier routing</button>
         <div id="rlast"></div>
         <div class="rnote">Avant l'envoi, l'appli lit le routing actuel et vous montre les lignes qui changent. Après l'envoi, elle relit la console pour confirmer. Les réglages du S16 (encodeur des sorties) ne font pas partie d'une scène : à régler sur le boîtier.</div>
+        <div class="h" style="margin-top:14px">Setup console (sonde OSC)</div>
+        <div class="rnote">Aucun chemin OSC documenté n'a été trouvé pour l'horloge (clock) de la X32 : ni le protocole
+          OSC non-officiel, ni les bibliothèques de contrôle existantes ne le mentionnent. Ceci lit un chemin en
+          lecture seule sur la console pour vérifier s'il existe, <b>sans jamais rien modifier</b>. Un résultat vide
+          veut dire que ce chemin n'existe pas ou n'est pas exposé en OSC — pas une panne de l'appli.</div>
+        <div class="row"><input class="inp" id="ppath" placeholder="/config/clock" value="/config/clock">
+          <button class="btn" id="pgo" style="flex:0 0 70px">Sonder</button></div>
+        <div class="row">
+          <button class="mini pchip" data-p="/config/clock">/config/clock</button>
+          <button class="mini pchip" data-p="/-clock">/-clock</button>
+          <button class="mini pchip" data-p="/-prefs">/-prefs</button>
+        </div>
+        <div id="presult" class="rnote" style="font-family:Consolas,monospace;white-space:pre-wrap;background:#0d0e0f;border:1px solid var(--line2);border-radius:5px;padding:6px 8px;min-height:30px"></div>
       </div>
     </div>
   </div>
@@ -1943,6 +1977,24 @@ $("#rload").onclick=async()=>{
    [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
 };
 $("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
+
+/* ---------- sonde OSC en lecture seule (decouverte de chemins non documentes, ex. horloge) ---------- */
+function doProbe(){
+  const p=$("#ppath").value.trim();const out=$("#presult");
+  if(!p.startsWith("/")){out.textContent="Le chemin doit commencer par /";return;}
+  if(!S.connected){out.textContent="Non connecté à la console.";return;}
+  out.textContent="Interrogation de "+p+" …";
+  api("/api/probe",{paths:[p]}).then(r=>{
+    if(!r.ok){out.textContent="Erreur : "+(r.error||"?");return;}
+    const v=r.nodes[p];
+    out.textContent=(v===null||v===undefined)
+      ?p+" → aucune réponse (chemin probablement inexistant ou non exposé en OSC)."
+      :p+" → "+v;
+  });
+}
+$("#pgo").onclick=doProbe;
+$("#ppath").addEventListener("keydown",e=>{if(e.key==="Enter")doProbe();});
+document.querySelectorAll(".pchip").forEach(b=>b.onclick=()=>{$("#ppath").value=b.dataset.p;doProbe();});
 
 /* ---------- vumetre (poll leger ~16 Hz, attaque instantanee, retombee 24 dB/s, crete 1,2 s) ---------- */
 const VU={};let vuDead=false,lastLive=performance.now();

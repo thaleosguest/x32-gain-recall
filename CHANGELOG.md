@@ -3,6 +3,8 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [1.3.0]
+- Interface adaptée au tactile : cibles agrandies (boutons +/-, phantom, pilules...) sur tablette/téléphone, sans changer l'affichage sur PC/souris. Les curseurs de gain utilisaient déjà les Pointer Events (glisser au doigt fonctionnait déjà).
+- Onglet Routing : nouvelle sonde OSC en lecture seule (« Setup console »), pour interroger un chemin OSC quelconque sur la console (ex. tester si l'horloge est exposée en OSC) sans jamais rien modifier. Aucun chemin documenté n'a été trouvé pour la source d'horloge (Internal/AES50-A/AES50-B/Card) dans le protocole OSC non-officiel ni les bibliothèques de contrôle existantes ; ce réglage semble réservé au panneau Setup de la console.
 - **L'interface est accessible au réseau local par défaut** (tablette, téléphone, autre PC), sans rien à taper au lancement. Nouvelle option `--local-only` pour revenir à l'ancien comportement (versions ≤ 1.2 : accessible uniquement depuis cette machine, 127.0.0.1).
 - Accès protégé par défaut par un **code à 4 chiffres**, saisi une fois sur un petit écran de connexion (clavier numérique tactile, pas de copier-coller) ; une fois validé, une session en mémoire (cookie) garde l'accès. Code sauvegardé dans `x32_lan_config.json` (jamais versionné) ; nouveau code avec `--lan-nouveau-code`. Limitation des tentatives après 5 codes faux (pause croissante, jusqu'à 15 min).
 - `--lan-sans-mdp` désactive volontairement cette protection pour qui préfère l'usage sans mot de passe des applis officielles Behringer (X-AIR Edit, M32-Edit) sur un réseau de confiance.
