@@ -1525,7 +1525,7 @@ body.v-rout #rview{display:grid}
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
-    <div class="logo">X32 GAIN RECALL<small>OSC &middot; UDP 10023</small></div>
+    <div class="logo">X32 GAIN RECALL<small>OSC &middot; UDP 10023 &middot; v__APP_VERSION__</small></div>
   </div>
 
   <div id="main">
@@ -1905,6 +1905,7 @@ async function meterLoop(){
 })();
 </script></body></html>
 """
+HTML = HTML.replace("__APP_VERSION__", APP_VERSION)  # numero de version visible dans l'interface (coin haut droit)
 
 
 # --------------------------------------------------------------------------
