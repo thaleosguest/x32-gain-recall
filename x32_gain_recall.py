@@ -7,13 +7,15 @@ Petit outil pour regler, sauvegarder et rappeler les GAINS (preamps / headamps)
 d'une Behringer X32 / Midas M32 via le protocole OSC (UDP, port 10023).
 
 - Aucune dependance : Python 3.8+ (bibliotheque standard uniquement).
-- L'interface s'ouvre dans le navigateur (serveur local 127.0.0.1 uniquement).
+- L'interface s'ouvre dans le navigateur (serveur local 127.0.0.1 par defaut).
 - Les scenes de gains sont stockees dans x32_presets.json a cote du script.
+- Option --lan : ouvre l'interface au reseau local (tablette, telephone), protegee par un jeton d'acces.
 
 Usage :
     python x32_gain_recall.py              # lance l'appli
     python x32_gain_recall.py --sim        # lance avec une X32 simulee (test sans console)
     python x32_gain_recall.py --ip 192.168.1.50
+    python x32_gain_recall.py --lan        # accessible depuis une tablette/telephone (jeton d'acces)
 
 Sources du protocole : "UNOFFICIAL X32/M32 OSC REMOTE PROTOCOL" (P.-G. Maillot), v4.02.
   - /headamp/[000..127]/gain    : float 0..1  <->  -12..+60 dB, pas de 0,5 dB (145 valeurs)
@@ -22,23 +24,26 @@ Sources du protocole : "UNOFFICIAL X32/M32 OSC REMOTE PROTOCOL" (P.-G. Maillot),
   - /xremote a renouveler avant 10 s pour recevoir les changements faits sur la console
 """
 import argparse
+import hmac
 import json
 import math
 import os
 import random
 import re
+import secrets
 import socket
 import struct
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1075,6 +1080,56 @@ STORE = None
 ROUTINGS = None
 SIM = None
 ALLOWED_HOSTS = set()
+ALLOW_ANY_HOST = False  # active par --lan : accepte tout Host: (protection deplacee sur le token, cf. LAN_TOKEN)
+LAN_TOKEN = None  # jeton d'acces requis quand --lan est utilise ; None = --lan sans mot de passe (--lan-sans-mdp)
+LAN_COOKIE = "x32lantok"
+
+
+def load_or_create_lan_config(path, regenerate=False):
+    """Fichier de config JSON {"token": "..."} conservant le jeton d'acces entre deux lancements en --lan.
+    Cree un nouveau jeton si le fichier n'existe pas, est illisible, ou si regenerate=True."""
+    if not regenerate:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            tok = data.get("token")
+            if isinstance(tok, str) and len(tok) >= 16:
+                return tok
+        except (OSError, ValueError):
+            pass
+    tok = secrets.token_urlsafe(24)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"token": tok, "cree_le": datetime.now().isoformat(timespec="seconds")}, f, ensure_ascii=False, indent=1)
+        try:
+            os.chmod(path, 0o600)  # best-effort : illisible par les autres comptes de la machine
+        except OSError:
+            pass
+    except OSError as e:
+        print("Attention : jeton --lan non sauvegarde sur disque (%s). Il changera au prochain lancement." % e)
+    return tok
+
+
+def _local_ipv4_addresses():
+    """Best-effort : liste des adresses IPv4 locales (hors 127.0.0.1), pour affichage et allowlist."""
+    ips = set()
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))  # n'envoie rien, sert juste a choisir l'interface de sortie
+            ips.add(s.getsockname()[0])
+        finally:
+            s.close()
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127."):
+                ips.add(ip)
+    except OSError:
+        pass
+    return sorted(ips)
 
 
 def start_sim():
@@ -1096,7 +1151,45 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _host_ok(self):
+        if ALLOW_ANY_HOST:  # mode --lan : Host: variable (tablette, telephone...) - securite deplacee sur le jeton
+            return True
         return self.headers.get("Host", "") in ALLOWED_HOSTS  # anti DNS-rebinding
+
+    def _request_token(self):
+        qs = self.path.split("?", 1)
+        if len(qs) > 1:
+            params = urllib.parse.parse_qs(qs[1])
+            if "token" in params and params["token"]:
+                return params["token"][0]
+        for part in self.headers.get("Cookie", "").split(";"):
+            part = part.strip()
+            if part.startswith(LAN_COOKIE + "="):
+                return part[len(LAN_COOKIE) + 1:]
+        return None
+
+    def _auth_ok(self):
+        if not ALLOW_ANY_HOST or not LAN_TOKEN:
+            # pas de --lan (deja protege par 127.0.0.1), ou --lan-sans-mdp assume explicitement
+            return True
+        token = self._request_token()
+        return token is not None and hmac.compare_digest(token, LAN_TOKEN)
+
+    def _reject_auth(self):
+        path = self.path.split("?")[0]
+        if path in ("/", "/index.html"):
+            body = (
+                "<!doctype html><meta charset=utf-8>"
+                "<body style='background:#111;color:#eee;font-family:sans-serif;padding:2em'>"
+                "<h2>Acces refuse</h2><p>Cette interface est protegee par un jeton. "
+                "Utilise le lien complet affiche au demarrage du script (avec <code>?token=...</code>).</p></body>"
+            ).encode("utf-8")
+            self.send_response(401)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self._json({"error": "jeton --lan manquant ou invalide"}, 401)
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -1110,6 +1203,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._host_ok():
             return self._json({"error": "host refuse"}, 403)
+        if not self._auth_ok():
+            return self._reject_auth()
         path = self.path.split("?")[0]
         if path in ("/", "/index.html"):
             body = HTML.encode("utf-8")
@@ -1117,6 +1212,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            if ALLOW_ANY_HOST and LAN_TOKEN:
+                # rafraichit le cookie a chaque chargement de page : la tablette n'a besoin du ?token=
+                # que la toute premiere fois (favori/onglet epingle ensuite).
+                self.send_header(
+                    "Set-Cookie",
+                    "%s=%s; Path=/; Max-Age=2592000; SameSite=Strict" % (LAN_COOKIE, LAN_TOKEN),
+                )
             self.end_headers()
             self.wfile.write(body)
         elif path == "/api/state":
@@ -1141,6 +1243,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self._json({"error": "host refuse"}, 403)
+        if not self._auth_ok():
+            return self._reject_auth()
         # application/json impose un "preflight" CORS pour un site tiers -> bloque les requetes cross-site
         if "application/json" not in self.headers.get("Content-Type", ""):
             return self._json({"error": "content-type"}, 415)
@@ -1829,15 +1933,41 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
     ap.add_argument("--data", help="chemin du fichier de scenes (defaut : x32_presets.json a cote du script)")
+    ap.add_argument(
+        "--lan",
+        action="store_true",
+        help=(
+            "ouvre l'interface au reseau local (tablette, telephone, autre PC) au lieu de cette seule machine. "
+            "Protegee par un jeton d'acces genere automatiquement (voir --lan-sans-mdp pour le desactiver)."
+        ),
+    )
+    ap.add_argument(
+        "--lan-sans-mdp",
+        action="store_true",
+        help="avec --lan : desactive le jeton d'acces. AUCUNE protection, a reserver a un reseau vraiment de confiance.",
+    )
+    ap.add_argument(
+        "--lan-nouveau-jeton",
+        action="store_true",
+        help="avec --lan : regenere le jeton d'acces (invalide les liens/favoris precedents).",
+    )
     a = ap.parse_args()
+
+    global ALLOW_ANY_HOST, LAN_TOKEN
+    ALLOW_ANY_HOST = bool(a.lan)
 
     STORE = PresetStore(a.data or pick_data_path())
     ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_routings.json"))
 
+    if a.lan and not a.lan_sans_mdp:
+        token_path = os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_lan_config.json")
+        LAN_TOKEN = load_or_create_lan_config(token_path, regenerate=a.lan_nouveau_jeton)
+
+    bind_host = "0.0.0.0" if a.lan else "127.0.0.1"
     srv = None
     for port in range(a.web_port, a.web_port + 20):
         try:
-            srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            srv = ThreadingHTTPServer((bind_host, port), Handler)
             break
         except OSError:
             continue
@@ -1847,6 +1977,13 @@ def main():
     port = srv.server_address[1]
     ALLOWED_HOSTS.update({"127.0.0.1:%d" % port, "localhost:%d" % port})
     url = "http://127.0.0.1:%d/" % port
+
+    lan_urls = []
+    if a.lan:
+        suffix = ("?token=%s" % LAN_TOKEN) if LAN_TOKEN else ""
+        for ip in _local_ipv4_addresses():
+            ALLOWED_HOSTS.add("%s:%d" % (ip, port))
+            lan_urls.append("http://%s:%d/%s" % (ip, port, suffix))
 
     if a.sim:
         ok, err = start_sim()
@@ -1859,6 +1996,22 @@ def main():
         CLIENT.connect(a.ip)
 
     print("%s v%s  -  interface : %s" % (APP_NAME, APP_VERSION, url))
+    if a.lan:
+        print("")
+        if LAN_TOKEN:
+            print("Mode --lan actif, protege par un jeton d'acces (pas de https : reseau de confiance recommande).")
+            print("Jeton sauvegarde dans : %s" % token_path)
+            print("Pour un nouveau jeton (revoquer l'ancien) : relancer avec --lan-nouveau-jeton")
+        else:
+            print("!!! Mode --lan-sans-mdp actif : AUCUNE protection, AUCUN chiffrement (http, pas https). !!!")
+            print("!!! Toute personne sur ce reseau peut piloter la console via cette adresse.               !!!")
+        if lan_urls:
+            print("Accessible depuis une tablette/telephone sur le meme reseau (ouvrir ce lien complet) :")
+            for u in lan_urls:
+                print("  - %s" % u)
+        else:
+            print("Aucune adresse reseau locale detectee automatiquement (verifier la connexion Wi-Fi/Ethernet).")
+        print("")
     print("Scenes : %s" % STORE.path)
     print("Ctrl+C pour quitter.")
     if not a.no_browser:

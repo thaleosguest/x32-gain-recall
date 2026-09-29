@@ -1,8 +1,9 @@
-# Donnees utilisateur (scenes de gains, profils de routing) : ne pas publier
+# Donnees utilisateur (scenes de gains, profils de routing, jeton d'acces --lan) : ne pas publier
 x32_presets.json
 x32_presets.json.tmp
 x32_routings.json
 x32_routings.json.tmp
+x32_lan_config.json
 *.corrompu-*
 
 # Build
