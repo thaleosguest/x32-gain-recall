@@ -19,10 +19,8 @@ Version courante : **1.3.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 Les scènes sont enregistrées à côté du programme (`x32_presets.json`, `x32_routings.json`), non versionnées (voir `.gitignore`).
 
-### Accès depuis une tablette ou un téléphone (`--lan`)
-Par défaut, l'interface n'écoute que sur la machine qui exécute le script (`127.0.0.1`) : aucun autre appareil ne peut s'y connecter, même sur le même Wi-Fi.
-
-`python x32_gain_recall.py --lan` ouvre l'interface au réseau local, génère un **code à 4 chiffres** et l'affiche dans le terminal avec une adresse par appareil réseau détecté :
+### Accès depuis une tablette ou un téléphone
+Depuis la 1.3, l'interface est accessible au réseau local **par défaut**, sans rien à taper au lancement : elle génère un **code à 4 chiffres** et l'affiche dans le terminal avec une adresse par appareil réseau détecté :
 ```
 CODE D'ACCES : 6187
 Accessible depuis une tablette/telephone sur le meme reseau :
@@ -32,7 +30,7 @@ Sur la tablette, ouvre simplement ce lien (rien à copier-coller) : un écran de
 
 Le code est sauvegardé dans `x32_lan_config.json` (non versionné, comme les scènes) et reste le même d'un lancement à l'autre, sauf relance avec `--lan-nouveau-code` (par exemple en fin de contrat, ou si le code a été vu par quelqu'un qui ne devrait plus avoir accès). Au-delà de 5 codes faux d'affilée depuis une même adresse, l'appli impose une pause croissante (30 s, 1 min, 2 min...) avant de réessayer, pour ralentir un brute-force du code.
 
-`--lan-sans-mdp` désactive cette protection pour qui préfère l'usage sans mot de passe des applis officielles Behringer (X-AIR Edit, M32-Edit). Dans les deux cas, la connexion reste en **http, non chiffrée** : à réserver à un réseau de confiance (pas un Wi-Fi public de festival), jamais exposé directement sur Internet. Un code à 4 chiffres (10 000 combinaisons) protège d'un tiers qui tomberait sur l'interface par hasard, pas d'un attaquant déterminé qui a déjà accès à ce réseau : c'est un compromis d'usage assumé, pas un vrai mot de passe.
+`--lan-sans-mdp` désactive cette protection pour qui préfère l'usage sans mot de passe des applis officielles Behringer (X-AIR Edit, M32-Edit). `--local-only` revient à l'ancien comportement (avant la 1.3) : accessible seulement depuis cette machine, sans code. Dans tous les cas où le réseau est ouvert, la connexion reste en **http, non chiffrée** : à réserver à un réseau de confiance (pas un Wi-Fi public de festival), jamais exposé directement sur Internet. Un code à 4 chiffres (10 000 combinaisons) protège d'un tiers qui tomberait sur l'interface par hasard, pas d'un attaquant déterminé qui a déjà accès à ce réseau : c'est un compromis d'usage assumé, pas un vrai mot de passe.
 
 ## Limites connues (non vérifiées sur console réelle)
 Développé d'après la documentation OSC non officielle de la X32 et testé uniquement contre un simulateur : les formats de requête (meters, nodes de routing) restent à valider sur une vraie X32. L'appli relit la console après chaque envoi et signale les écarts. Faire un essai hors show avant tout usage en live.

@@ -7,15 +7,15 @@ Petit outil pour regler, sauvegarder et rappeler les GAINS (preamps / headamps)
 d'une Behringer X32 / Midas M32 via le protocole OSC (UDP, port 10023).
 
 - Aucune dependance : Python 3.8+ (bibliotheque standard uniquement).
-- L'interface s'ouvre dans le navigateur (serveur local 127.0.0.1 par defaut).
+- L'interface s'ouvre dans le navigateur, accessible aussi depuis le reseau local (tablette, telephone),
+  protegee par un code a 4 chiffres affiche au demarrage. Option --local-only pour desactiver cet acces reseau.
 - Les scenes de gains sont stockees dans x32_presets.json a cote du script.
-- Option --lan : ouvre l'interface au reseau local (tablette, telephone), protegee par un jeton d'acces.
 
 Usage :
-    python x32_gain_recall.py              # lance l'appli
+    python x32_gain_recall.py              # lance l'appli (accessible au reseau local, code a 4 chiffres)
     python x32_gain_recall.py --sim        # lance avec une X32 simulee (test sans console)
     python x32_gain_recall.py --ip 192.168.1.50
-    python x32_gain_recall.py --lan        # accessible depuis une tablette/telephone (jeton d'acces)
+    python x32_gain_recall.py --local-only # accessible uniquement depuis cette machine (comme avant la 1.3)
 
 Sources du protocole : "UNOFFICIAL X32/M32 OSC REMOTE PROTOCOL" (P.-G. Maillot), v4.02.
   - /headamp/[000..127]/gain    : float 0..1  <->  -12..+60 dB, pas de 0,5 dB (145 valeurs)
@@ -2018,24 +2018,25 @@ def main():
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
     ap.add_argument("--data", help="chemin du fichier de scenes (defaut : x32_presets.json a cote du script)")
     ap.add_argument(
-        "--lan",
+        "--local-only",
         action="store_true",
         help=(
-            "ouvre l'interface au reseau local (tablette, telephone, autre PC) au lieu de cette seule machine. "
-            "Protegee par un code a 4 chiffres, saisi une fois sur l'appareil (voir --lan-sans-mdp pour le desactiver)."
+            "n'ouvre PAS l'interface au reseau local : accessible seulement depuis cette machine (127.0.0.1), "
+            "sans code d'acces. Comportement des versions 1.2 et anterieures."
         ),
     )
     ap.add_argument(
         "--lan-sans-mdp",
         action="store_true",
-        help="avec --lan : desactive le code d'acces. AUCUNE protection, a reserver a un reseau vraiment de confiance.",
+        help="desactive le code d'acces du mode reseau local. AUCUNE protection, a reserver a un reseau vraiment de confiance.",
     )
     ap.add_argument(
         "--lan-nouveau-code",
         action="store_true",
-        help="avec --lan : regenere le code d'acces (deconnecte tous les appareils deja connectes).",
+        help="regenere le code d'acces du mode reseau local (deconnecte tous les appareils deja connectes).",
     )
     a = ap.parse_args()
+    a.lan = not a.local_only  # accessible au reseau local par defaut depuis la 1.3 ; --local-only revient a l'ancien comportement
 
     global ALLOW_ANY_HOST, LAN_CODE
     ALLOW_ANY_HOST = bool(a.lan)
@@ -2083,11 +2084,11 @@ def main():
     if a.lan:
         print("")
         if LAN_CODE:
-            print("Mode --lan actif, protege par un code (pas de https : reseau de confiance recommande).")
+            print("Accessible au reseau local, protege par un code (pas de https : reseau de confiance recommande).")
             print("CODE D'ACCES : %s" % LAN_CODE)
             print("(sauvegarde dans %s ; pour un nouveau code : relancer avec --lan-nouveau-code)" % code_path)
         else:
-            print("!!! Mode --lan-sans-mdp actif : AUCUNE protection, AUCUN chiffrement (http, pas https). !!!")
+            print("!!! --lan-sans-mdp actif : AUCUNE protection, AUCUN chiffrement (http, pas https). !!!")
             print("!!! Toute personne sur ce reseau peut piloter la console via cette adresse.               !!!")
         if lan_urls:
             print("Accessible depuis une tablette/telephone sur le meme reseau :")
