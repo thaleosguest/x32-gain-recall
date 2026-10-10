@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.3.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.4.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -10,12 +10,25 @@ Version courante : **1.3.0** (voir [CHANGELOG](CHANGELOG.md)).
 - +48 V : confirmation à l'activation, jamais rappelé par défaut. Verrou d'édition. Déplacement relatif (un clic ne change rien).
 - Vumètre d'entrée discret sur chaque voie (on/off).
 - Onglet Routing : charger en un clic un routing X32 (profil « Routing LV1 » intégré), avec aperçu des différences, vérification et annulation.
+- Bouton « Scanner » : recherche les X32/M32 sur le réseau local (broadcast `/xinfo`, voir [CHANGELOG](CHANGELOG.md)) ; la saisie manuelle de l'IP reste toujours possible si le scan ne trouve rien.
 - Accès depuis une tablette/téléphone sur le réseau local (`--lan`), protégé par un jeton d'accès.
 
 ## Utilisation
-**Avec Python** : `python x32_gain_recall.py` (ou double-clic sur `Lancer_X32_Gain_Recall.bat`), puis entrer l'IP de la X32 (Setup → Network) et *Connecter*. Option `--sim` : X32 simulée, sans console.
+**Avec Python** : `python x32_gain_recall.py` (ou double-clic sur `Lancer_X32_Gain_Recall.bat`), puis entrer l'IP de la X32 (Setup → Network) et *Connecter*, ou *Scanner* pour la trouver automatiquement sur le réseau local. Option `--sim` : X32 simulée, sans console.
 
 **Exécutable Windows** : dans l'onglet *Releases* du dépôt (généré automatiquement par GitHub Actions à chaque tag `vX.Y.Z`). Non signé : Windows SmartScreen / antivirus peuvent le signaler ; comparer avec le fichier `.sha256` fourni.
+
+### Fenêtre compagnon (mode réduit, toujours au premier plan)
+`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat`, ou `X32_Gain_Float.exe` dans les Releases) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille et banque affichée sont mémorisées dans `x32_float_config.json` (non versionné) pour le prochain lancement.
+
+Se connecte en direct à la console, indépendamment de `x32_gain_recall.py` (les deux peuvent tourner en même temps) :
+```
+python x32_gain_float.py --ip 192.168.1.50
+python x32_gain_float.py --sim
+```
+**Nécessite tkinter**, inclus par défaut avec l'installeur officiel python.org (case « tcl/tk and IDLE » cochée par défaut) — pas une dépendance à installer séparément, mais à ne pas décocher à l'installation. L'exécutable Windows des Releases n'a pas ce problème (tkinter est inclus dedans).
+
+Pas d'alignement automatique avec la fenêtre LV1 réelle : ça dépend de votre résolution d'écran et du zoom de la LV1, qu'on ne peut pas deviner depuis ici — à régler à la main une fois, puis c'est mémorisé. La diode de niveau n'est pas le vrai détecteur de clip de la console (voir [CHANGELOG](CHANGELOG.md)), c'est une approximation par seuil sur le niveau mesuré.
 
 Les scènes sont enregistrées à côté du programme (`x32_presets.json`, `x32_routings.json`), non versionnées (voir `.gitignore`).
 

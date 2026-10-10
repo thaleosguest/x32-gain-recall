@@ -42,7 +42,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1134,6 +1134,54 @@ def _local_ipv4_addresses():
     return sorted(ips)
 
 
+def scan_network(timeout=1.5, port=X32_PORT):
+    """Decouvre les consoles X32/M32 sur le reseau local : diffuse /xinfo en broadcast UDP sur le port OSC
+    (10023) et collecte les reponses pendant `timeout` secondes.
+    /xinfo est la requete d'identification documentee du protocole OSC X32 (deja utilisee ailleurs dans ce
+    fichier, par ex. a la connexion manuelle). Le broadcast lui-meme n'est pas documente officiellement, mais
+    une capture Wireshark independante (forum ControlBooth, utilisateur StradivariusBone, sujet "What ports
+    does X32 Edit need?") montre que X32-Edit procede ainsi : il envoie sur l'adresse de broadcast, meme port,
+    et attend une reponse. Je n'ai pas de source confirmant le format exact du paquet d'X32-Edit : ce qui suit
+    est une reconstruction (broadcast + /xinfo), pas une capture de son trafic reel."""
+    found = {}
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        s.bind(("", 0))
+        s.settimeout(0.2)
+    except OSError:
+        return []
+    pkt = osc_encode("/xinfo")
+    targets = {"255.255.255.255"}
+    for ip in _local_ipv4_addresses():
+        parts = ip.split(".")
+        if len(parts) == 4:
+            targets.add(".".join(parts[:3]) + ".255")  # broadcast dirige /24 : passe mieux certains pare-feux/VPN
+    try:
+        for t in targets:
+            try:
+                s.sendto(pkt, (t, port))
+            except OSError:
+                pass
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            try:
+                data, (ip, _rp) = s.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            try:
+                addr, args = osc_decode(data)
+            except Exception:
+                continue
+            if addr == "/xinfo" and len(args) >= 4:
+                found[ip] = {"ip": ip, "name": str(args[1]), "model": str(args[2]), "fw": str(args[3])}
+    finally:
+        s.close()
+    return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
+
+
 def start_sim():
     global SIM
     if SIM and SIM.is_alive():
@@ -1363,15 +1411,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/refresh":
             threading.Thread(target=CLIENT.request_all, daemon=True).start()
             return self._json({"ok": True})
-        if p == "/api/probe":
-            # Lecture seule : /node <chemin> sur la console, sans jamais rien ecrire. Sert a decouvrir des
-            # chemins OSC non documentes (ex. horloge) directement sur le materiel, plutot que de deviner.
-            paths = [str(x)[:200] for x in d.get("paths", [])][:8]
-            paths = [x for x in paths if x.startswith("/")]
-            if not CLIENT.snapshot()["connected"]:
-                return self._json({"ok": False, "error": "Non connecte a la console"})
-            nodes = CLIENT.get_nodes(paths, timeout=2.5) if paths else {}
-            return self._json({"ok": True, "nodes": nodes})
+        if p == "/api/scan":
+            return self._json({"ok": True, "found": scan_network()})
         if p == "/api/gain":
             v = CLIENT.set_gain(int(d["idx"]), float(d["db"]))
             return self._json({"ok": v is not None, "db": v})
@@ -1622,6 +1663,7 @@ body.v-rout #rview{display:grid}
     <div class="screen"><span class="led" id="led"></span><input id="ip" placeholder="IP de la X32" spellcheck="false"></div>
     <button class="pill on" id="bconn">Connecter</button>
     <button class="pill" id="bdemo" title="Simulateur de X32 en local pour essayer l'appli sans console">D&eacute;mo</button>
+    <button class="mini" id="bscan" title="Chercher les X32/M32 sur le r&eacute;seau local (diffusion /xinfo)">&#128269; Scanner</button>
     <button class="mini" id="bref" title="Relire tous les gains depuis la console">&#8635; Relire</button>
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
@@ -1675,19 +1717,6 @@ body.v-rout #rview{display:grid}
         <button class="btn" id="rundo" disabled>&#8630; Annuler le dernier routing</button>
         <div id="rlast"></div>
         <div class="rnote">Avant l'envoi, l'appli lit le routing actuel et vous montre les lignes qui changent. Après l'envoi, elle relit la console pour confirmer. Les réglages du S16 (encodeur des sorties) ne font pas partie d'une scène : à régler sur le boîtier.</div>
-        <div class="h" style="margin-top:14px">Setup console (sonde OSC)</div>
-        <div class="rnote">Aucun chemin OSC documenté n'a été trouvé pour l'horloge (clock) de la X32 : ni le protocole
-          OSC non-officiel, ni les bibliothèques de contrôle existantes ne le mentionnent. Ceci lit un chemin en
-          lecture seule sur la console pour vérifier s'il existe, <b>sans jamais rien modifier</b>. Un résultat vide
-          veut dire que ce chemin n'existe pas ou n'est pas exposé en OSC — pas une panne de l'appli.</div>
-        <div class="row"><input class="inp" id="ppath" placeholder="/config/clock" value="/config/clock">
-          <button class="btn" id="pgo" style="flex:0 0 70px">Sonder</button></div>
-        <div class="row">
-          <button class="mini pchip" data-p="/config/clock">/config/clock</button>
-          <button class="mini pchip" data-p="/-clock">/-clock</button>
-          <button class="mini pchip" data-p="/-prefs">/-prefs</button>
-        </div>
-        <div id="presult" class="rnote" style="font-family:Consolas,monospace;white-space:pre-wrap;background:#0d0e0f;border:1px solid var(--line2);border-radius:5px;padding:6px 8px;min-height:30px"></div>
       </div>
     </div>
   </div>
@@ -1903,6 +1932,20 @@ $("#bconn").onclick=()=>{
 };
 $("#ip").addEventListener("keydown",e=>{if(e.key==="Enter")$("#bconn").click();});
 $("#bdemo").onclick=()=>{$("#ip").value="127.0.0.1";api("/api/demo",{}).then(r=>{if(!r.ok)toast(r.error,"err");});};
+$("#bscan").onclick=()=>{
+  const b=$("#bscan");b.disabled=true;b.textContent="Recherche…";
+  api("/api/scan",{}).then(r=>{
+    b.disabled=false;b.innerHTML="&#128269; Scanner";
+    const list=r.found||[];
+    if(!list.length)return modal("Aucune console trouvée",
+      "<p>Rien n'a répondu au scan réseau. Causes possibles : la X32 est sur un autre sous-réseau/VLAN, "+
+      "un pare-feu bloque le broadcast UDP, ou le Wi-Fi/switch filtre le broadcast entre appareils. "+
+      "Entrez l'IP manuellement (Setup → Network sur la console).</p>",[{t:"OK",go:1}]);
+    const rows=list.map(c=>`<div class="pi" data-ip="${esc(c.ip)}" style="cursor:pointer"><b>${esc(c.name||"?")} — ${esc(c.ip)}</b><span>${esc(c.model||"?")} · fw ${esc(c.fw||"?")}</span></div>`).join("");
+    modal("Console(s) trouvée(s)",`<div style="display:flex;flex-direction:column;gap:6px">${rows}</div>`,[{t:"Annuler"}]);
+    document.querySelectorAll("#modal .pi").forEach(el=>el.onclick=()=>{$("#ip").value=el.dataset.ip;$("#modal").style.display="none";});
+  }).catch(()=>{b.disabled=false;b.innerHTML="&#128269; Scanner";});
+};
 $("#bref").onclick=()=>{api("/api/refresh",{});toast("Relecture des gains…");};
 $("#bvu").onclick=()=>api("/api/meters",{on:!S.meters_on});
 $("#block").onclick=()=>{locked=!locked;document.body.classList.toggle("locked",locked);$("#block").classList.toggle("act",locked);
@@ -1977,24 +2020,6 @@ $("#rload").onclick=async()=>{
    [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
 };
 $("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
-
-/* ---------- sonde OSC en lecture seule (decouverte de chemins non documentes, ex. horloge) ---------- */
-function doProbe(){
-  const p=$("#ppath").value.trim();const out=$("#presult");
-  if(!p.startsWith("/")){out.textContent="Le chemin doit commencer par /";return;}
-  if(!S.connected){out.textContent="Non connecté à la console.";return;}
-  out.textContent="Interrogation de "+p+" …";
-  api("/api/probe",{paths:[p]}).then(r=>{
-    if(!r.ok){out.textContent="Erreur : "+(r.error||"?");return;}
-    const v=r.nodes[p];
-    out.textContent=(v===null||v===undefined)
-      ?p+" → aucune réponse (chemin probablement inexistant ou non exposé en OSC)."
-      :p+" → "+v;
-  });
-}
-$("#pgo").onclick=doProbe;
-$("#ppath").addEventListener("keydown",e=>{if(e.key==="Enter")doProbe();});
-document.querySelectorAll(".pchip").forEach(b=>b.onclick=()=>{$("#ppath").value=b.dataset.p;doProbe();});
 
 /* ---------- vumetre (poll leger ~16 Hz, attaque instantanee, retombee 24 dB/s, crete 1,2 s) ---------- */
 const VU={};let vuDead=false,lastLive=performance.now();
