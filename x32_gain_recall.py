@@ -43,7 +43,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.4.4"
+APP_VERSION = "1.5.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1185,7 +1185,12 @@ def scan_network(timeout=1.5, port=X32_PORT):
 
 
 def launch_float_window():
-    """Lance x32_gain_float.py (ou son .exe) en tant que processus separe, SUR CETTE MACHINE.
+    """Lance la fenetre flottante en tant que processus separe, SUR CETTE MACHINE.
+
+    Depuis la 1.5.0, plus de second .exe a gerer : la fenetre flottante est integree au meme
+    executable (X32_Gain_Recall.exe --float), et ce bouton relance simplement ce meme
+    executable/script avec ce drapeau interne. Sous Windows, CREATE_NO_WINDOW evite qu'une
+    deuxieme fenetre de console (noire, vide) n'apparaisse a cote de la fenetre flottante.
 
     Important : ce lancement se fait du cote serveur, pas du cote de l'appareil qui a clique
     le bouton. Si le navigateur qui a clique est sur une tablette connectee a ce serveur via le
@@ -1196,18 +1201,22 @@ def launch_float_window():
     """
     frozen = getattr(sys, "frozen", False)
     here = os.path.dirname(os.path.abspath(sys.executable if frozen else __file__))
+    if frozen:
+        cmd = [sys.executable, "--float", "--port", str(WEB_PORT)]
+    else:
+        cmd = [sys.executable, os.path.abspath(__file__), "--float", "--port", str(WEB_PORT)]
+    if ALLOW_ANY_HOST and LAN_CODE:
+        # Quiconque clique ce bouton est deja authentifie dans le navigateur (sinon la page de
+        # connexion s'affiche avant meme de voir ce bouton) : on lui offre une session toute prete
+        # plutot que de lui faire retaper le code d'acces --lan dans la fenetre flottante separee.
+        tok = secrets.token_urlsafe(24)
+        SESSIONS.add(tok)
+        cmd += ["--session-token", tok]
+    kwargs = {"cwd": here}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        if frozen:
-            # Build Windows : X32_Gain_Recall.exe et X32_Gain_Float.exe sont cote a cote (voir build.yml)
-            exe = os.path.join(here, "X32_Gain_Float.exe")
-            if not os.path.isfile(exe):
-                return False, "X32_Gain_Float.exe introuvable a cote de %s (voir la page Releases)." % os.path.basename(sys.executable)
-            subprocess.Popen([exe, "--port", str(WEB_PORT)], cwd=here)
-        else:
-            script = os.path.join(here, "x32_gain_float.py")
-            if not os.path.isfile(script):
-                return False, "x32_gain_float.py introuvable a cote de x32_gain_recall.py."
-            subprocess.Popen([sys.executable, script, "--port", str(WEB_PORT)], cwd=here)
+        subprocess.Popen(cmd, **kwargs)
     except OSError as e:
         return False, "Lancement impossible : %s" % e
     return True, ""
@@ -1325,7 +1334,9 @@ class Handler(BaseHTTPRequestHandler):
         if needs_login:
             return self._reject_auth_api()
         if path == "/api/state":
-            self._json(CLIENT.snapshot())
+            snap = CLIENT.snapshot()
+            snap["lan_code"] = LAN_CODE  # affiche le code dans l'UI (deja protege par needs_login ci-dessus)
+            self._json(snap)
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
         elif path == "/api/routings":
@@ -1703,6 +1714,7 @@ body.v-rout #rview{display:grid}
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
+    <span id="lancode" class="mini" style="display:none;cursor:default" title="Code à saisir sur une tablette/téléphone pour accéder à cette interface"></span>
     <div class="logo">X32 GAIN RECALL<small>OSC &middot; UDP 10023 &middot; v__APP_VERSION__</small></div>
   </div>
 
@@ -1897,6 +1909,9 @@ function update(){
   else{w.style.display="block";w.innerHTML=S.trying?"<b>Connexion en cours…</b><br>En attente d'une réponse de la console sur "+esc(S.ip)+" (UDP 10023). Si rien n'arrive : vérifiez l'IP (X32 : Setup → Network), que le PC est sur le même réseau/sous-réseau, et le pare-feu Windows."
     :"<b>1.</b> Sur la X32 : <b>Setup → Network</b> pour lire son adresse IP.<br><b>2.</b> Entrez-la en haut puis <b>Connecter</b>.<br><b>3.</b> Réglez les gains, sauvez une scène, rappelez-la plus tard.<br><br>Pas de console sous la main ? Le bouton <b>Démo</b> lance une X32 simulée.";}
   renderStatus();renderPresetButtons();routingButtons();
+  const lc=$("#lancode");
+  if(S.lan_code){lc.style.display="";lc.innerHTML="&#128273; Code tablette : <b>"+esc(S.lan_code)+"</b>";}
+  else{lc.style.display="none";}
 }
 function renderStatus(){
   const i=S.info||{};const c=S.connected?`<b class="good">● Connecté</b> ${esc(i.model||"X32")} ${esc(i.name||"")} ${i.fw?"· fw "+esc(i.fw):""} · ${S.known}/128 gains lus`+(S.demo?' · <b style="color:var(--amber)">SIMULATEUR</b>':""):
@@ -2206,8 +2221,10 @@ def main():
         print("")
         if LAN_CODE:
             print("Accessible au reseau local, protege par un code (pas de https : reseau de confiance recommande).")
-            print("CODE D'ACCES : %s" % LAN_CODE)
-            print("(sauvegarde dans %s ; pour un nouveau code : relancer avec --lan-nouveau-code)" % code_path)
+            print("+---------------------+")
+            print("|  CODE D'ACCES : %s |" % LAN_CODE)
+            print("+---------------------+")
+            print("(aussi affiche dans l'interface web, en haut a droite ; sauvegarde dans %s ; pour un nouveau code : relancer avec --lan-nouveau-code)" % code_path)
         else:
             print("!!! --lan-sans-mdp actif : AUCUNE protection, AUCUN chiffrement (http, pas https). !!!")
             print("!!! Toute personne sur ce reseau peut piloter la console via cette adresse.               !!!")
@@ -2233,4 +2250,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if "--float" in sys.argv:
+        # Drapeau interne (jamais tape par l'utilisateur a la main - utilise par le bouton "Float" du
+        # navigateur et par launch_float_window() ci-dessus) : delegue entierement a la fenetre
+        # flottante, importee ici seulement (et non en haut du fichier) pour que ce script continue a
+        # demarrer sans tkinter quand on ne s'en sert pas comme fenetre flottante.
+        sys.argv.remove("--float")
+        import x32_gain_float
+        x32_gain_float.main()
+    else:
+        main()

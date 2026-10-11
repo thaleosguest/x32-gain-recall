@@ -46,6 +46,11 @@ A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette s
     tactile, choix arbitraire de ma part faute de pouvoir tester sur un vrai ecran tactile d'ici :
     ajustable avec --sensitivity si ce n'est pas le bon compromis pour vous.
 
+DEPUIS LA 1.5.0 : plus besoin de gerer deux .exe separes. X32_Gain_Recall.exe integre desormais ce
+fichier : le bouton "Float" du navigateur (ou `X32_Gain_Recall.exe --float`) relance le meme
+executable avec ce drapeau interne, qui delegue a main() ci-dessous. Ce fichier reste aussi utilisable
+seul (en Python source, cote pratique pour qui ne veut pas du tout de l'exe principal).
+
 Usage :
     python x32_gain_float.py                        # se connecte a x32_gain_recall.py sur 127.0.0.1:8032
     python x32_gain_float.py --port 8033             # ... si l'appli principale a pris un autre port
@@ -66,10 +71,10 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
-    PresetStore, RoutingStore, pick_data_path,
+    PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
 
-FLOAT_VERSION = "2.1.0"
+FLOAT_VERSION = "2.2.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
@@ -111,13 +116,26 @@ class ServerBackend:
     (cookie) si l'appli principale tourne en mode --lan avec code d'acces : needs_login passe a True,
     l'appelant doit alors fournir le code via login(code)."""
 
-    def __init__(self, port):
+    def __init__(self, port, session_token=None):
         self.base = "http://127.0.0.1:%d" % port
         self.jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
         self.needs_login = False
         self.last_error = ""
         self.reachable = False
+        if session_token:
+            # Deja authentifie par le bouton "Float" du navigateur (qui a lui-meme deja le code
+            # d'acces --lan valide) : on recoit une session toute prete, pas besoin de retaper le
+            # code dans cette fenetre separee. Sans ca, needs_login passerait a True au premier
+            # /api/state et redemanderait le code, alors que l'utilisateur vient tout juste de le
+            # taper dans le navigateur il y a une seconde.
+            self.jar.set_cookie(http.cookiejar.Cookie(
+                version=0, name=LAN_COOKIE, value=session_token,
+                port=None, port_specified=False,
+                domain="127.0.0.1", domain_specified=True, domain_initial_dot=False,
+                path="/", path_specified=True, secure=False, expires=None,
+                discard=True, comment=None, comment_url=None, rest={}, rfc2109=False,
+            ))
 
     def _get(self, path):
         try:
@@ -448,7 +466,7 @@ class FloatApp:
         if args.direct:
             self.backend = DirectBackend()
         else:
-            self.backend = ServerBackend(args.port)
+            self.backend = ServerBackend(args.port, session_token=args.session_token)
 
         self.root = tk.Tk()
         self.root.title("X32 Gain Float")
@@ -487,14 +505,30 @@ class FloatApp:
 
     # -- construction de l'UI -------------------------------------------
     def _build_titlebar(self):
-        bar = tk.Frame(self.root, bg="#0d0e0f", height=20)
+        # Barre de titre : boutons de taille/repli a GAUCHE (plus accessibles au pouce quand la fenetre
+        # est glissee pres du bord), cibles agrandies pour le tactile (padx/pady genereux, pas juste la
+        # police), et une large zone vide AU MILIEU dediee au glisser-deposer au doigt - importante
+        # surtout replie (▸), ou la barre de titre est tout ce qui reste visible pour reattraper la
+        # fenetre : avant la 1.5.0, les boutons occupaient presque toute la largeur et ne laissaient que
+        # de minces interstices pour saisir la fenetre.
+        bar = tk.Frame(self.root, bg="#0d0e0f")
         bar.pack(side="top", fill="x")
         bar.bind("<ButtonPress-1>", self._win_drag_start)
         bar.bind("<B1-Motion>", self._win_drag_move)
 
         self.led_conn = tk.Canvas(bar, width=9, height=9, bg="#0d0e0f", highlightthickness=0)
-        self.led_conn.pack(side="left", padx=(6, 4), pady=5)
+        self.led_conn.pack(side="left", padx=(6, 4), pady=6)
         self._conn_id = self.led_conn.create_oval(1, 1, 8, 8, fill="#555555", outline="")
+
+        self.btn_collapse = tk.Button(bar, text="▾", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
+                                       activebackground="#1c1e20", padx=7, pady=4, command=self._toggle_collapse)
+        self.btn_collapse.pack(side="left", padx=(0, 2), pady=2)
+        tk.Button(bar, text="−", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
+                  activebackground="#1c1e20", padx=7, pady=4,
+                  command=lambda: self._resize_strips(-2)).pack(side="left", padx=1, pady=2)
+        tk.Button(bar, text="+", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
+                  activebackground="#1c1e20", padx=7, pady=4,
+                  command=lambda: self._resize_strips(2)).pack(side="left", padx=(1, 8), pady=2)
 
         self.bank_var = tk.StringVar(value=BANKS[self.bank][0])
         self.bank_menu = tk.OptionMenu(bar, self.bank_var, *[b[0] for b in BANKS], command=self._select_bank)
@@ -510,18 +544,20 @@ class FloatApp:
                                       activebackground="#1c1e20", command=lambda: self._toggle_panel("routing"))
         self.btn_routing.pack(side="left", padx=1)
 
-        tk.Button(bar, text="−", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
-                  activebackground="#0d0e0f", command=lambda: self._resize_strips(-2)).pack(side="right", padx=1)
-        tk.Button(bar, text="+", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
-                  activebackground="#0d0e0f", command=lambda: self._resize_strips(2)).pack(side="right", padx=1)
         self.btn_lock = tk.Button(bar, text="🔓", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9),
-                                   activebackground="#0d0e0f", command=self._toggle_lock)
+                                   activebackground="#0d0e0f", padx=5, pady=3, command=self._toggle_lock)
         self.btn_lock.pack(side="right", padx=4)
         tk.Button(bar, text="✕", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9),
-                  activebackground="#0d0e0f", command=self.quit).pack(side="right", padx=4)
-        self.btn_collapse = tk.Button(bar, text="▾", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
-                                       activebackground="#0d0e0f", command=self._toggle_collapse)
-        self.btn_collapse.pack(side="right", padx=4)
+                  activebackground="#0d0e0f", padx=5, pady=3, command=self.quit).pack(side="right", padx=4)
+
+        # Poignee de glisser : prend tout l'espace restant entre les boutons de gauche et de droite.
+        # Memes bindings que la barre elle-meme, mais garantie d'etre toujours presente et large, meme
+        # fenetre repliee ou tres etroite - contrairement aux interstices entre boutons.
+        handle = tk.Label(bar, text="⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯", bg="#0d0e0f", fg="#2a2c2e", font=("Segoe UI", 8))
+        handle.pack(side="left", fill="both", expand=True)
+        handle.bind("<ButtonPress-1>", self._win_drag_start)
+        handle.bind("<B1-Motion>", self._win_drag_move)
+        self.drag_handle = handle
 
     def _build_connectbar(self):
         """Barre de connexion, toujours visible : IP + Connecter + Scanner + Démo (mode --direct),
@@ -870,6 +906,9 @@ def main():
     ap.add_argument("--version", action="version", version="X32 Gain Float %s" % FLOAT_VERSION)
     ap.add_argument("--port", type=int, default=8032,
                      help="port local de x32_gain_recall.py déjà lancé (défaut 8032, mode serveur)")
+    ap.add_argument("--session-token", default=None,
+                     help=argparse.SUPPRESS)  # usage interne : passe par le bouton "Float" du navigateur
+                     # pour eviter de retaper le code d'acces --lan ; non documente pour la saisie manuelle
     ap.add_argument("--direct", action="store_true",
                      help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
     ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")
