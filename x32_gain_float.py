@@ -76,7 +76,6 @@ import http.cookiejar
 import json
 import math
 import os
-import re
 import sys
 import threading
 import time
@@ -93,10 +92,11 @@ from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
+from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
 FLOAT_VERSION = "2.6.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
-STRIP_EXTRA_H = 112       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0, +14 pour le nom LV1)
+STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
@@ -108,13 +108,14 @@ TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939
 BLUE = "#31b6f7"   # meme bleu "action primaire" que le navigateur (.pill.on), pour une identite visuelle coherente
 
 
-def short_label(idx):
-    """Repere court de la voie, meme convention que le navigateur (fonction label() en JS) : '5', 'A1', 'B3'."""
+def strip_tag(idx):
+    """Repere de voie avec la source : 'L 15' (Local 15), 'A 1' / 'B 3' (AES50-A/B), comme demande
+    pour la ligne « L 15 = EXP 15 » du float."""
     if idx < 32:
-        return str(idx + 1)
+        return "L %d" % (idx + 1)
     if idx < 80:
-        return "A%d" % (idx - 31)
-    return "B%d" % (idx - 79)
+        return "A %d" % (idx - 31)
+    return "B %d" % (idx - 79)
 
 
 def load_cfg():
@@ -274,7 +275,7 @@ class ServerBackend:
 #  Backend 2 : connexion OSC directe (--direct), sans l'appli principale
 # --------------------------------------------------------------------------
 class DirectBackend:
-    def __init__(self):
+    def __init__(self, companion_url=None, color_poll=1.0):
         self.client = X32Client()
         self.sim = None
         self.needs_login = False
@@ -292,6 +293,11 @@ class DirectBackend:
             x32_gain_recall.LV1 = PatchMap(
                 manual_path=os.path.join(os.path.dirname(os.path.abspath(self._data_path)), MANUAL_FILENAME),
                 session_path=LIVE_DB).start()
+        # Couleur + nom des canaux LV1 (Companion) : meme interrogateur que l'appli principale, lu par
+        # X32Client.snapshot() dans x32_gain_recall.LV1_COMPANION (champ lv1_channels).
+        if companion_url and x32_gain_recall.LV1_COMPANION is None:
+            x32_gain_recall.LV1_COMPANION = CompanionPoller(
+                companion_url, lambda: x32_gain_recall.lv1_channels_in_use(self.client), color_poll).start()
 
     def login(self, code):
         return True
@@ -410,7 +416,7 @@ class Strip(tk.Frame):
         # l'API HTTP de Bitfocus Companion (module communautaire companion-module-waves-lv1), a partir
         # du meme numero EXP deja lu en direct sur la console (pas de 2e correspondance a deviner).
         # Grise/neutre (PANEL) tant qu'aucune couleur n'est connue - jamais une couleur inventee : voir
-        # FloatApp._color_poll_loop() et set_color() plus bas.
+        # lv1/companion.py et set_color() plus bas.
         self.swatch = tk.Frame(self, bg=PANEL, height=5, highlightthickness=0)
         self.swatch.pack(fill="x", side="top")
         self.swatch.pack_propagate(False)
@@ -420,15 +426,18 @@ class Strip(tk.Frame):
         # potard est quel preampli. Le numero EXP (2e ligne) est rempli par set_exp(), a partir
         # d'une lecture EN DIRECT du patch de la console (jamais une supposition) - vide tant que
         # non connecte ou non lu.
-        self._tag = short_label(idx)
-        self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=TXT,
-                                 font=("Segoe UI", 8, "bold"), justify="center")
+        # Depuis la 2.6.0 : « L 15 = EXP 15 » sur une ligne (sur deux si la voie est trop etroite), puis
+        # le nom du canal LV1 en plus gros - mise en page demandee par Joseph.
+        self._tag = strip_tag(idx)
+        self._tag_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
+        self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=MUT,
+                                 font=self._tag_font, justify="center")
         self.chlabel.pack(pady=(3, 0))
 
         # Nom du canal LV1 qui recoit ce preampli (depuis la 2.6.0) : variable Companion in<N>_name du
         # canal donne par la table de patch LV1 (meme canal que la couleur). Voir set_name().
-        self._name_font = tkfont.Font(family="Segoe UI", size=7)
-        self.namelbl = tk.Label(self, text="", bg=PANEL, fg=MUT, font=self._name_font)
+        self._name_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
+        self.namelbl = tk.Label(self, text="", bg=PANEL, fg=TXT, font=self._name_font)
         self.namelbl.pack(fill="x", padx=1)
         self._name_full = ""
 
@@ -501,7 +510,10 @@ class Strip(tk.Frame):
         """exp_num : numero Carte/EXP (int) lu EN DIRECT sur la console pour cette voie, ou None/0 si
         non connu (non connecte, lecture pas encore faite, ou ce canal n'est pas patche vers la
         carte) - jamais une supposition, voir X32Client.refresh_exp_map()."""
-        text = self._tag + ("\nEXP %d" % exp_num if exp_num else "")
+        text = self._tag
+        if exp_num:
+            one = "%s = EXP %d" % (self._tag, exp_num)
+            text = one if self._tag_font.measure(one) <= self.width - 4 else "%s\nEXP %d" % (self._tag, exp_num)
         if self.chlabel.cget("text") != text:
             self.chlabel.config(text=text)
 
@@ -522,7 +534,7 @@ class Strip(tk.Frame):
 
     def set_color(self, hex_color):
         """hex_color : couleur "#RRGGBB" du canal LV1 correspondant, lue EN DIRECT via Companion
-        (FloatApp._color_poll_loop), ou None si inconnue (Companion desactive/injoignable, canal non
+        (lv1/companion.py, via lv1_channels), ou None si inconnue (Companion desactive/injoignable, canal non
         patche, ou pas encore interroge) - jamais une couleur inventee, voir la pastille en haut de la
         voie dans __init__."""
         bg = hex_color or PANEL
@@ -601,12 +613,13 @@ class FloatApp:
         # couleurs par canal, et EXP N n'alimente pas forcement In N (ex. In 19 <- EXP 21 + 22).
         self.exp_map = {}
         self.lv1_map = {}                # {numero EXP: canal LV1} (cles str en mode serveur, int en --direct)
-        self.channel_colors = {}         # {canal LV1 (int): "#RRGGBB"}
-        self.channel_names = {}          # {canal LV1 (int): nom tel que dans la LV1}
-        self.companion_url = None if args.no_colors else args.companion.rstrip("/")
+        # Couleur et nom des canaux LV1 : depuis la 2.6.0 c'est l'appli principale qui interroge Companion
+        # (lv1/companion.py) et les partage avec le navigateur via /api/state (lv1_channels) ; en --direct,
+        # DirectBackend lance le meme interrogateur. Plus de thread Companion propre au float.
+        companion_url = None if args.no_colors else args.companion
 
         if args.direct:
-            self.backend = DirectBackend()
+            self.backend = DirectBackend(companion_url, args.color_poll)
         else:
             self.backend = ServerBackend(args.port, session_token=args.session_token)
 
@@ -647,9 +660,6 @@ class FloatApp:
             self.backend.connect(args.ip)
         if args.direct:
             self.ip_var.set(args.ip or "127.0.0.1")
-
-        if self.companion_url:
-            threading.Thread(target=self._color_poll_loop, daemon=True).start()
 
         self._poll()
 
@@ -1129,7 +1139,8 @@ class FloatApp:
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
         lm = snap.get("lv1_map") or {}
-        self.exp_map = em   # relus par _color_poll_loop() (thread separe) - voir __init__
+        lc = snap.get("lv1_channels") or {}
+        self.exp_map = em
         self.lv1_map = lm
         for s in self.strips:
             s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
@@ -1139,8 +1150,9 @@ class FloatApp:
             exp = em.get(str(s.idx), em.get(s.idx))
             s.set_exp(exp)
             ch = self._lv1_channel(exp)
-            s.set_color(self.channel_colors.get(ch) if ch else None)
-            s.set_name(self._display_name(ch))
+            info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}
+            s.set_color(info.get("color"))
+            s.set_name(info.get("label") or ("In %d" % ch if ch else ""))
         self.root.after(200, self._poll)
 
     def _do_login_then_poll(self):
@@ -1148,7 +1160,7 @@ class FloatApp:
         self._login_prompt()
         self._poll()
 
-    # -- couleurs de canaux LV1 (Companion), thread separe --------------------
+    # -- canal LV1 d'une voie -------------------------------------------------
     def _lv1_channel(self, exp):
         """Canal LV1 alimente par ce numero EXP d'apres la table lv1_map, ou None si la table ne le dit pas
         (pastille neutre plutot qu'une couleur d'un autre canal)."""
@@ -1156,61 +1168,6 @@ class FloatApp:
             return None
         lm = self.lv1_map
         return lm.get(str(exp), lm.get(exp))
-
-    def _display_name(self, ch):
-        """Nom affiche sous le repere de voie : le nom LV1 du canal s'il a ete renomme, sinon « In N »
-        (nom par defaut « Channel N », ou Companion injoignable : le numero de canal vient de la table
-        de patch, pas de Companion). "" si la voie n'arrive sur aucun canal LV1."""
-        if not ch:
-            return ""
-        name = (self.channel_names.get(ch) or "").strip()
-        if not name or re.fullmatch(r"Channel\s*%d" % ch, name, re.I):
-            return "In %d" % ch
-        return name
-
-    def _color_poll_loop(self):
-        """Interroge l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la
-        couleur de chaque canal LV1 actuellement patche vers un preampli (numero EXP connu). Tourne
-        dans un thread separe, PAS dans la boucle _poll() a 200ms : 16 requetes HTTP synchrones
-        supplementaires a chaque cycle bloqueraient l'UI (glisser les potards). Les resultats sont
-        publies dans self.channel_colors par reaffectation complete du dict (atomique en CPython),
-        relue par le thread principal dans _poll() - pas de verrou necessaire pour ce pattern."""
-        interval = max(0.3, self.args.color_poll)
-        while True:
-            chans = sorted(set(c for c in (self._lv1_channel(v) for v in self.exp_map.values()) if c))
-            colors = dict(self.channel_colors)   # on garde les dernieres valeurs connues par defaut
-            names = dict(self.channel_names)
-            for n in chans:
-                c = self._fetch_channel_color(n)
-                if c is not None:
-                    colors[n] = c
-                nm = self._fetch_lv1_var(n, "name")
-                if nm is not None:
-                    names[n] = nm
-            # retire les canaux qui ne sont plus concernes (sinon une pastille resterait collee a un
-            # ancien canal apres un changement de routing X32 ou de la table LV1)
-            colors = {n: c for n, c in colors.items() if n in chans}
-            names = {n: c for n, c in names.items() if n in chans}
-            self.channel_colors = colors
-            self.channel_names = names
-            time.sleep(interval)
-
-    def _fetch_lv1_var(self, channel, var):
-        """GET http://.../api/variable/LV1/in<N>_<var>/value - texte brut, ou None si Companion est
-        injoignable ou la variable absente."""
-        try:
-            url = "%s/api/variable/LV1/in%d_%s/value" % (self.companion_url, channel, var)
-            with urllib.request.urlopen(url, timeout=0.6) as r:
-                return r.read().decode("utf-8", "replace").strip()
-        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
-            return None
-
-    def _fetch_channel_color(self, channel):
-        """in<N>_color - renvoie "#RRGGBB" ou None (jamais une couleur inventee : Companion injoignable,
-        variable absente, ou reponse mal formee comptent tous comme "inconnue", pas comme une couleur
-        par defaut)."""
-        txt = self._fetch_lv1_var(channel, "color")
-        return txt if txt and re.fullmatch(r"#[0-9A-Fa-f]{6}", txt) else None
 
     def quit(self):
         save_cfg({"bank": self.bank, "strip_w": self.strip_w,
@@ -1278,10 +1235,11 @@ def main():
     ap.add_argument("--sensitivity", type=float, default=GAIN_DB_PER_PX,
                      help="sensibilité du glisser sur le potard, en dB par pixel (défaut %.2f : plus petit = "
                           "glisser plus doux/précis, plus grand = glisser plus rapide/nerveux)" % GAIN_DB_PER_PX)
-    ap.add_argument("--companion", default="http://127.0.0.1:8000",
-                     help="URL de base de l'API HTTP de Bitfocus Companion (module communautaire "
-                          "companion-module-waves-lv1), pour afficher la couleur LV1 de chaque voie "
-                          "(défaut http://127.0.0.1:8000, port HTTP par défaut de Companion v5.0)")
+    ap.add_argument("--companion", default=COMPANION_URL,
+                     help="avec --direct : URL de l'API HTTP de Bitfocus Companion (module communautaire "
+                          "companion-module-waves-lv1), pour la couleur et le nom LV1 de chaque voie "
+                          "(défaut http://127.0.0.1:8000). En mode normal, c'est l'appli principale qui "
+                          "interroge Companion (son option --companion).")
     ap.add_argument("--no-colors", action="store_true",
                      help="désactive la lecture des couleurs de canaux LV1 via Companion (activée par défaut)")
     ap.add_argument("--color-poll", type=float, default=1.0,

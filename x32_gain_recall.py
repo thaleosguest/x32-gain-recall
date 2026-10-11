@@ -42,6 +42,7 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 
 APP_NAME = "X32 Gain Recall"
@@ -49,7 +50,17 @@ APP_VERSION = "1.9.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
-LV1 = None   # lv1.patchmap.PatchMap (table EXP -> canal LV1), creee dans main() ou par le float en --direct
+LV1 = None            # lv1.patchmap.PatchMap (table EXP -> canal LV1), creee dans main() ou par le float en --direct
+LV1_COMPANION = None  # lv1.companion.CompanionPoller (couleur + nom des canaux LV1), idem
+
+
+def lv1_channels_in_use(client):
+    """Canaux LV1 qui recoivent en ce moment un preampli X32 (EXP lu sur la console -> table LV1) : ceux
+    dont on demande couleur et nom a Companion."""
+    if not LV1:
+        return set()
+    m = LV1.exp_to_channel()
+    return {m.get(e) for e in list(client.exp_map.values()) if e} - {None}
 
 
 # --------------------------------------------------------------------------
@@ -404,6 +415,10 @@ class X32Client:
                 # Vide si rien n'est configure - jamais de correspondance devinee.
                 "lv1_map": LV1.exp_to_channel() if LV1 else {},
                 "lv1": LV1.status() if LV1 else None,
+                # couleur / nom / libelle a afficher par canal LV1 (Companion), partages par le navigateur
+                # et le float - voir lv1/companion.py
+                "lv1_channels": LV1_COMPANION.snapshot() if LV1_COMPANION else {},
+                "companion_ok": LV1_COMPANION.reachable if LV1_COMPANION else None,
             }
 
     def ch_of_ha(self, idx):
@@ -1701,8 +1716,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 .step button:hover{border-color:var(--blue)}
 .dl{height:16px;margin:2px 4px 0;text-align:center;font-size:10.5px;color:var(--mut);white-space:nowrap;overflow:hidden}
 .dl.d{color:var(--amber);font-weight:700}
-.strip .ft{margin-top:4px;background:var(--teal);color:#021;display:flex;justify-content:space-between;align-items:baseline;padding:3px 7px;font-weight:800;font-size:14px}
-.strip .ft .exp{font-size:9.5px;font-weight:700;opacity:.7;white-space:nowrap}
+.strip .ft{margin-top:4px;background:var(--teal);color:#021;display:flex;flex-wrap:wrap;justify-content:center;column-gap:4px;
+  padding:3px 4px;font-weight:800;font-size:12px;line-height:1.2}
+.strip .ft span{white-space:nowrap}
+.strip .hd.nolv1{background:#39424a;color:#c3cbd2}
 .strip.na .ft{background:#39424a;color:#9aa4ac}
 body.locked .strip .bar,body.locked .strip .kn,body.locked .strip .step,body.locked .strip .ph,body.locked .strip .val{opacity:.4;pointer-events:none}
 
@@ -1892,6 +1909,19 @@ function label(i){return i<32?String(i+1):(i<80?"A"+(i-31):"B"+(i-79));}
    lecture a echoue, ou si ce canal n'est pas patche vers la carte en ce moment - jamais un numero
    invente. Se met a jour apres connexion, "Relire", ou l'envoi d'un routing. */
 function expLabel(i){const v=(S.exp_map||{})[i];return v?("EXP "+v):"";}
+/* Repere avec la source, comme dans le float : "L 15" (Local), "A 1" / "B 3" (AES50-A/B). */
+function tag(i){return i<32?"L "+(i+1):(i<80?"A "+(i-31):"B "+(i-79));}
+function footLabel(i){const e=expLabel(i);return e?tag(i)+" = "+e:tag(i);}
+/* meme texte, en deux morceaux insecables : passe sur 2 lignes (« L 15 » / « = EXP 15 ») si la voie
+   est trop etroite, au lieu de couper le numero EXP */
+function footHTML(i){const e=expLabel(i);return "<span>"+tag(i)+"</span>"+(e?"<span>= "+e+"</span>":"");}
+/* Canal LV1 qui recoit ce preampli (table EXP -> canal, lv1/patchmap.py) et sa couleur / son nom lus
+   via Companion par le serveur (lv1/companion.py). null si la voie n'arrive sur aucun canal LV1 :
+   jamais de canal devine. */
+function lv1Of(i){const e=(S.exp_map||{})[i];if(!e)return null;const ch=(S.lv1_map||{})[e];if(!ch)return null;
+  const inf=(S.lv1_channels||{})[ch]||{};return {ch,color:inf.color||null,label:inf.label||("In "+ch)};}
+function inkFor(hex){const n=parseInt(hex.slice(1),16),r=n>>16&255,g=n>>8&255,b=n&255;
+  return (0.299*r+0.587*g+0.114*b)>150?"#05080a":"#ffffff";}
 function fmt(v){return (v>0?"+":"")+v.toFixed(1);}
 function clamp(v){return Math.max(GMIN,Math.min(GMAX,Math.round(v*2)/2));}
 function api(p,body){
@@ -1931,7 +1961,7 @@ function buildStrips(){
       <div class="vu" title="Niveau d'entrée après préampli (dBFS) · vert jusqu'à −18, ambre jusqu'à −6, rouge au-delà"><i class="lv"></i><b class="pk"></b></div></div>
       <div class="kn">${knobSVG()}</div><input class="val" value="—" spellcheck="false">
       <div class="step"><button data-d="-0.5">&minus;</button><button data-d="0.5">+</button></div>
-      <div class="dl"></div><div class="ft"><span class="exp">${expLabel(i)}</span>${label(i)}</div>`;
+      <div class="dl"></div><div class="ft">${footHTML(i)}</div>`;
     box.appendChild(el);
     wire(el,i);
   }
@@ -1989,7 +2019,17 @@ function updateStrip(i){
   const v=cur(i),known=v!==null;
   el.classList.toggle("na",!known);
   const nm=S.names[i]||(i<32?"Ch "+(i+1):(i<80?"AES50-A "+(i-31):"AES50-B "+(i-79)));
-  el.querySelector(".hd").textContent=nm;el.querySelector(".hd").title=nm;
+  // Bandeau du haut : nom + couleur du canal LV1 qui recoit ce preampli (comme les etiquettes de nom de
+  // la LV1) ; sinon, comme avant, le nom X32 sur fond teal.
+  const hd=el.querySelector(".hd"),lv=lv1Of(i);
+  if(lv){hd.textContent=lv.label;hd.title=lv.label+" — canal LV1 In "+lv.ch+" · X32 : "+nm;
+    hd.style.background=lv.color||"#39424a";hd.style.color=lv.color?inkFor(lv.color):"#e9edf0";}
+  else{hd.textContent=nm;hd.style.background="";hd.style.color="";
+    // LV1 suivie mais cette voie n'arrive sur aucun de ses canaux : bandeau gris (le teal se confondrait
+    // avec la couleur par defaut des canaux LV1)
+    const unassigned=Object.keys(S.lv1_map||{}).length>0;hd.classList.toggle("nolv1",unassigned);
+    hd.title=unassigned?nm+" — n'arrive sur aucun canal LV1":nm;}
+  if(lv)hd.classList.remove("nolv1");
   const val=el.querySelector(".val");if(document.activeElement!==val)val.value=known?fmt(v):"—";
   const p=known?(v-GMIN)/(GMAX-GMIN):0;
   el.querySelector(".fill").style.height=(p*100)+"%";
@@ -1997,7 +2037,7 @@ function updateStrip(i){
   const a=-135+270*p;el.querySelector(".kval").setAttribute("d",known&&a>-134?arc(32,32,27,-135,a):"");
   const pt=pol(32,32,20,a);el.querySelector(".kptr").setAttribute("x2",pt[0]);el.querySelector(".kptr").setAttribute("y2",pt[1]);
   const ph=el.querySelector(".ph");ph.classList.toggle("on",S.phantom[i]===1);ph.disabled=S.phantom[i]==null;
-  el.querySelector(".exp").textContent=expLabel(i);
+  const ft=el.querySelector(".ft"),fh=footHTML(i);if(ft.innerHTML!==fh)ft.innerHTML=fh;ft.title=footLabel(i);
   // apercu de la scene selectionnee : repere ambre + delta
   const tg=el.querySelector(".tgt"),dl=el.querySelector(".dl");
   const pr=presets.find(x=>x.id===selId);const t=pr&&pr.gains[String(i)];
@@ -2320,6 +2360,14 @@ def main():
         help="ne lit aucune session LV1 : table manuelle seulement",
     )
     ap.add_argument(
+        "--companion",
+        default=COMPANION_URL,
+        help="URL de l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la couleur et le "
+             "nom des canaux LV1, affiches dans le navigateur et le float (defaut %(default)s)",
+    )
+    ap.add_argument("--no-colors", action="store_true", help="n'interroge pas Companion (ni couleurs ni noms LV1)")
+    ap.add_argument("--color-poll", type=float, default=1.0, help="intervalle (s) d'interrogation de Companion (defaut 1.0)")
+    ap.add_argument(
         "--lv1-device",
         default=",".join(DEFAULT_DEVICES),
         help=(
@@ -2342,6 +2390,9 @@ def main():
         session_path=None if a.lv1_sans_session else a.lv1_session,
         devices=a.lv1_device,
     ).start()
+    global LV1_COMPANION
+    if not a.no_colors:
+        LV1_COMPANION = CompanionPoller(a.companion, lambda: lv1_channels_in_use(CLIENT), a.color_poll).start()
 
     code_path = None
     if a.lan and not a.lan_sans_mdp:
