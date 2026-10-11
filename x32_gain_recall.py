@@ -42,11 +42,14 @@ import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
+
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.8.0"
+APP_VERSION = "1.9.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
+LV1 = None   # lv1.patchmap.PatchMap (table EXP -> canal LV1), creee dans main() ou par le float en --direct
 
 
 # --------------------------------------------------------------------------
@@ -397,6 +400,10 @@ class X32Client:
                 "can_undo": self.undo is not None,
                 "error": self.error,
                 "exp_map": dict(self.exp_map),
+                # numero EXP -> canal LV1 ("In N") : table manuelle et/ou session .emo, voir lv1/patchmap.py.
+                # Vide si rien n'est configure - jamais de correspondance devinee.
+                "lv1_map": LV1.exp_to_channel() if LV1 else {},
+                "lv1": LV1.status() if LV1 else None,
             }
 
     def ch_of_ha(self, idx):
@@ -2294,6 +2301,32 @@ def main():
         action="store_true",
         help="regenere le code d'acces du mode reseau local (deconnecte tous les appareils deja connectes).",
     )
+    ap.add_argument(
+        "--lv1-map",
+        help="table manuelle canal LV1 -> numeros EXP (defaut : %s a cote des scenes), relue a chaud" % MANUAL_FILENAME,
+    )
+    ap.add_argument(
+        "--lv1-session",
+        default=LIVE_DB,
+        help=(
+            "d'ou lire le patch LV1 (table EXP -> canal) : par defaut la session EN DIRECT de la LV1 lancee sur ce PC "
+            "(%(default)s, mise a jour ~1 s apres chaque repatch, sans sauvegarde) ; sinon un .emo, ou un dossier "
+            "dont le .emo le plus recent est relu. La table manuelle reste prioritaire."
+        ),
+    )
+    ap.add_argument(
+        "--lv1-sans-session",
+        action="store_true",
+        help="ne lit aucune session LV1 : table manuelle seulement",
+    )
+    ap.add_argument(
+        "--lv1-device",
+        default=",".join(DEFAULT_DEVICES),
+        help=(
+            "avec --lv1-session : devices LV1 dont le numero de voie = numero EXP de la X32, par priorite, "
+            "separes par des virgules (defaut %(default)s ; voir lv1/session_patch.py)"
+        ),
+    )
     a = ap.parse_args()
     a.lan = not a.local_only  # accessible au reseau local par defaut depuis la 1.3 ; --local-only revient a l'ancien comportement
 
@@ -2302,6 +2335,13 @@ def main():
 
     STORE = PresetStore(a.data or pick_data_path())
     ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_routings.json"))
+
+    global LV1
+    LV1 = PatchMap(
+        manual_path=a.lv1_map or os.path.join(os.path.dirname(os.path.abspath(STORE.path)), MANUAL_FILENAME),
+        session_path=None if a.lv1_sans_session else a.lv1_session,
+        devices=a.lv1_device,
+    ).start()
 
     code_path = None
     if a.lan and not a.lan_sans_mdp:
@@ -2364,6 +2404,12 @@ def main():
             print("Aucune adresse reseau locale detectee automatiquement (verifier la connexion Wi-Fi/Ethernet).")
         print("")
     print("Scenes : %s" % STORE.path)
+    st = LV1.status()
+    print("Patch LV1 (EXP -> canal) : %d EXP connus  [table manuelle : %s (%d canaux)%s]" % (
+        len(LV1.exp_to_channel()), st["manual_file"], st["manual_channels"],
+        ("  [session : %s (%d canaux)]" % (st["session_file"] or st["session_source"], st["session_channels"])) if st["session_source"] else ""))
+    for err in st["errors"].values():
+        print("  ! %s" % err)
     print("Ctrl+C pour quitter.")
     if not a.no_browser:
         threading.Timer(0.6, lambda: webbrowser.open(url)).start()

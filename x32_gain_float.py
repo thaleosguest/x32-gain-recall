@@ -36,14 +36,16 @@ titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'iden
 position mémorisées).
 
 COULEURS DE CANAUX (depuis la 2.5.0) : une fine pastille en haut de chaque voie affiche la couleur du
-canal LV1 correspondant (le "In N" dont le numéro EXP est déjà lu en direct sur la console, voir
-set_exp()), lue EN DIRECT via l'API HTTP de Bitfocus Companion (module communautaire non officiel
+canal LV1 correspondant : numéro EXP lu en direct sur la console (voir set_exp()), puis canal LV1 qui
+reçoit cet EXP d'après la table de patch LV1 (lv1/patchmap.py : base LV1 en direct, table manuelle,
+depuis la 2.6.0 — avant, "EXP N" était supposé alimenter "In N", ce qui est faux dès que le patch LV1
+n'est pas 1:1). Couleur lue EN DIRECT via l'API HTTP de Bitfocus Companion (module communautaire non officiel
 companion-module-waves-lv1, protocole natif LV1 rétro-ingénié — pas une spec Waves officielle). Suppose
 Companion déjà lancé en continu à côté (`--companion http://IP:PORT`, défaut 127.0.0.1:8000 — le port
 HTTP par défaut de Companion v5.0) ; interrogé sur un thread séparé, pas la boucle de gains à 200ms, pour
 ne pas bloquer l'interface sur 16 requêtes HTTP à chaque cycle. `--no-colors` désactive complètement
-cette fonction. Grise/neutre si Companion est injoignable, si le canal n'est pas patché, ou si la lecture
-a échoué — jamais une couleur inventée.
+cette fonction. Grise/neutre si Companion est injoignable, si le canal n'est pas patché, si l'EXP n'est
+pas dans la table de patch LV1, ou si la lecture a échoué — jamais une couleur inventée.
 
 A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette session) :
   - Pas d'alignement pixel-perfect automatique avec la fenetre LV1 reelle (impossible a deviner sans
@@ -84,12 +86,14 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import x32_gain_recall  # noqa: E402  (pour installer la table LV1 en --direct, voir DirectBackend)
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
+from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 
-FLOAT_VERSION = "2.5.0"
+FLOAT_VERSION = "2.6.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
@@ -279,6 +283,13 @@ class DirectBackend:
         # les modifie entre-temps.
         self._data_path = pick_data_path()
         self._routing_path = os.path.join(os.path.dirname(os.path.abspath(self._data_path)), "x32_routings.json")
+        # Table EXP -> canal LV1 : en mode serveur c'est l'appli principale qui la tient (champ lv1_map de
+        # /api/state) ; ici, sans elle, on lit nous-memes les memes sources par defaut (session LV1 en
+        # direct + table manuelle du dossier des scenes). X32Client.snapshot() la lit dans x32_gain_recall.LV1.
+        if x32_gain_recall.LV1 is None:
+            x32_gain_recall.LV1 = PatchMap(
+                manual_path=os.path.join(os.path.dirname(os.path.abspath(self._data_path)), MANUAL_FILENAME),
+                session_path=LIVE_DB).start()
 
     def login(self, code):
         return True
@@ -561,8 +572,12 @@ class FloatApp:
         # (numero EXP par preampli) est mis a jour par le thread principal a chaque _poll() ; le thread
         # de couleurs ci-dessous le relit en lecture seule - pas de verrou necessaire, reaffectation de
         # dict/reference atomique en CPython (GIL), jamais de mutation partagee en place.
+        # Depuis la 2.6.0, la couleur est cherchee pour le CANAL LV1 qui recoit cet EXP (lv1_map, table
+        # EXP -> canal tenue par lv1/patchmap.py), et non plus pour "In <numero EXP>" : la LV1 indexe ses
+        # couleurs par canal, et EXP N n'alimente pas forcement In N (ex. In 19 <- EXP 21 + 22).
         self.exp_map = {}
-        self.channel_colors = {}         # {numero EXP (int): "#RRGGBB"}
+        self.lv1_map = {}                # {numero EXP: canal LV1} (cles str en mode serveur, int en --direct)
+        self.channel_colors = {}         # {canal LV1 (int): "#RRGGBB"}
         self.companion_url = None if args.no_colors else args.companion.rstrip("/")
 
         if args.direct:
@@ -1088,7 +1103,9 @@ class FloatApp:
             self.status_lbl.config(text="", fg=MUT)
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
-        self.exp_map = em   # relu par _color_poll_loop() (thread separe) - voir __init__
+        lm = snap.get("lv1_map") or {}
+        self.exp_map = em   # relus par _color_poll_loop() (thread separe) - voir __init__
+        self.lv1_map = lm
         for s in self.strips:
             s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
             s.set_phantom(snap["phantom"][s.idx] if snap.get("phantom") else None)
@@ -1096,7 +1113,8 @@ class FloatApp:
             # cle string (vient du JSON, mode serveur) ou int (dict Python direct, mode --direct)
             exp = em.get(str(s.idx), em.get(s.idx))
             s.set_exp(exp)
-            s.set_color(self.channel_colors.get(exp) if exp else None)
+            ch = self._lv1_channel(exp)
+            s.set_color(self.channel_colors.get(ch) if ch else None)
         self.root.after(200, self._poll)
 
     def _do_login_then_poll(self):
@@ -1105,6 +1123,14 @@ class FloatApp:
         self._poll()
 
     # -- couleurs de canaux LV1 (Companion), thread separe --------------------
+    def _lv1_channel(self, exp):
+        """Canal LV1 alimente par ce numero EXP d'apres la table lv1_map, ou None si la table ne le dit pas
+        (pastille neutre plutot qu'une couleur d'un autre canal)."""
+        if not exp:
+            return None
+        lm = self.lv1_map
+        return lm.get(str(exp), lm.get(exp))
+
     def _color_poll_loop(self):
         """Interroge l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la
         couleur de chaque canal LV1 actuellement patche vers un preampli (numero EXP connu). Tourne
@@ -1114,24 +1140,24 @@ class FloatApp:
         relue par le thread principal dans _poll() - pas de verrou necessaire pour ce pattern."""
         interval = max(0.3, self.args.color_poll)
         while True:
-            exps = sorted(set(v for v in self.exp_map.values() if v))
+            chans = sorted(set(c for c in (self._lv1_channel(v) for v in self.exp_map.values()) if c))
             colors = dict(self.channel_colors)   # on garde les dernieres valeurs connues par defaut
-            for n in exps:
+            for n in chans:
                 c = self._fetch_channel_color(n)
                 if c is not None:
                     colors[n] = c
-            # retire les canaux qui ne sont plus patches (sinon une pastille resterait collee a un
-            # ancien numero EXP apres un changement de routing)
-            colors = {n: c for n, c in colors.items() if n in exps}
+            # retire les canaux qui ne sont plus concernes (sinon une pastille resterait collee a un
+            # ancien canal apres un changement de routing X32 ou de la table LV1)
+            colors = {n: c for n, c in colors.items() if n in chans}
             self.channel_colors = colors
             time.sleep(interval)
 
-    def _fetch_channel_color(self, exp_num):
+    def _fetch_channel_color(self, channel):
         """GET http://.../api/variable/LV1/in<N>_color/value - renvoie "#RRGGBB" ou None (jamais une
         couleur inventee : Companion injoignable, variable absente, ou reponse mal formee comptent
         tous comme "inconnue", pas comme une couleur par defaut)."""
         try:
-            url = "%s/api/variable/LV1/in%d_color/value" % (self.companion_url, exp_num)
+            url = "%s/api/variable/LV1/in%d_color/value" % (self.companion_url, channel)
             with urllib.request.urlopen(url, timeout=0.6) as r:
                 txt = r.read().decode("utf-8", "replace").strip()
         except (urllib.error.URLError, OSError, ValueError, TimeoutError):

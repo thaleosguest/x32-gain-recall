@@ -1,0 +1,6 @@
+{
+  "_note": "Copier en lv1_patch_map.json. Cle = canal LV1 (In N), valeur = numero(s) EXP qui l'alimentent. Cles en _ ignorees.",
+  "1": [1],
+  "2": [2],
+  "19": [21, 22]
+}
