@@ -35,6 +35,16 @@ REPLIER / DEPLIER : bouton ▾/▸ dans la barre de titre, replie toute la fenê
 titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'identique (banque, taille,
 position mémorisées).
 
+COULEURS DE CANAUX (depuis la 2.5.0) : une fine pastille en haut de chaque voie affiche la couleur du
+canal LV1 correspondant (le "In N" dont le numéro EXP est déjà lu en direct sur la console, voir
+set_exp()), lue EN DIRECT via l'API HTTP de Bitfocus Companion (module communautaire non officiel
+companion-module-waves-lv1, protocole natif LV1 rétro-ingénié — pas une spec Waves officielle). Suppose
+Companion déjà lancé en continu à côté (`--companion http://IP:PORT`, défaut 127.0.0.1:8000 — le port
+HTTP par défaut de Companion v5.0) ; interrogé sur un thread séparé, pas la boucle de gains à 200ms, pour
+ne pas bloquer l'interface sur 16 requêtes HTTP à chaque cycle. `--no-colors` désactive complètement
+cette fonction. Grise/neutre si Companion est injoignable, si le canal n'est pas patché, ou si la lecture
+a échoué — jamais une couleur inventée.
+
 A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette session) :
   - Pas d'alignement pixel-perfect automatique avec la fenetre LV1 reelle (impossible a deviner sans
     connaitre votre resolution d'ecran et le zoom de la LV1 chez vous) : la largeur de voie et la
@@ -64,6 +74,7 @@ import http.cookiejar
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -78,7 +89,7 @@ from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
 
-FLOAT_VERSION = "2.4.1"
+FLOAT_VERSION = "2.5.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
@@ -373,7 +384,7 @@ class Strip(tk.Frame):
     """Une voie : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V."""
 
     def __init__(self, master, owner, idx, width):
-        super().__init__(master, bg=PANEL, width=width, height=width + 92,
+        super().__init__(master, bg=PANEL, width=width, height=width + 98,
                           highlightthickness=1, highlightbackground="#000000")
         self.owner = owner
         self.idx = idx
@@ -381,6 +392,15 @@ class Strip(tk.Frame):
         self.db = None
         self.phantom_state = None
         self.pack_propagate(False)
+
+        # Pastille de couleur (depuis la 2.5.0) : couleur du canal LV1 correspondant, lue EN DIRECT via
+        # l'API HTTP de Bitfocus Companion (module communautaire companion-module-waves-lv1), a partir
+        # du meme numero EXP deja lu en direct sur la console (pas de 2e correspondance a deviner).
+        # Grise/neutre (PANEL) tant qu'aucune couleur n'est connue - jamais une couleur inventee : voir
+        # FloatApp._color_poll_loop() et set_color() plus bas.
+        self.swatch = tk.Frame(self, bg=PANEL, height=5, highlightthickness=0)
+        self.swatch.pack(fill="x", side="top")
+        self.swatch.pack_propagate(False)
 
         # Repere de voie + correspondance EXP (LV1) : absent avant la 1.5.1, repere seulement par
         # position dans la rangee - on demandait de compter les colonnes a la main pour savoir quel
@@ -465,6 +485,15 @@ class Strip(tk.Frame):
         if self.chlabel.cget("text") != text:
             self.chlabel.config(text=text)
 
+    def set_color(self, hex_color):
+        """hex_color : couleur "#RRGGBB" du canal LV1 correspondant, lue EN DIRECT via Companion
+        (FloatApp._color_poll_loop), ou None si inconnue (Companion desactive/injoignable, canal non
+        patche, ou pas encore interroge) - jamais une couleur inventee, voir la pastille en haut de la
+        voie dans __init__."""
+        bg = hex_color or PANEL
+        if self.swatch.cget("bg") != bg:
+            self.swatch.config(bg=bg)
+
     # -- interaction ----------------------------------------------------
     def _drag_start(self, e):
         self._drag_y0 = e.y_root
@@ -528,6 +557,14 @@ class FloatApp:
         self.panel_mode = None
         self.active_scene_id = None   # id de la derniere scene chargee/renommee/ecrasee - pour la surligner dans le panneau
 
+        # Couleurs de canaux LV1 (depuis la 2.5.0), lues via l'API HTTP de Bitfocus Companion. exp_map
+        # (numero EXP par preampli) est mis a jour par le thread principal a chaque _poll() ; le thread
+        # de couleurs ci-dessous le relit en lecture seule - pas de verrou necessaire, reaffectation de
+        # dict/reference atomique en CPython (GIL), jamais de mutation partagee en place.
+        self.exp_map = {}
+        self.channel_colors = {}         # {numero EXP (int): "#RRGGBB"}
+        self.companion_url = None if args.no_colors else args.companion.rstrip("/")
+
         if args.direct:
             self.backend = DirectBackend()
         else:
@@ -570,6 +607,9 @@ class FloatApp:
             self.backend.connect(args.ip)
         if args.direct:
             self.ip_var.set(args.ip or "127.0.0.1")
+
+        if self.companion_url:
+            threading.Thread(target=self._color_poll_loop, daemon=True).start()
 
         self._poll()
 
@@ -723,7 +763,7 @@ class FloatApp:
         self.strip_w = max(28, min(90, self.strip_w + delta))
         for s in self.strips:
             s.width = self.strip_w
-            s.config(width=self.strip_w, height=self.strip_w + 92)
+            s.config(width=self.strip_w, height=self.strip_w + 98)
             ksz = max(34, self.strip_w - 12)
             s.knob.config(width=ksz, height=ksz)
             s.led.config(width=self.strip_w - 10)
@@ -1048,18 +1088,55 @@ class FloatApp:
             self.status_lbl.config(text="", fg=MUT)
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
+        self.exp_map = em   # relu par _color_poll_loop() (thread separe) - voir __init__
         for s in self.strips:
             s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
             s.set_phantom(snap["phantom"][s.idx] if snap.get("phantom") else None)
             s.set_led(m["v"][s.idx] if m.get("live") else None, self.clip_db)
             # cle string (vient du JSON, mode serveur) ou int (dict Python direct, mode --direct)
-            s.set_exp(em.get(str(s.idx), em.get(s.idx)))
+            exp = em.get(str(s.idx), em.get(s.idx))
+            s.set_exp(exp)
+            s.set_color(self.channel_colors.get(exp) if exp else None)
         self.root.after(200, self._poll)
 
     def _do_login_then_poll(self):
         self._login_pending = False
         self._login_prompt()
         self._poll()
+
+    # -- couleurs de canaux LV1 (Companion), thread separe --------------------
+    def _color_poll_loop(self):
+        """Interroge l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la
+        couleur de chaque canal LV1 actuellement patche vers un preampli (numero EXP connu). Tourne
+        dans un thread separe, PAS dans la boucle _poll() a 200ms : 16 requetes HTTP synchrones
+        supplementaires a chaque cycle bloqueraient l'UI (glisser les potards). Les resultats sont
+        publies dans self.channel_colors par reaffectation complete du dict (atomique en CPython),
+        relue par le thread principal dans _poll() - pas de verrou necessaire pour ce pattern."""
+        interval = max(0.3, self.args.color_poll)
+        while True:
+            exps = sorted(set(v for v in self.exp_map.values() if v))
+            colors = dict(self.channel_colors)   # on garde les dernieres valeurs connues par defaut
+            for n in exps:
+                c = self._fetch_channel_color(n)
+                if c is not None:
+                    colors[n] = c
+            # retire les canaux qui ne sont plus patches (sinon une pastille resterait collee a un
+            # ancien numero EXP apres un changement de routing)
+            colors = {n: c for n, c in colors.items() if n in exps}
+            self.channel_colors = colors
+            time.sleep(interval)
+
+    def _fetch_channel_color(self, exp_num):
+        """GET http://.../api/variable/LV1/in<N>_color/value - renvoie "#RRGGBB" ou None (jamais une
+        couleur inventee : Companion injoignable, variable absente, ou reponse mal formee comptent
+        tous comme "inconnue", pas comme une couleur par defaut)."""
+        try:
+            url = "%s/api/variable/LV1/in%d_color/value" % (self.companion_url, exp_num)
+            with urllib.request.urlopen(url, timeout=0.6) as r:
+                txt = r.read().decode("utf-8", "replace").strip()
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+            return None
+        return txt if re.fullmatch(r"#[0-9A-Fa-f]{6}", txt) else None
 
     def quit(self):
         save_cfg({"bank": self.bank, "strip_w": self.strip_w,
@@ -1127,6 +1204,15 @@ def main():
     ap.add_argument("--sensitivity", type=float, default=GAIN_DB_PER_PX,
                      help="sensibilité du glisser sur le potard, en dB par pixel (défaut %.2f : plus petit = "
                           "glisser plus doux/précis, plus grand = glisser plus rapide/nerveux)" % GAIN_DB_PER_PX)
+    ap.add_argument("--companion", default="http://127.0.0.1:8000",
+                     help="URL de base de l'API HTTP de Bitfocus Companion (module communautaire "
+                          "companion-module-waves-lv1), pour afficher la couleur LV1 de chaque voie "
+                          "(défaut http://127.0.0.1:8000, port HTTP par défaut de Companion v5.0)")
+    ap.add_argument("--no-colors", action="store_true",
+                     help="désactive la lecture des couleurs de canaux LV1 via Companion (activée par défaut)")
+    ap.add_argument("--color-poll", type=float, default=1.0,
+                     help="intervalle (s) d'interrogation de Companion pour les couleurs (défaut 1.0 ; "
+                          "pas la boucle de gains à 200ms, pour ne pas bloquer l'UI sur 16 requêtes HTTP)")
     args = ap.parse_args()
     try:
         app = FloatApp(args)

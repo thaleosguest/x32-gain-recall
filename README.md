@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.7.1** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.8.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -41,6 +41,8 @@ python x32_gain_float.py --direct --sim
 ```
 
 **Nécessite tkinter**, inclus par défaut avec l'installeur officiel python.org (case « tcl/tk and IDLE » cochée par défaut) — pas une dépendance à installer séparément, mais à ne pas décocher à l'installation. L'exécutable Windows des Releases n'a pas ce problème (tkinter est inclus dedans).
+
+**Couleurs de canaux LV1** (depuis la 1.8.0) : une pastille en haut de chaque voie affiche la couleur du canal LV1 correspondant (le « In N » du numéro EXP déjà lu en direct), via l'API HTTP de [Bitfocus Companion](https://bitfocus.io/companion) (module communautaire non officiel `companion-module-waves-lv1` — protocole LV1 propriétaire rétro-ingénié, pas une spec Waves officielle). Suppose Companion déjà lancé en continu à côté (`--companion http://IP:PORT`, défaut `http://127.0.0.1:8000`, `--color-poll` pour l'intervalle, `--no-colors` pour désactiver). Pastille grise tant que la couleur n'est pas connue — jamais une couleur inventée.
 
 Boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau (la fenêtre s'agrandit) pour sauvegarder, rappeler, **renommer, supprimer ou écraser** une scène de gains (ces trois derniers depuis la 1.7.0 — avant, seul « Charger » était disponible ici, il fallait repasser par le navigateur), ou charger un profil de routing, avec confirmation avant tout envoi/écrasement/suppression. Reste simplifié par rapport au navigateur sur deux points précis : pas d'option 48V au rappel, pas de patch de sortie console, pas d'import de `.scn` — pour ça, utiliser le navigateur. Le fichier `x32_presets.json` est partagé avec le navigateur : une scène sauvegardée, renommée, écrasée ou supprimée depuis l'un se reflète dans l'autre. Bouton **▾/▸** pour replier toute la fenêtre en une simple barre de titre et libérer de la place sur l'écran de la LV1. Le glisser sur un potard est volontairement moins sensible que dans la 1.4.1 pour le tactile (`--sensitivity` pour ajuster) ; cliquer sur la valeur en dB permet de taper le chiffre exact.
 
