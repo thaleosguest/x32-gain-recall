@@ -14,7 +14,7 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel (v1.9.0 — PR thaleosguest/x32-gain-recall#2)
+## État actuel (v1.9.0 — PR thaleosguest/x32-gain-recall#2, pas encore fusionnée)
 
 - La pastille de couleur par voie du float lit les couleurs via l'API HTTP du
   module Companion Waves LV1 (`in<N>_color`). Companion tourne en continu sur le
@@ -57,18 +57,29 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
   `src_channel_index` = voie 0-based
 - `status` : **pas** l'existence de la route — semble indiquer l'entrée sélectionnée
   (routes A X32RACK en 0 quand B est active). Ne pas filtrer dessus.
+- **Largeur mono/stéréo** : `chainer.num_inputs` (1 ou 2) de l'objet canal
+  (`chainer.obj_id = object.id`, `object.obj_type = 0`, `object.obj_index` = canal 0-based).
+  Trouvé en comparant la base avant/après un passage mono → stéréo. **Indispensable** :
+  repasser un canal en mono laisse sa route de voie droite dans `routes` (bug vu : EXP 18
+  coloré comme In 17 au lieu d'In 21). Ignorer `dst_channel_index >= num_inputs`.
 - Un serveur SGS peut avoir le même `assign` qu'un device d'E/S : exclure SGS/Host.
 - Setup réel (portable-js) : **A = X32RACK** (carte DN32-WSG de la X32 : voie N = EXP N),
-  **B = TracksLive-FL** avec les mêmes numéros (virtual soundcheck). TracksLive en
-  entrée A = vraie source de lecture (ex. In 65 ← TracksLive 1,2), à ignorer.
-  D'où le défaut `--lv1-device X32RACK,TracksLive:B`.
+  B = souvent TracksLive-FL (virtual soundcheck). **Seul X32RACK compte par défaut** :
+  TracksLive n'est PAS un miroir fiable des numéros X32 (vu : X32RACK 1 sur In 1 mais
+  TracksLive 1 sur In 2), et en entrée A c'est une vraie source de lecture (In 65 ←
+  TracksLive 1,2). Repli possible : `--lv1-device X32RACK,TracksLive:B`, avec un rang
+  global (un repli ne l'emporte jamais sur une route X32RACK d'un autre canal).
+- Souhait explicite de Joseph : une entrée X32 qui n'arrive (plus) sur aucun canal LV1
+  doit rester **sans couleur** — jamais deviner.
 
 ## Reste à faire / à vérifier
 
-- Tester les couleurs avec le vrai Companion en prestation, et un `.exe` compilé
-  (PyInstaller doit embarquer `lv1/`, import statique : a priori OK).
-- In 2 à In 15 n'avaient que TracksLive en B, sans route X32RACK en A, dans la session
-  observée : à confirmer avec Joseph que c'est voulu.
+- Couleurs vues fonctionner avec le vrai Companion (capture de Joseph). Reste : revérifier
+  EXP 18 après le correctif mono, puis fusionner la PR #2, tagger `v1.9.0` (le tag doit
+  égaler `APP_VERSION`) et vérifier le build `.exe` (PyInstaller doit embarquer `lv1/`,
+  import statique : a priori OK).
+- Joseph n'a que `py` (pas `python`) dans son terminal PowerShell : lui donner des
+  commandes `py ...`.
 ## Environnement cible
 
 - PC hôte : laptop "portable-js" (i7-8750H, 16 Go RAM, Windows 10 IoT
