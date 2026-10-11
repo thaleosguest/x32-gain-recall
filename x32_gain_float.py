@@ -81,6 +81,7 @@ import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox
 import urllib.error
 import urllib.request
@@ -95,6 +96,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 
 FLOAT_VERSION = "2.6.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
+STRIP_EXTRA_H = 112       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0, +14 pour le nom LV1)
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
@@ -395,7 +397,7 @@ class Strip(tk.Frame):
     """Une voie : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V."""
 
     def __init__(self, master, owner, idx, width):
-        super().__init__(master, bg=PANEL, width=width, height=width + 98,
+        super().__init__(master, bg=PANEL, width=width, height=width + STRIP_EXTRA_H,
                           highlightthickness=1, highlightbackground="#000000")
         self.owner = owner
         self.idx = idx
@@ -422,6 +424,13 @@ class Strip(tk.Frame):
         self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=TXT,
                                  font=("Segoe UI", 8, "bold"), justify="center")
         self.chlabel.pack(pady=(3, 0))
+
+        # Nom du canal LV1 qui recoit ce preampli (depuis la 2.6.0) : variable Companion in<N>_name du
+        # canal donne par la table de patch LV1 (meme canal que la couleur). Voir set_name().
+        self._name_font = tkfont.Font(family="Segoe UI", size=7)
+        self.namelbl = tk.Label(self, text="", bg=PANEL, fg=MUT, font=self._name_font)
+        self.namelbl.pack(fill="x", padx=1)
+        self._name_full = ""
 
         self.led = tk.Canvas(self, width=width - 10, height=7, bg=PANEL, highlightthickness=0)
         self.led.pack(pady=(4, 3))
@@ -495,6 +504,21 @@ class Strip(tk.Frame):
         text = self._tag + ("\nEXP %d" % exp_num if exp_num else "")
         if self.chlabel.cget("text") != text:
             self.chlabel.config(text=text)
+
+    def set_name(self, name):
+        """name : nom du canal LV1 correspondant (« FireRoom », « In 15 »...), ou "" si cette voie
+        n'arrive sur aucun canal LV1. Raccourci avec « … » pour tenir dans la largeur de la voie."""
+        name = name or ""
+        if name == self._name_full:
+            return
+        self._name_full = name
+        avail = max(10, self.width - 4)
+        text = name
+        if self._name_font.measure(text) > avail:
+            while text and self._name_font.measure(text + "…") > avail:
+                text = text[:-1]
+            text += "…"
+        self.namelbl.config(text=text)
 
     def set_color(self, hex_color):
         """hex_color : couleur "#RRGGBB" du canal LV1 correspondant, lue EN DIRECT via Companion
@@ -578,6 +602,7 @@ class FloatApp:
         self.exp_map = {}
         self.lv1_map = {}                # {numero EXP: canal LV1} (cles str en mode serveur, int en --direct)
         self.channel_colors = {}         # {canal LV1 (int): "#RRGGBB"}
+        self.channel_names = {}          # {canal LV1 (int): nom tel que dans la LV1}
         self.companion_url = None if args.no_colors else args.companion.rstrip("/")
 
         if args.direct:
@@ -778,7 +803,7 @@ class FloatApp:
         self.strip_w = max(28, min(90, self.strip_w + delta))
         for s in self.strips:
             s.width = self.strip_w
-            s.config(width=self.strip_w, height=self.strip_w + 98)
+            s.config(width=self.strip_w, height=self.strip_w + STRIP_EXTRA_H)
             ksz = max(34, self.strip_w - 12)
             s.knob.config(width=ksz, height=ksz)
             s.led.config(width=self.strip_w - 10)
@@ -1115,6 +1140,7 @@ class FloatApp:
             s.set_exp(exp)
             ch = self._lv1_channel(exp)
             s.set_color(self.channel_colors.get(ch) if ch else None)
+            s.set_name(self._display_name(ch))
         self.root.after(200, self._poll)
 
     def _do_login_then_poll(self):
@@ -1131,6 +1157,17 @@ class FloatApp:
         lm = self.lv1_map
         return lm.get(str(exp), lm.get(exp))
 
+    def _display_name(self, ch):
+        """Nom affiche sous le repere de voie : le nom LV1 du canal s'il a ete renomme, sinon « In N »
+        (nom par defaut « Channel N », ou Companion injoignable : le numero de canal vient de la table
+        de patch, pas de Companion). "" si la voie n'arrive sur aucun canal LV1."""
+        if not ch:
+            return ""
+        name = (self.channel_names.get(ch) or "").strip()
+        if not name or re.fullmatch(r"Channel\s*%d" % ch, name, re.I):
+            return "In %d" % ch
+        return name
+
     def _color_poll_loop(self):
         """Interroge l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la
         couleur de chaque canal LV1 actuellement patche vers un preampli (numero EXP connu). Tourne
@@ -1142,27 +1179,38 @@ class FloatApp:
         while True:
             chans = sorted(set(c for c in (self._lv1_channel(v) for v in self.exp_map.values()) if c))
             colors = dict(self.channel_colors)   # on garde les dernieres valeurs connues par defaut
+            names = dict(self.channel_names)
             for n in chans:
                 c = self._fetch_channel_color(n)
                 if c is not None:
                     colors[n] = c
+                nm = self._fetch_lv1_var(n, "name")
+                if nm is not None:
+                    names[n] = nm
             # retire les canaux qui ne sont plus concernes (sinon une pastille resterait collee a un
             # ancien canal apres un changement de routing X32 ou de la table LV1)
             colors = {n: c for n, c in colors.items() if n in chans}
+            names = {n: c for n, c in names.items() if n in chans}
             self.channel_colors = colors
+            self.channel_names = names
             time.sleep(interval)
 
-    def _fetch_channel_color(self, channel):
-        """GET http://.../api/variable/LV1/in<N>_color/value - renvoie "#RRGGBB" ou None (jamais une
-        couleur inventee : Companion injoignable, variable absente, ou reponse mal formee comptent
-        tous comme "inconnue", pas comme une couleur par defaut)."""
+    def _fetch_lv1_var(self, channel, var):
+        """GET http://.../api/variable/LV1/in<N>_<var>/value - texte brut, ou None si Companion est
+        injoignable ou la variable absente."""
         try:
-            url = "%s/api/variable/LV1/in%d_color/value" % (self.companion_url, channel)
+            url = "%s/api/variable/LV1/in%d_%s/value" % (self.companion_url, channel, var)
             with urllib.request.urlopen(url, timeout=0.6) as r:
-                txt = r.read().decode("utf-8", "replace").strip()
+                return r.read().decode("utf-8", "replace").strip()
         except (urllib.error.URLError, OSError, ValueError, TimeoutError):
             return None
-        return txt if re.fullmatch(r"#[0-9A-Fa-f]{6}", txt) else None
+
+    def _fetch_channel_color(self, channel):
+        """in<N>_color - renvoie "#RRGGBB" ou None (jamais une couleur inventee : Companion injoignable,
+        variable absente, ou reponse mal formee comptent tous comme "inconnue", pas comme une couleur
+        par defaut)."""
+        txt = self._fetch_lv1_var(channel, "color")
+        return txt if txt and re.fullmatch(r"#[0-9A-Fa-f]{6}", txt) else None
 
     def quit(self):
         save_cfg({"bank": self.bank, "strip_w": self.strip_w,
