@@ -17,6 +17,18 @@ DEUX MODES DE CONNEXION :
      vous ne voulez PAS lancer le navigateur). Reutilise alors la classe X32Client de
      x32_gain_recall.py (meme fichier requis a cote). --ip / --sim comme avant.
 
+SCENES / ROUTING : boutons "Scènes" et "Routing" dans la barre de titre, ouvrent un panneau sous les
+potards (la fenêtre s'agrandit) listant respectivement les scènes de gains et les profils de routing,
+avec un bouton "Charger" par ligne (confirmation avant envoi). Version volontairement simplifiée par
+rapport au navigateur : le rappel de scène ne touche jamais le 48V (comme le comportement par défaut du
+navigateur), et le chargement de routing ne touche que le routing E/S, jamais le patch de sortie console
+— pour les options plus fines (sous-ensemble de voies, inclure le 48V, patch de sortie), utiliser le
+navigateur.
+
+REPLIER / DEPLIER : bouton ▾/▸ dans la barre de titre, replie toute la fenêtre à une simple barre de
+titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'identique (banque, taille,
+position mémorisées).
+
 A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette session) :
   - Pas d'alignement pixel-perfect automatique avec la fenetre LV1 reelle (impossible a deviner sans
     connaitre votre resolution d'ecran et le zoom de la LV1 chez vous) : la largeur de voie et la
@@ -26,6 +38,9 @@ A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette s
     documente ne l'expose (meme souci que l'horloge en v1.3, cf. CHANGELOG). C'est un seuil sur le
     niveau mesure (-3 dBFS par defaut, reglable avec --clip-db) : une approximation, pas une lecture
     du vrai statut de clip de la console.
+  - Sensibilite du potard par defaut volontairement reduite (0,10 dB/px, etait 0,25 en 1.4.1) pour le
+    tactile, choix arbitraire de ma part faute de pouvoir tester sur un vrai ecran tactile d'ici :
+    ajustable avec --sensitivity si ce n'est pas le bon compromis pour vous.
 
 Usage :
     python x32_gain_float.py                        # se connecte a x32_gain_recall.py sur 127.0.0.1:8032
@@ -47,9 +62,11 @@ import urllib.request
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
+    PresetStore, RoutingStore, pick_data_path,
 )
 
-FLOAT_VERSION = "2.0.0"
+FLOAT_VERSION = "2.1.0"
+GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
@@ -172,6 +189,18 @@ class ServerBackend:
     def set_phantom(self, idx, on):
         self._post("/api/phantom", {"idx": idx, "on": bool(on)})
 
+    def presets(self):
+        return (self._get("/api/presets") or {}).get("presets", [])
+
+    def recall_preset(self, pid):
+        return self._post("/api/presets/recall", {"id": pid}) or {"ok": False, "error": self.last_error}
+
+    def routings(self):
+        return (self._get("/api/routings") or {}).get("profiles", [])
+
+    def apply_routing(self, pid):
+        return self._post("/api/routings/apply", {"id": pid, "groups": ["io"]}) or {"ok": False, "error": self.last_error}
+
     def close(self):
         pass
 
@@ -186,6 +215,11 @@ class DirectBackend:
         self.needs_login = False
         self.reachable = True
         self.last_error = ""
+        # Memes fichiers JSON que l'appli principale (scenes de gains, profils de routing) : on les relit a
+        # chaque appel plutot qu'une seule fois au demarrage, au cas ou l'appli principale (ou le navigateur)
+        # les modifie entre-temps.
+        self._data_path = pick_data_path()
+        self._routing_path = os.path.join(os.path.dirname(os.path.abspath(self._data_path)), "x32_routings.json")
 
     def login(self, code):
         return True
@@ -225,6 +259,29 @@ class DirectBackend:
     def set_phantom(self, idx, on):
         self.client.set_phantom(idx, on)
 
+    def presets(self):
+        return PresetStore(self._data_path).all()
+
+    def recall_preset(self, pid):
+        pr = PresetStore(self._data_path).get(pid)
+        if not pr:
+            return {"ok": False, "error": "Scène introuvable"}
+        if not self.client.snapshot()["connected"]:
+            return {"ok": False, "error": "Non connecté à la console"}
+        return {"ok": True, "result": self.client.recall(pr)}
+
+    def routings(self):
+        return RoutingStore(self._routing_path).summaries()
+
+    def apply_routing(self, pid):
+        pr = RoutingStore(self._routing_path).get(pid)
+        if not pr:
+            return {"ok": False, "error": "Profil introuvable"}
+        if not self.client.snapshot()["connected"]:
+            return {"ok": False, "error": "Non connecté à la console"}
+        nodes = pr["nodes"].get("io", {})
+        return {"ok": True, "result": self.client.apply_routing(nodes, pr["name"])}
+
     def close(self):
         self.client.disconnect()
         if self.sim:
@@ -256,8 +313,10 @@ class Strip(tk.Frame):
         self.knob.bind("<B1-Motion>", self._drag_move)
         self._draw_knob()
 
-        self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=("Consolas", 10, "bold"))
+        self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=("Consolas", 10, "bold"),
+                             cursor="xterm")
         self.val.pack(fill="x", padx=4, pady=(3, 3))
+        self.val.bind("<Button-1>", self._edit_value)
 
         self.ph = tk.Button(self, text="48V", bg="#25282b", fg="#aeb6bd", bd=0, relief="flat",
                              font=("Segoe UI", 8, "bold"), activebackground="#33383c",
@@ -316,11 +375,30 @@ class Strip(tk.Frame):
         if self._drag_y0 is None or self.owner.locked:
             return
         delta_px = self._drag_y0 - e.y_root     # glisser vers le haut = augmente le gain
-        new_db = quantize(self._drag_db0 + delta_px * 0.25)
+        new_db = quantize(self._drag_db0 + delta_px * self.owner.sensitivity)
         if new_db != self.db:
             self.db = new_db
             self._draw_knob()
             self.owner.send_gain(self.idx, new_db)
+
+    def _edit_value(self, _e=None):
+        """Clic sur la valeur en dB : saisie directe au clavier plutôt que de glisser (voie %s)."""
+        if self.owner.locked:
+            return
+        cur = ("%.1f" % self.db) if self.db is not None else "0.0"
+        r = _SimpleAsk(self.owner.root, "Gain — voie %s" % self.owner.label(self.idx),
+                       "Valeur en dB (%.0f à +%.0f) :" % (GAIN_MIN, GAIN_MAX), initial=cur).result
+        if r is None:
+            return
+        try:
+            db = quantize(float(r.replace(",", ".")))
+        except ValueError:
+            messagebox.showerror("Gain", "« %s » n'est pas un nombre valide." % r, parent=self.owner.root)
+            return
+        self.db = db
+        self._draw_knob()
+        self.val.config(text="%.1f" % db)
+        self.owner.send_gain(self.idx, db)
 
     def _phantom_click(self):
         if self.owner.locked:
@@ -345,7 +423,10 @@ class FloatApp:
         self.strip_w = cfg.get("strip_w", 46)
         self.locked = False
         self.clip_db = args.clip_db
+        self.sensitivity = args.sensitivity
         self.logged_in = False
+        self.collapsed = False
+        self.panel_mode = None
 
         if args.direct:
             self.backend = DirectBackend()
@@ -365,11 +446,12 @@ class FloatApp:
         self.root.geometry("+%d+%d" % (x, y))
 
         self._build_titlebar()
-        self._build_connectbar()
+        self.connectbar = self._build_connectbar()
         self.strips_frame = tk.Frame(self.root, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
         self.strips = []
         self._build_strips()
+        self.panel = tk.Frame(self.root, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
         self._build_resize_grip()
 
         self.root.bind("<Escape>", lambda e: self.quit())
@@ -404,6 +486,13 @@ class FloatApp:
         self.bank_menu["menu"].config(bg="#15171a", fg=TXT)
         self.bank_menu.pack(side="left", padx=2)
 
+        self.btn_scenes = tk.Button(bar, text="Scènes", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8, "bold"),
+                                     activebackground="#1c1e20", command=lambda: self._toggle_panel("scenes"))
+        self.btn_scenes.pack(side="left", padx=(8, 1))
+        self.btn_routing = tk.Button(bar, text="Routing", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8, "bold"),
+                                      activebackground="#1c1e20", command=lambda: self._toggle_panel("routing"))
+        self.btn_routing.pack(side="left", padx=1)
+
         tk.Button(bar, text="−", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
                   activebackground="#0d0e0f", command=lambda: self._resize_strips(-2)).pack(side="right", padx=1)
         tk.Button(bar, text="+", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
@@ -413,6 +502,9 @@ class FloatApp:
         self.btn_lock.pack(side="right", padx=4)
         tk.Button(bar, text="✕", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9),
                   activebackground="#0d0e0f", command=self.quit).pack(side="right", padx=4)
+        self.btn_collapse = tk.Button(bar, text="▾", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
+                                       activebackground="#0d0e0f", command=self._toggle_collapse)
+        self.btn_collapse.pack(side="right", padx=4)
 
     def _build_connectbar(self):
         """Barre de connexion, toujours visible : IP + Connecter + Scanner + Démo (mode --direct),
@@ -435,6 +527,7 @@ class FloatApp:
 
         self.status_lbl = tk.Label(bar, text="", bg="#111213", fg=MUT, font=("Segoe UI", 8))
         self.status_lbl.pack(side="left", padx=6)
+        return bar
 
     def _build_strips(self):
         for w in self.strips_frame.winfo_children():
@@ -489,6 +582,101 @@ class FloatApp:
     def _toggle_lock(self):
         self.locked = not self.locked
         self.btn_lock.config(text="🔒" if self.locked else "🔓")
+
+    def _toggle_collapse(self):
+        """Replie la fenêtre en un simple bandeau (barre de titre seule) pour libérer de la place sur
+        l'écran de la LV1 quand on n'a pas besoin des gains — comme un volet qu'on referme."""
+        self.collapsed = not self.collapsed
+        if self.collapsed:
+            self._toggle_panel(None)
+            self.connectbar.pack_forget()
+            self.strips_frame.pack_forget()
+            self.btn_collapse.config(text="▸")
+        else:
+            self.connectbar.pack(side="top", fill="x")
+            self.strips_frame.pack(side="top", fill="x")
+            self.btn_collapse.config(text="▾")
+        self.root.update_idletasks()
+
+    def _toggle_panel(self, mode):
+        if self.panel_mode == mode or mode is None:
+            self.panel.pack_forget()
+            self.panel_mode = None
+            self.btn_scenes.config(bg="#0d0e0f")
+            self.btn_routing.config(bg="#0d0e0f")
+            return
+        for w in self.panel.winfo_children():
+            w.destroy()
+        self.panel_mode = mode
+        self.btn_scenes.config(bg=("#1c1e20" if mode == "scenes" else "#0d0e0f"))
+        self.btn_routing.config(bg=("#1c1e20" if mode == "routing" else "#0d0e0f"))
+        if mode == "scenes":
+            self._fill_scenes_panel()
+        else:
+            self._fill_routing_panel()
+        self.panel.pack(side="top", fill="x", after=self.strips_frame)
+        self.root.update_idletasks()
+
+    def _panel_row(self, text, sub, on_click):
+        row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
+        row.pack(fill="x", padx=6, pady=3)
+        txt = tk.Frame(row, bg="#0d0e0f")
+        txt.pack(side="left", fill="x", expand=True, padx=6, pady=4)
+        tk.Label(txt, text=text, bg="#0d0e0f", fg=TXT, font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+        if sub:
+            tk.Label(txt, text=sub, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8), anchor="w").pack(fill="x")
+        tk.Button(row, text="Charger", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
+                  command=on_click).pack(side="right", padx=6, pady=4)
+
+    def _fill_scenes_panel(self):
+        tk.Label(self.panel, text="SCÈNES DE GAINS", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
+            anchor="w", padx=6, pady=(6, 2))
+        items = self.backend.presets()
+        if not items:
+            tk.Label(self.panel, text="Aucune scène (ou appli principale non connectée).", bg=PANEL, fg=MUT,
+                      font=("Segoe UI", 8), wraplength=self._panel_width()).pack(padx=8, pady=6)
+            return
+        for p in items:
+            self._panel_row(p.get("name", "?"), p.get("created", ""), lambda pid=p["id"], n=p.get("name", "?"): self._recall_scene(pid, n))
+
+    def _fill_routing_panel(self):
+        tk.Label(self.panel, text="PROFILS DE ROUTING", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
+            anchor="w", padx=6, pady=(6, 2))
+        items = self.backend.routings()
+        if not items:
+            tk.Label(self.panel, text="Aucun profil (ou appli principale non connectée).", bg=PANEL, fg=MUT,
+                      font=("Segoe UI", 8), wraplength=self._panel_width()).pack(padx=8, pady=6)
+            return
+        for p in items:
+            counts = p.get("counts", {})
+            sub = "%d lignes E/S · %s" % (counts.get("io", 0), p.get("source", ""))
+            self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n))
+
+    def _panel_width(self):
+        return max(200, len(self.strips) * self.strip_w)
+
+    def _recall_scene(self, pid, name):
+        if not messagebox.askyesno("Rappeler la scène ?",
+                                    "Rappeler « %s » ? Seuls les gains sont rappelés (pas le 48V, "
+                                    "comme dans le navigateur par défaut)." % name, parent=self.root):
+            return
+        r = self.backend.recall_preset(pid)
+        if not r.get("ok"):
+            messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
+        else:
+            self.status_lbl.config(text="Scène « %s » rappelée" % name, fg=OK)
+
+    def _apply_routing(self, pid, name):
+        if not messagebox.askyesno("Charger ce routing ?",
+                                    "Charger « %s » ? Seul le routing E/S est touché (pas le patch de sortie). "
+                                    "À faire de préférence hors signal : ça peut couper l'audio en cours." % name,
+                                    parent=self.root):
+            return
+        r = self.backend.apply_routing(pid)
+        if not r.get("ok"):
+            messagebox.showerror("Routing", r.get("error", "Échec"), parent=self.root)
+        else:
+            self.status_lbl.config(text="Routing « %s » envoyé" % name, fg=OK)
 
     def label(self, idx):
         return "#%d (%s)" % (idx + 1, self._bank_label_for(idx))
@@ -589,7 +777,7 @@ class _SimpleAsk:
     """Petite boîte de dialogue modale (code d'accès à 4 chiffres) sans dépendre de tkinter.simpledialog
     (pour garder le même style visuel sombre que le reste de l'appli)."""
 
-    def __init__(self, parent, title, prompt):
+    def __init__(self, parent, title, prompt, initial=""):
         self.result = None
         top = tk.Toplevel(parent)
         top.title(title)
@@ -598,11 +786,12 @@ class _SimpleAsk:
         top.resizable(False, False)
         tk.Label(top, text=prompt, bg=PANEL, fg=TXT, font=("Segoe UI", 9), wraplength=260, justify="left").pack(
             padx=14, pady=(14, 6))
-        var = tk.StringVar()
+        var = tk.StringVar(value=initial)
         e = tk.Entry(top, textvariable=var, bg="#000000", fg=CYAN, insertbackground=CYAN, bd=0,
                      font=("Consolas", 14), justify="center")
         e.pack(padx=14, pady=4, fill="x")
         e.focus_set()
+        e.select_range(0, "end")
 
         def ok(_e=None):
             self.result = var.get().strip()
@@ -634,6 +823,9 @@ def main():
     ap.add_argument("--clip-db", type=float, default=-3.0,
                      help="seuil (dBFS) à partir duquel la diode passe au rouge (défaut -3 ; "
                           "ce n'est PAS le vrai détecteur de clip matériel, voir l'en-tête du fichier)")
+    ap.add_argument("--sensitivity", type=float, default=GAIN_DB_PER_PX,
+                     help="sensibilité du glisser sur le potard, en dB par pixel (défaut %.2f : plus petit = "
+                          "glisser plus doux/précis, plus grand = glisser plus rapide/nerveux)" % GAIN_DB_PER_PX)
     args = ap.parse_args()
     try:
         app = FloatApp(args)

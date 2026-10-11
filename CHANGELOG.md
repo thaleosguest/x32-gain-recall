@@ -2,6 +2,11 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [1.4.2]
+- Fenêtre flottante — potard plus adapté au tactile : sensibilité du glisser réduite par défaut (0,10 dB/px, était 0,25 ; réglable avec `--sensitivity`), et la valeur en dB est maintenant cliquable pour taper le chiffre exact au clavier plutôt que de toujours glisser.
+- Fenêtre flottante — boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau sous les potards (la fenêtre s'agrandit) listant respectivement les scènes de gains et les profils de routing, avec confirmation avant chargement. Volontairement simplifié par rapport au navigateur : le rappel de scène ne touche jamais le 48V, et le routing ne touche que le routing E/S (jamais le patch de sortie) — pour un contrôle plus fin, utiliser le navigateur.
+- Fenêtre flottante — bouton ▾/▸ pour **replier/déplier** toute la fenêtre en une simple barre de titre, pour libérer de la place sur l'écran de la LV1 quand on n'a pas besoin des gains.
+
 ## [1.4.1]
 - **Correctif important sur `x32_gain_float.py`** : la v1.4.0 ne proposait aucun moyen de se connecter à la console *depuis la fenêtre flottante elle-même* (il fallait passer `--ip`/`--sim` en ligne de commande au lancement) — ce qui la rendait inutilisable pour qui double-clique dessus sans argument. Corrigé :
   - La fenêtre flottante se connecte maintenant **par défaut à l'appli principale `x32_gain_recall.py` déjà lancée**, via son API HTTP locale (port 8032 par défaut, réglable avec `--port`) : c'est littéralement la même connexion OSC, le même état (gains, 48V) que dans le navigateur — se connecter depuis l'un connecte aussi l'autre. Gère automatiquement l'écran de code d'accès si l'appli principale tourne en mode réseau local protégé (par défaut depuis la 1.3).
