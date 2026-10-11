@@ -63,6 +63,8 @@ import json
 import math
 import os
 import sys
+import threading
+import time
 import tkinter as tk
 from tkinter import messagebox
 import urllib.error
@@ -74,7 +76,7 @@ from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
 
-FLOAT_VERSION = "2.2.0"
+FLOAT_VERSION = "2.3.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
@@ -84,6 +86,15 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
 
 BG, PANEL, LINE, LINE2 = "#08090a", "#111213", "#2c2f33", "#3a3e43"
 TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939a", "#e9edf0", "#3ddc84", "#f2b63b"
+
+
+def short_label(idx):
+    """Repere court de la voie, meme convention que le navigateur (fonction label() en JS) : '5', 'A1', 'B3'."""
+    if idx < 32:
+        return str(idx + 1)
+    if idx < 80:
+        return "A%d" % (idx - 31)
+    return "B%d" % (idx - 79)
 
 
 def load_cfg():
@@ -258,6 +269,8 @@ class DirectBackend:
     def connect(self, ip):
         ok = self.client.connect(ip)
         self.client.demo = (ip == "127.0.0.1")
+        if ok:
+            threading.Thread(target=self.client.refresh_exp_map, daemon=True).start()
         return {"ok": ok, "error": self.client.error}
 
     def demo(self):
@@ -269,6 +282,7 @@ class DirectBackend:
             self.sim.start()
         self.client.connect("127.0.0.1")
         self.client.demo = True
+        threading.Thread(target=self.client.refresh_exp_map, daemon=True).start()
         return {"ok": True}
 
     def disconnect(self):
@@ -315,7 +329,9 @@ class DirectBackend:
         if not self.client.snapshot()["connected"]:
             return {"ok": False, "error": "Non connecté à la console"}
         nodes = pr["nodes"].get("io", {})
-        return {"ok": True, "result": self.client.apply_routing(nodes, pr["name"])}
+        result = self.client.apply_routing(nodes, pr["name"])
+        threading.Thread(target=lambda: (time.sleep(0.7), self.client.refresh_exp_map()), daemon=True).start()
+        return {"ok": True, "result": result}
 
     def close(self):
         self.client.disconnect()
@@ -327,7 +343,7 @@ class Strip(tk.Frame):
     """Une voie : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V."""
 
     def __init__(self, master, owner, idx, width):
-        super().__init__(master, bg=PANEL, width=width, height=width + 70,
+        super().__init__(master, bg=PANEL, width=width, height=width + 92,
                           highlightthickness=1, highlightbackground="#000000")
         self.owner = owner
         self.idx = idx
@@ -335,6 +351,16 @@ class Strip(tk.Frame):
         self.db = None
         self.phantom_state = None
         self.pack_propagate(False)
+
+        # Repere de voie + correspondance EXP (LV1) : absent avant la 1.5.1, repere seulement par
+        # position dans la rangee - on demandait de compter les colonnes a la main pour savoir quel
+        # potard est quel preampli. Le numero EXP (2e ligne) est rempli par set_exp(), a partir
+        # d'une lecture EN DIRECT du patch de la console (jamais une supposition) - vide tant que
+        # non connecte ou non lu.
+        self._tag = short_label(idx)
+        self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=TXT,
+                                 font=("Segoe UI", 8, "bold"), justify="center")
+        self.chlabel.pack(pady=(3, 0))
 
         self.led = tk.Canvas(self, width=width - 10, height=7, bg=PANEL, highlightthickness=0)
         self.led.pack(pady=(4, 3))
@@ -400,6 +426,14 @@ class Strip(tk.Frame):
             elif lvl_db > -60:
                 color = OK
         self.led.itemconfig(self._led_id, fill=color)
+
+    def set_exp(self, exp_num):
+        """exp_num : numero Carte/EXP (int) lu EN DIRECT sur la console pour cette voie, ou None/0 si
+        non connu (non connecte, lecture pas encore faite, ou ce canal n'est pas patche vers la
+        carte) - jamais une supposition, voir X32Client.refresh_exp_map()."""
+        text = self._tag + ("\nEXP %d" % exp_num if exp_num else "")
+        if self.chlabel.cget("text") != text:
+            self.chlabel.config(text=text)
 
     # -- interaction ----------------------------------------------------
     def _drag_start(self, e):
@@ -619,7 +653,7 @@ class FloatApp:
         self.strip_w = max(28, min(90, self.strip_w + delta))
         for s in self.strips:
             s.width = self.strip_w
-            s.config(width=self.strip_w, height=self.strip_w + 70)
+            s.config(width=self.strip_w, height=self.strip_w + 92)
             ksz = max(34, self.strip_w - 12)
             s.knob.config(width=ksz, height=ksz)
             s.led.config(width=self.strip_w - 10)
@@ -843,10 +877,13 @@ class FloatApp:
         else:
             self.status_lbl.config(text="", fg=MUT)
         m = self.backend.meters()
+        em = snap.get("exp_map") or {}
         for s in self.strips:
             s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
             s.set_phantom(snap["phantom"][s.idx] if snap.get("phantom") else None)
             s.set_led(m["v"][s.idx] if m.get("live") else None, self.clip_db)
+            # cle string (vient du JSON, mode serveur) ou int (dict Python direct, mode --direct)
+            s.set_exp(em.get(str(s.idx), em.get(s.idx)))
         self.root.after(200, self._poll)
 
     def _do_login_then_poll(self):

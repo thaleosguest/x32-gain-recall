@@ -43,7 +43,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.5.0"
+APP_VERSION = "1.6.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -370,6 +370,7 @@ class X32Client:
         self.node_cache = {}           # chemin -> valeurs (reponses /node)
         self.routing_last = None
         self.routing_undo = None
+        self.exp_map = {}              # idx global (0-127) -> numero Carte/EXP (1-32), d'apres le patch REEL (voir refresh_exp_map)
 
     # -- etat -------------------------------------------------------------
     def _bump(self):
@@ -395,6 +396,7 @@ class X32Client:
                 "last_recall": self.last_recall,
                 "can_undo": self.undo is not None,
                 "error": self.error,
+                "exp_map": dict(self.exp_map),
             }
 
     def ch_of_ha(self, idx):
@@ -683,6 +685,45 @@ class X32Client:
         res = self.routing_last
         threading.Thread(target=self._verify_routing, args=(res, dict(u["lines"])), daemon=True).start()
         return True
+
+    def refresh_exp_map(self, timeout=1.2):
+        """Interroge EN DIRECT, sur la console connectee, /config/routing/CARD + /config/userrout/in|out,
+        et en deduit quel numero Carte/EXP (1-32, celui affiche dans le menu de patch de la LV1) recoit
+        chaque preampli - d'apres le patch REELLEMENT charge sur la console en ce moment (pas une
+        supposition sur un profil particulier). Reutilise describe_routing(), deja utilise par l'onglet
+        Routing pour comparer un profil au patch courant. A appeler apres connexion/Demo, apres
+        « Relire », et apres l'envoi d'un routing - jamais en boucle (chaque appel interroge la
+        console, ~1 s).
+
+        Limite assumee : seuls les prefixes "Local In ", "AES50-A " et "AES50-B " (gains/preamplis)
+        sont traduits en numero EXP. Un canal patche vers la carte depuis une autre source (Carte In
+        en boucle, Aux, Talkback...) n'a pas de numero de gain a afficher et est ignore - case vide,
+        pas un numero invente. Idem si la lecture echoue (deconnecte, firmware different, timeout) :
+        exp_map reste vide plutot que de garder un ancien resultat potentiellement faux."""
+        nodes = self.get_nodes(["/config/routing/CARD", "/config/userrout/in", "/config/userrout/out"], timeout=timeout)
+        m = {}
+        if nodes.get("/config/routing/CARD") and nodes.get("/config/userrout/in"):
+            desc = describe_routing(nodes)
+            rng = re.compile(r"^(.*?)(\d+)(?:–(\d+))?$")
+            for seg in desc["ports"].get("CARD", []):
+                mo = rng.match(seg["src"])
+                if not mo:
+                    continue
+                prefix, n0 = mo.group(1), int(mo.group(2))
+                n1 = int(mo.group(3)) if mo.group(3) else n0
+                for off, n in enumerate(range(n0, n1 + 1)):
+                    idx = None
+                    if prefix == "Local In ":
+                        idx = n - 1
+                    elif prefix == "AES50-A ":
+                        idx = 31 + n
+                    elif prefix == "AES50-B ":
+                        idx = 79 + n
+                    if idx is not None:
+                        m[idx] = seg["a"] + off
+        with self.lock:
+            self.exp_map = m
+            self._bump()
 
     # -- commandes --------------------------------------------------------
     def set_gain(self, idx, db):
@@ -1083,6 +1124,9 @@ ALLOWED_HOSTS = set()
 ALLOW_ANY_HOST = False  # active par --lan : accepte tout Host: (protection deplacee sur le code de connexion)
 LAN_CODE = None  # code a 4 chiffres requis pour se connecter en --lan ; None = --lan-sans-mdp (aucune protection)
 WEB_PORT = 8032  # port reellement utilise par ce serveur (peut differer de --web-port si deja pris) ; pour le bouton "Lancer Float"
+CODE_PATH = None  # chemin du fichier x32_lan_config.json ; None si --lan-sans-mdp ou --local-only (code non geré sur disque)
+LOCAL_URL = ""  # http://127.0.0.1:PORT/ ; affiche dans l'UI (demande : "version + ip:port + code visibles")
+LAN_URLS = []  # une par adresse IPv4 locale detectee, affichees dans l'UI pour la connexion tablette
 LAN_COOKIE = "x32lansess"
 SESSIONS = set()  # jetons de session valides, en memoire seulement (perdus a l'arret du script)
 LOGIN_ATTEMPTS = {}  # ip -> {"fails": int, "locked_until": epoch, "seen": epoch} - limite le brute-force du code
@@ -1335,7 +1379,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._reject_auth_api()
         if path == "/api/state":
             snap = CLIENT.snapshot()
-            snap["lan_code"] = LAN_CODE  # affiche le code dans l'UI (deja protege par needs_login ci-dessus)
+            # Affiche dans l'UI (deja protege par needs_login ci-dessus) : code, adresses, et si le
+            # code peut etre change a chaud depuis cette page (seulement en --lan avec code actif).
+            snap["lan_code"] = LAN_CODE
+            snap["local_url"] = LOCAL_URL
+            snap["lan_urls"] = LAN_URLS
+            snap["code_rotatable"] = bool(ALLOW_ANY_HOST and CODE_PATH)
             self._json(snap)
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
@@ -1400,7 +1449,12 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/routings/undo":
             if not CLIENT.snapshot()["connected"]:
                 return self._json({"ok": False, "error": "Non connecte a la console"})
-            return self._json({"ok": CLIENT.undo_routing()})
+            ok = CLIENT.undo_routing()
+            if ok:
+                # petite pause : laisse la console digerer les ecritures OSC qui viennent de partir
+                # avant de relire le routing, sinon on risque de lire un etat transitoire
+                threading.Thread(target=lambda: (time.sleep(0.7), CLIENT.refresh_exp_map()), daemon=True).start()
+            return self._json({"ok": ok})
         pr, nodes = self._routing_nodes(d)
         if not pr or not nodes:
             return self._json({"ok": False, "error": "Profil introuvable ou aucun groupe selectionne"})
@@ -1412,7 +1466,9 @@ class Handler(BaseHTTPRequestHandler):
                                "changed": sum(1 for r in rows if not r["same"]),
                                "unreadable": sum(1 for r in rows if r["current"] is None)})
         if p == "/api/routings/apply":
-            return self._json({"ok": True, "result": CLIENT.apply_routing(nodes, pr["name"])})
+            result = CLIENT.apply_routing(nodes, pr["name"])
+            threading.Thread(target=lambda: (time.sleep(0.7), CLIENT.refresh_exp_map()), daemon=True).start()
+            return self._json({"ok": True, "result": result})
         self._json({"error": "introuvable"}, 404)
 
     def _capture(self):
@@ -1434,6 +1490,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json({"ok": False, "error": "Adresse IP invalide"})
             ok = CLIENT.connect(ip)
             CLIENT.demo = ip == "127.0.0.1"
+            if ok:
+                threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
             return self._json({"ok": ok, "error": CLIENT.error})
         if p == "/api/demo":
             ok, err = start_sim()
@@ -1441,6 +1499,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": False, "error": err})
             CLIENT.connect("127.0.0.1")
             CLIENT.demo = True
+            threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
             return self._json({"ok": True})
         if p == "/api/disconnect":
             CLIENT.disconnect()
@@ -1452,12 +1511,26 @@ class Handler(BaseHTTPRequestHandler):
             return self._routing_route(p, d)
         if p == "/api/refresh":
             threading.Thread(target=CLIENT.request_all, daemon=True).start()
+            threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
         if p == "/api/launch-float":
             ok, err = launch_float_window()
             return self._json({"ok": ok, "error": err})
+        if p == "/api/lan/new-code":
+            global LAN_CODE
+            if not (ALLOW_ANY_HOST and CODE_PATH):
+                return self._json({"ok": False, "error": "Code non actif sur ce serveur (mode --local-only ou --lan-sans-mdp) : rien a changer."})
+            LAN_CODE = load_or_create_lan_config(CODE_PATH, regenerate=True)
+            # Garde la session de QUI vient de faire ce changement (reste connecte sans re-taper le
+            # code qu'il vient lui-meme de generer) ; deconnecte tous les autres appareils deja
+            # connectes - c'est le but de l'operation (ex. fin de contrat, code vu par un tiers).
+            keep = self._session_token()
+            SESSIONS.clear()
+            if keep:
+                SESSIONS.add(keep)
+            return self._json({"ok": True, "code": LAN_CODE})
         if p == "/api/gain":
             v = CLIENT.set_gain(int(d["idx"]), float(d["db"]))
             return self._json({"ok": v is not None, "db": v})
@@ -1621,7 +1694,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .step button:hover{border-color:var(--blue)}
 .dl{height:16px;margin:2px 4px 0;text-align:center;font-size:10.5px;color:var(--mut);white-space:nowrap;overflow:hidden}
 .dl.d{color:var(--amber);font-weight:700}
-.strip .ft{margin-top:4px;background:var(--teal);color:#021;text-align:right;padding:3px 7px;font-weight:800;font-size:14px}
+.strip .ft{margin-top:4px;background:var(--teal);color:#021;display:flex;justify-content:space-between;align-items:baseline;padding:3px 7px;font-weight:800;font-size:14px}
+.strip .ft .exp{font-size:9.5px;font-weight:700;opacity:.7;white-space:nowrap}
 .strip.na .ft{background:#39424a;color:#9aa4ac}
 body.locked .strip .bar,body.locked .strip .kn,body.locked .strip .step,body.locked .strip .ph,body.locked .strip .val{opacity:.4;pointer-events:none}
 
@@ -1714,7 +1788,7 @@ body.v-rout #rview{display:grid}
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
-    <span id="lancode" class="mini" style="display:none;cursor:default" title="Code à saisir sur une tablette/téléphone pour accéder à cette interface"></span>
+    <button id="lancode" class="mini" style="display:none" title="Version, adresses et code d'accès"></button>
     <div class="logo">X32 GAIN RECALL<small>OSC &middot; UDP 10023 &middot; v__APP_VERSION__</small></div>
   </div>
 
@@ -1783,6 +1857,11 @@ let bank=0, presets=[], selId=null, locked=false, L={};   // L: valeurs locales 
 let presetPath="";
 
 function label(i){return i<32?String(i+1):(i<80?"A"+(i-31):"B"+(i-79));}
+/* Numero EXP (menu de patch LV1) : LU EN DIRECT sur la console (CLIENT.refresh_exp_map cote Python,
+   via /config/routing/CARD + /config/userrout/in), jamais suppose. Vide si non connecte, si la
+   lecture a echoue, ou si ce canal n'est pas patche vers la carte en ce moment - jamais un numero
+   invente. Se met a jour apres connexion, "Relire", ou l'envoi d'un routing. */
+function expLabel(i){const v=(S.exp_map||{})[i];return v?("EXP "+v):"";}
 function fmt(v){return (v>0?"+":"")+v.toFixed(1);}
 function clamp(v){return Math.max(GMIN,Math.min(GMAX,Math.round(v*2)/2));}
 function api(p,body){
@@ -1822,7 +1901,7 @@ function buildStrips(){
       <div class="vu" title="Niveau d'entrée après préampli (dBFS) · vert jusqu'à −18, ambre jusqu'à −6, rouge au-delà"><i class="lv"></i><b class="pk"></b></div></div>
       <div class="kn">${knobSVG()}</div><input class="val" value="—" spellcheck="false">
       <div class="step"><button data-d="-0.5">&minus;</button><button data-d="0.5">+</button></div>
-      <div class="dl"></div><div class="ft">${label(i)}</div>`;
+      <div class="dl"></div><div class="ft"><span class="exp">${expLabel(i)}</span>${label(i)}</div>`;
     box.appendChild(el);
     wire(el,i);
   }
@@ -1888,6 +1967,7 @@ function updateStrip(i){
   const a=-135+270*p;el.querySelector(".kval").setAttribute("d",known&&a>-134?arc(32,32,27,-135,a):"");
   const pt=pol(32,32,20,a);el.querySelector(".kptr").setAttribute("x2",pt[0]);el.querySelector(".kptr").setAttribute("y2",pt[1]);
   const ph=el.querySelector(".ph");ph.classList.toggle("on",S.phantom[i]===1);ph.disabled=S.phantom[i]==null;
+  el.querySelector(".exp").textContent=expLabel(i);
   // apercu de la scene selectionnee : repere ambre + delta
   const tg=el.querySelector(".tgt"),dl=el.querySelector(".dl");
   const pr=presets.find(x=>x.id===selId);const t=pr&&pr.gains[String(i)];
@@ -1909,9 +1989,29 @@ function update(){
   else{w.style.display="block";w.innerHTML=S.trying?"<b>Connexion en cours…</b><br>En attente d'une réponse de la console sur "+esc(S.ip)+" (UDP 10023). Si rien n'arrive : vérifiez l'IP (X32 : Setup → Network), que le PC est sur le même réseau/sous-réseau, et le pare-feu Windows."
     :"<b>1.</b> Sur la X32 : <b>Setup → Network</b> pour lire son adresse IP.<br><b>2.</b> Entrez-la en haut puis <b>Connecter</b>.<br><b>3.</b> Réglez les gains, sauvez une scène, rappelez-la plus tard.<br><br>Pas de console sous la main ? Le bouton <b>Démo</b> lance une X32 simulée.";}
   renderStatus();renderPresetButtons();routingButtons();
-  const lc=$("#lancode");
-  if(S.lan_code){lc.style.display="";lc.innerHTML="&#128273; Code tablette : <b>"+esc(S.lan_code)+"</b>";}
-  else{lc.style.display="none";}
+  const lc=$("#lancode");lc.style.display="";
+  lc.innerHTML=S.lan_code?("&#128273; Code : <b>"+esc(S.lan_code)+"</b>"):
+    ((S.lan_urls&&S.lan_urls.length)?"&#127760; Accès réseau":"&#127760; Accès");
+}
+function openNetInfo(){
+  const urls=(S.lan_urls||[]).map(u=>`<div class="pi" style="cursor:default"><b>${esc(u)}</b></div>`).join("")
+    || '<div style="color:var(--mut)">Aucune adresse réseau locale détectée (accès limité à cet ordinateur ; relancer avec --lan si ce n\'est pas voulu).</div>';
+  const code=S.lan_code?`<p style="margin-top:10px">Code d'accès tablette/téléphone : <b style="font-size:22px;letter-spacing:2px">${esc(S.lan_code)}</b></p>`:"";
+  const btns=[{t:"Fermer"}];
+  if(S.code_rotatable)btns.unshift({t:"Nouveau code…",f:confirmNewCode});
+  modal("Accès réseau",
+    `<p>Version : <b>v__APP_VERSION__</b></p><p>Adresse locale (cet ordinateur) : <b>${esc(S.local_url||"—")}</b></p>${urls}${code}`,
+    btns);
+}
+function confirmNewCode(){
+  modal("Générer un nouveau code ?",
+    "<p>Tous les appareils déjà connectés avec l'ancien code (sauf cette page) devront retaper le nouveau pour continuer. À utiliser si le code actuel a pu être vu par quelqu'un qui ne doit plus avoir accès (ex. fin de contrat).</p>",
+    [{t:"Annuler"},{t:"Générer le nouveau code",go:1,f:()=>{
+      api("/api/lan/new-code",{}).then(r=>{
+        if(r.ok)modal("Nouveau code généré",`<p>Code d'accès : <b style="font-size:26px;letter-spacing:2px">${esc(r.code)}</b></p><p style="color:var(--mut)">À communiquer aux appareils qui doivent s'y reconnecter.</p>`,[{t:"OK"}]);
+        else toast(r.error,"err");
+      });
+    }}]);
 }
 function renderStatus(){
   const i=S.info||{};const c=S.connected?`<b class="good">● Connecté</b> ${esc(i.model||"X32")} ${esc(i.name||"")} ${i.fw?"· fw "+esc(i.fw):""} · ${S.known}/128 gains lus`+(S.demo?' · <b style="color:var(--amber)">SIMULATEUR</b>':""):
@@ -1997,6 +2097,7 @@ $("#bscan").onclick=()=>{
   }).catch(()=>{b.disabled=false;b.innerHTML="&#128269; Scanner";});
 };
 $("#bref").onclick=()=>{api("/api/refresh",{});toast("Relecture des gains…");};
+$("#lancode").onclick=openNetInfo;
 $("#bfloat").onclick=()=>{
   const b=$("#bfloat");b.disabled=true;
   api("/api/launch-float",{}).then(r=>{
@@ -2173,7 +2274,7 @@ def main():
     a = ap.parse_args()
     a.lan = not a.local_only  # accessible au reseau local par defaut depuis la 1.3 ; --local-only revient a l'ancien comportement
 
-    global ALLOW_ANY_HOST, LAN_CODE, WEB_PORT
+    global ALLOW_ANY_HOST, LAN_CODE, WEB_PORT, CODE_PATH, LOCAL_URL, LAN_URLS
     ALLOW_ANY_HOST = bool(a.lan)
 
     STORE = PresetStore(a.data or pick_data_path())
@@ -2205,6 +2306,8 @@ def main():
         for ip in _local_ipv4_addresses():
             ALLOWED_HOSTS.add("%s:%d" % (ip, port))
             lan_urls.append("http://%s:%d/" % (ip, port))
+    LOCAL_URL, LAN_URLS = url, lan_urls
+    CODE_PATH = code_path
 
     if a.sim:
         ok, err = start_sim()

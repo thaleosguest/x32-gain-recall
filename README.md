@@ -2,10 +2,11 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.5.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.6.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
+- Numéro EXP (menu de patch de la LV1) affiché sur chaque voie, **lu en direct sur la console connectée** (`/config/routing/CARD` + `/config/userrout/in`) — reflète le patch réellement chargé, pas un profil supposé. Vide tant que non connecté, ou pour une voie non patchée vers la carte.
 - Scènes de gains : sauvegarder, rappeler (avec confirmation, relecture de vérification et annulation), export/import JSON.
 - +48 V : confirmation à l'activation, jamais rappelé par défaut. Verrou d'édition. Déplacement relatif (un clic ne change rien).
 - Vumètre d'entrée discret sur chaque voie (on/off).
@@ -53,7 +54,7 @@ CODE D'ACCES : 6187
 Accessible depuis une tablette/telephone sur le meme reseau :
   - http://192.168.x.x:8032/
 ```
-Depuis la 1.5.0, ce code est aussi affiché **directement dans l'interface web**, en haut à droite (« 🔑 Code tablette : 6187 »), visible depuis le PC qui héberge le serveur — plus besoin d'aller chercher la fenêtre du terminal pour le retrouver.
+Depuis la 1.5.0, ce code est aussi affiché **directement dans l'interface web** (bouton en haut à droite, « 🔑 Code : 6187 »), visible depuis le PC qui héberge le serveur — plus besoin d'aller chercher la fenêtre du terminal pour le retrouver. Ce bouton ouvre un panneau avec la version, l'adresse locale, les adresses réseau et le code (depuis la 1.6.0) ; il permet aussi de **générer un nouveau code sans relancer le serveur** (« Nouveau code… ») — déconnecte tous les appareils déjà connectés avec l'ancien code, sauf la page qui a fait le changement.
 
 Sur la tablette, ouvre simplement ce lien (rien à copier-coller) : un écran de connexion avec un clavier numérique demande le code. Une fois tapé, un cookie garde l'accès pour ce navigateur (jusqu'à 30 jours), sans avoir à ressaisir le code à chaque fois — sauf si le script est relancé (les sessions ne sont gardées qu'en mémoire, pas sur disque).
 
