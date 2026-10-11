@@ -7,44 +7,49 @@ Petite fenetre compagnon, SANS bordure, toujours au premier plan, pensee pour et
 l'espace vide de l'interface Waves eMotion LV1 : entre la rangee A/B (flip d'entree) et la rangee
 Ø (phase) de chaque voie. Mode "reduit" : pas de faders, juste potards de gain + 48V + diode de niveau.
 
-Se connecte en direct a la X32 par OSC (UDP 10023), independamment de x32_gain_recall.py : les deux
-peuvent tourner en meme temps sur la meme console (la X32 accepte plusieurs clients OSC/remote en
-parallele — c'est l'usage courant avec X32-Edit + une appli de controle tierce en meme temps — mais
-je n'ai pas de source documentant un nombre maximum garanti de clients simultanes : au-dela de
-quelques-uns, ca reste a verifier sur votre materiel).
-
-Ce fichier importe la classe X32Client de x32_gain_recall.py pour ne PAS dupliquer/faire diverger la
-lecture des gains, du 48V et des niveaux d'entree entre les deux applis. Garder les deux fichiers dans
-le meme dossier.
+DEUX MODES DE CONNEXION :
+  1) Par defaut : client HTTP de l'appli principale (x32_gain_recall.py) deja lancee sur la meme
+     machine. C'est litteralement la meme appli, la meme connexion OSC, le meme etat (gains, 48V,
+     scan reseau) que dans le navigateur : se connecter ici connecte aussi l'onglet navigateur, et
+     inversement. Lancez d'abord x32_gain_recall.py (ou son .exe), puis x32_gain_float.py a cote.
+     --port : port local de l'appli principale si different du defaut (8032).
+  2) --direct : connexion OSC directe a la console, independamment de l'appli principale (utile si
+     vous ne voulez PAS lancer le navigateur). Reutilise alors la classe X32Client de
+     x32_gain_recall.py (meme fichier requis a cote). --ip / --sim comme avant.
 
 A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette session) :
   - Pas d'alignement pixel-perfect automatique avec la fenetre LV1 reelle (impossible a deviner sans
     connaitre votre resolution d'ecran et le zoom de la LV1 chez vous) : la largeur de voie et la
     position de la fenetre se reglent a la main (boutons -/+ et glisser-deposer), puis sont memorisees
     dans x32_float_config.json pour le prochain lancement.
-  - La diode d'ecretage n'est PAS le vrai detecteur de clip materiel de la X32 : aucun chemin OSC
+  - La diode de niveau n'est PAS le vrai detecteur de clip materiel de la X32 : aucun chemin OSC
     documente ne l'expose (meme souci que l'horloge en v1.3, cf. CHANGELOG). C'est un seuil sur le
     niveau mesure (-3 dBFS par defaut, reglable avec --clip-db) : une approximation, pas une lecture
     du vrai statut de clip de la console.
 
 Usage :
-    python x32_gain_float.py --ip 192.168.1.50
-    python x32_gain_float.py --sim                  # demarre un simulateur integre, sans console
+    python x32_gain_float.py                        # se connecte a x32_gain_recall.py sur 127.0.0.1:8032
+    python x32_gain_float.py --port 8033             # ... si l'appli principale a pris un autre port
+    python x32_gain_float.py --direct --ip 192.168.1.50   # connexion OSC directe, sans l'appli principale
+    python x32_gain_float.py --direct --sim          # ... avec un simulateur integre, sans console
 """
 import argparse
+import http.cookiejar
 import json
 import math
 import os
 import sys
 import tkinter as tk
 from tkinter import messagebox
+import urllib.error
+import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
-    X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, GAIN_STEP, quantize, APP_NAME, X32_PORT,
+    X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
 )
 
-FLOAT_VERSION = "1.0.0"
+FLOAT_VERSION = "2.0.0"
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
@@ -53,9 +58,6 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
 
 BG, PANEL, LINE, LINE2 = "#08090a", "#111213", "#2c2f33", "#3a3e43"
 TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939a", "#e9edf0", "#3ddc84", "#f2b63b"
-
-CLIENT = X32Client()
-SIM = None
 
 
 def load_cfg():
@@ -74,6 +76,159 @@ def save_cfg(d):
         os.replace(tmp, CFG_PATH)
     except OSError:
         pass
+
+
+EMPTY_SNAPSHOT = {"connected": False, "trying": False, "gains": [None] * N_HA, "phantom": [None] * N_HA}
+EMPTY_METERS = {"on": True, "live": False, "v": [None] * N_HA}
+
+
+# --------------------------------------------------------------------------
+#  Backend 1 : client HTTP de x32_gain_recall.py deja lance (mode par defaut)
+# --------------------------------------------------------------------------
+class ServerBackend:
+    """Parle en HTTP/JSON a l'API locale de x32_gain_recall.py (meme machine). Gere la session
+    (cookie) si l'appli principale tourne en mode --lan avec code d'acces : needs_login passe a True,
+    l'appelant doit alors fournir le code via login(code)."""
+
+    def __init__(self, port):
+        self.base = "http://127.0.0.1:%d" % port
+        self.jar = http.cookiejar.CookieJar()
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
+        self.needs_login = False
+        self.last_error = ""
+        self.reachable = False
+
+    def _get(self, path):
+        try:
+            with self.opener.open(self.base + path, timeout=2.5) as r:
+                ct = r.headers.get("Content-Type", "")
+                body = r.read()
+            self.reachable = True
+            if "application/json" not in ct:
+                self.needs_login = True
+                return None
+            self.needs_login = False
+            return json.loads(body)
+        except urllib.error.HTTPError as e:
+            self.reachable = True
+            if e.code == 401:
+                self.needs_login = True
+            else:
+                self.last_error = "HTTP %d" % e.code
+            return None
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+            self.reachable = False
+            return None
+
+    def _post(self, path, data):
+        try:
+            body = json.dumps(data).encode("utf-8")
+            req = urllib.request.Request(self.base + path, data=body,
+                                          headers={"Content-Type": "application/json"}, method="POST")
+            with self.opener.open(req, timeout=4) as r:
+                self.reachable = True
+                self.needs_login = False
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            self.reachable = True
+            if e.code == 401:
+                self.needs_login = True
+            else:
+                try:
+                    self.last_error = json.loads(e.read()).get("error", "HTTP %d" % e.code)
+                except Exception:
+                    self.last_error = "HTTP %d" % e.code
+            return None
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+            self.reachable = False
+            return None
+
+    def login(self, code):
+        r = self._post("/api/login", {"code": code})
+        return r is not None
+
+    def snapshot(self):
+        return self._get("/api/state") or EMPTY_SNAPSHOT
+
+    def meters(self):
+        return self._get("/api/meters") or EMPTY_METERS
+
+    def connect(self, ip):
+        return self._post("/api/connect", {"ip": ip}) or {"ok": False, "error": self.last_error}
+
+    def demo(self):
+        return self._post("/api/demo", {}) or {"ok": False, "error": self.last_error}
+
+    def disconnect(self):
+        return self._post("/api/disconnect", {}) or {"ok": False}
+
+    def scan(self):
+        r = self._post("/api/scan", {})
+        return (r or {}).get("found", [])
+
+    def set_gain(self, idx, db):
+        self._post("/api/gain", {"idx": idx, "db": db})
+
+    def set_phantom(self, idx, on):
+        self._post("/api/phantom", {"idx": idx, "on": bool(on)})
+
+    def close(self):
+        pass
+
+
+# --------------------------------------------------------------------------
+#  Backend 2 : connexion OSC directe (--direct), sans l'appli principale
+# --------------------------------------------------------------------------
+class DirectBackend:
+    def __init__(self):
+        self.client = X32Client()
+        self.sim = None
+        self.needs_login = False
+        self.reachable = True
+        self.last_error = ""
+
+    def login(self, code):
+        return True
+
+    def snapshot(self):
+        return self.client.snapshot()
+
+    def meters(self):
+        return self.client.meters_snapshot()
+
+    def connect(self, ip):
+        ok = self.client.connect(ip)
+        self.client.demo = (ip == "127.0.0.1")
+        return {"ok": ok, "error": self.client.error}
+
+    def demo(self):
+        if not (self.sim and self.sim.is_alive()):
+            try:
+                self.sim = X32Sim()
+            except OSError as e:
+                return {"ok": False, "error": "Simulateur impossible : %s" % e}
+            self.sim.start()
+        self.client.connect("127.0.0.1")
+        self.client.demo = True
+        return {"ok": True}
+
+    def disconnect(self):
+        self.client.disconnect()
+        return {"ok": True}
+
+    def scan(self):
+        return scan_network()
+
+    def set_gain(self, idx, db):
+        self.client.set_gain(idx, db)
+
+    def set_phantom(self, idx, on):
+        self.client.set_phantom(idx, on)
+
+    def close(self):
+        self.client.disconnect()
+        if self.sim:
+            self.sim.stop = True
 
 
 class Strip(tk.Frame):
@@ -163,6 +318,8 @@ class Strip(tk.Frame):
         delta_px = self._drag_y0 - e.y_root     # glisser vers le haut = augmente le gain
         new_db = quantize(self._drag_db0 + delta_px * 0.25)
         if new_db != self.db:
+            self.db = new_db
+            self._draw_knob()
             self.owner.send_gain(self.idx, new_db)
 
     def _phantom_click(self):
@@ -188,6 +345,12 @@ class FloatApp:
         self.strip_w = cfg.get("strip_w", 46)
         self.locked = False
         self.clip_db = args.clip_db
+        self.logged_in = False
+
+        if args.direct:
+            self.backend = DirectBackend()
+        else:
+            self.backend = ServerBackend(args.port)
 
         self.root = tk.Tk()
         self.root.title("X32 Gain Float")
@@ -202,6 +365,7 @@ class FloatApp:
         self.root.geometry("+%d+%d" % (x, y))
 
         self._build_titlebar()
+        self._build_connectbar()
         self.strips_frame = tk.Frame(self.root, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
         self.strips = []
@@ -211,18 +375,14 @@ class FloatApp:
         self.root.bind("<Escape>", lambda e: self.quit())
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
 
-        if args.sim:
-            global SIM
-            try:
-                SIM = X32Sim()
-                SIM.start()
-            except OSError as e:
-                messagebox.showerror("X32 Gain Float", "Simulateur impossible : %s" % e)
-                sys.exit(1)
-            CLIENT.connect("127.0.0.1")
-        elif args.ip:
-            CLIENT.connect(args.ip)
-        CLIENT.set_meters(True)
+        if args.direct and args.sim:
+            r = self.backend.demo()
+            if not r.get("ok"):
+                messagebox.showerror("X32 Gain Float", r.get("error", "Simulateur impossible"))
+        elif args.direct and args.ip:
+            self.backend.connect(args.ip)
+        if args.direct:
+            self.ip_var.set(args.ip or "127.0.0.1")
 
         self._poll()
 
@@ -237,16 +397,12 @@ class FloatApp:
         self.led_conn.pack(side="left", padx=(6, 4), pady=5)
         self._conn_id = self.led_conn.create_oval(1, 1, 8, 8, fill="#555555", outline="")
 
-        self.lbl_bank = tk.Label(bar, text=BANKS[self.bank][0], bg="#0d0e0f", fg=TXT,
-                                  font=("Segoe UI", 9, "bold"))
-        self.lbl_bank.pack(side="left", padx=2)
-        self.lbl_bank.bind("<ButtonPress-1>", self._win_drag_start)
-        self.lbl_bank.bind("<B1-Motion>", self._win_drag_move)
-
-        tk.Button(bar, text="◀", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8),
-                  activebackground="#0d0e0f", command=lambda: self._change_bank(-1)).pack(side="left")
-        tk.Button(bar, text="▶", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8),
-                  activebackground="#0d0e0f", command=lambda: self._change_bank(1)).pack(side="left")
+        self.bank_var = tk.StringVar(value=BANKS[self.bank][0])
+        self.bank_menu = tk.OptionMenu(bar, self.bank_var, *[b[0] for b in BANKS], command=self._select_bank)
+        self.bank_menu.config(bg="#0d0e0f", fg=TXT, bd=0, highlightthickness=0, font=("Segoe UI", 9, "bold"),
+                               activebackground="#1c1e20", relief="flat")
+        self.bank_menu["menu"].config(bg="#15171a", fg=TXT)
+        self.bank_menu.pack(side="left", padx=2)
 
         tk.Button(bar, text="−", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9, "bold"),
                   activebackground="#0d0e0f", command=lambda: self._resize_strips(-2)).pack(side="right", padx=1)
@@ -258,6 +414,28 @@ class FloatApp:
         tk.Button(bar, text="✕", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9),
                   activebackground="#0d0e0f", command=self.quit).pack(side="right", padx=4)
 
+    def _build_connectbar(self):
+        """Barre de connexion, toujours visible : IP + Connecter + Scanner + Démo (mode --direct),
+        ou juste un statut + bouton Scanner/Connecter qui agissent sur l'appli principale (mode serveur)."""
+        bar = tk.Frame(self.root, bg="#111213")
+        bar.pack(side="top", fill="x")
+        self.ip_var = tk.StringVar(value="")
+        self.ip_entry = tk.Entry(bar, textvariable=self.ip_var, width=13, bg="#000000", fg=CYAN,
+                                  insertbackground=CYAN, bd=0, font=("Consolas", 9))
+        self.ip_entry.pack(side="left", padx=(4, 2), pady=3)
+        self.ip_entry.bind("<Return>", lambda e: self._connect())
+
+        self.btn_connect = tk.Button(bar, text="Connecter", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 8, "bold"),
+                                      activebackground="#2a2c2e", command=self._connect)
+        self.btn_connect.pack(side="left", padx=2)
+        tk.Button(bar, text="Scanner", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 8, "bold"),
+                  activebackground="#2a2c2e", command=self._scan).pack(side="left", padx=2)
+        tk.Button(bar, text="Démo", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 8, "bold"),
+                  activebackground="#2a2c2e", command=self._demo).pack(side="left", padx=2)
+
+        self.status_lbl = tk.Label(bar, text="", bg="#111213", fg=MUT, font=("Segoe UI", 8))
+        self.status_lbl.pack(side="left", padx=6)
+
     def _build_strips(self):
         for w in self.strips_frame.winfo_children():
             w.destroy()
@@ -267,7 +445,7 @@ class FloatApp:
             s = Strip(self.strips_frame, self, start + k, self.strip_w)
             s.pack(side="left")
             self.strips.append(s)
-        self.lbl_bank.config(text=BANKS[self.bank][0])
+        self.bank_var.set(BANKS[self.bank][0])
 
     def _build_resize_grip(self):
         grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0, cursor="bottom_right_corner")
@@ -301,9 +479,12 @@ class FloatApp:
             s.led.config(width=self.strip_w - 10)
             s._draw_knob()
 
-    def _change_bank(self, d):
-        self.bank = (self.bank + d) % len(BANKS)
-        self._build_strips()
+    def _select_bank(self, name):
+        for i, (n, _s) in enumerate(BANKS):
+            if n == name:
+                self.bank = i
+                self._build_strips()
+                return
 
     def _toggle_lock(self):
         self.locked = not self.locked
@@ -318,47 +499,151 @@ class FloatApp:
                 return "%s · %d" % (name, idx - start + 1)
         return str(idx)
 
+    # -- connexion ----------------------------------------------------------
+    def _connect(self):
+        ip = self.ip_var.get().strip()
+        if not ip:
+            self.status_lbl.config(text="Entrez une IP", fg=WARN)
+            return
+        self.status_lbl.config(text="Connexion…", fg=MUT)
+        r = self.backend.connect(ip)
+        if not r.get("ok"):
+            self.status_lbl.config(text=r.get("error") or "Échec", fg=WARN)
+
+    def _demo(self):
+        r = self.backend.demo()
+        if r.get("ok"):
+            self.ip_var.set("127.0.0.1")
+        else:
+            self.status_lbl.config(text=r.get("error") or "Échec", fg=WARN)
+
+    def _scan(self):
+        self.status_lbl.config(text="Recherche…", fg=MUT)
+        self.root.update_idletasks()
+        found = self.backend.scan()
+        if not found:
+            self.status_lbl.config(text="Rien trouvé — IP manuelle", fg=WARN)
+            return
+        c = found[0]
+        self.ip_var.set(c["ip"])
+        self.status_lbl.config(text="%s (%s)" % (c.get("name", "?"), c["ip"]), fg=OK)
+        if len(found) > 1:
+            messagebox.showinfo("Scan réseau",
+                                 "%d consoles trouvées, la première a été mise dans le champ IP :\n\n" % len(found) +
+                                 "\n".join("%s — %s (%s)" % (c["ip"], c.get("name", "?"), c.get("model", "?")) for c in found),
+                                 parent=self.root)
+
+    def _login_prompt(self):
+        code = _SimpleAsk(self.root, "Code d'accès", "Code à 4 chiffres de l'appli principale (affiché dans son terminal) :").result
+        if code and self.backend.login(code):
+            self.status_lbl.config(text="Connecté au serveur local", fg=OK)
+        elif code is not None:
+            self.status_lbl.config(text="Code incorrect", fg=WARN)
+
     # -- commandes --------------------------------------------------------
     def send_gain(self, idx, db):
-        CLIENT.set_gain(idx, db)
+        self.backend.set_gain(idx, db)
 
     def send_phantom(self, idx, on):
-        CLIENT.set_phantom(idx, on)
+        self.backend.set_phantom(idx, on)
 
     # -- boucle d'etat ------------------------------------------------------
     def _poll(self):
-        snap = CLIENT.snapshot()
-        self.led_conn.itemconfig(self._conn_id, fill=(OK if snap["connected"] else ("#f2b63b" if snap["trying"] else "#555555")))
-        m = CLIENT.meters_snapshot()
+        if self.backend.needs_login and not getattr(self, "_login_pending", False):
+            self._login_pending = True
+            self.root.after(50, self._do_login_then_poll)
+            return
+        snap = self.backend.snapshot()
+        self.led_conn.itemconfig(self._conn_id, fill=(OK if snap.get("connected") else
+                                                        ("#f2b63b" if snap.get("trying") else "#555555")))
+        if not self.backend.reachable and not self.args.direct:
+            self.status_lbl.config(text="Appli principale non trouvée sur le port %d" % self.args.port, fg=WARN)
+        elif not snap.get("connected") and not snap.get("trying"):
+            if self.status_lbl.cget("text") in ("", "Recherche…"):
+                self.status_lbl.config(text="Non connecté à la console", fg=MUT)
+        else:
+            self.status_lbl.config(text="", fg=MUT)
+        m = self.backend.meters()
         for s in self.strips:
-            s.set_gain(snap["gains"][s.idx])
-            s.set_phantom(snap["phantom"][s.idx])
-            s.set_led(m["v"][s.idx] if m["live"] else None, self.clip_db)
-        self.root.after(120, self._poll)
+            s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
+            s.set_phantom(snap["phantom"][s.idx] if snap.get("phantom") else None)
+            s.set_led(m["v"][s.idx] if m.get("live") else None, self.clip_db)
+        self.root.after(200, self._poll)
+
+    def _do_login_then_poll(self):
+        self._login_pending = False
+        self._login_prompt()
+        self._poll()
 
     def quit(self):
         save_cfg({"bank": self.bank, "strip_w": self.strip_w,
                    "x": self.root.winfo_x(), "y": self.root.winfo_y()})
-        CLIENT.disconnect()
-        if SIM:
-            SIM.stop = True
+        self.backend.close()
         self.root.destroy()
 
     def run(self):
         self.root.mainloop()
 
 
+class _SimpleAsk:
+    """Petite boîte de dialogue modale (code d'accès à 4 chiffres) sans dépendre de tkinter.simpledialog
+    (pour garder le même style visuel sombre que le reste de l'appli)."""
+
+    def __init__(self, parent, title, prompt):
+        self.result = None
+        top = tk.Toplevel(parent)
+        top.title(title)
+        top.configure(bg=PANEL)
+        top.attributes("-topmost", True)
+        top.resizable(False, False)
+        tk.Label(top, text=prompt, bg=PANEL, fg=TXT, font=("Segoe UI", 9), wraplength=260, justify="left").pack(
+            padx=14, pady=(14, 6))
+        var = tk.StringVar()
+        e = tk.Entry(top, textvariable=var, bg="#000000", fg=CYAN, insertbackground=CYAN, bd=0,
+                     font=("Consolas", 14), justify="center")
+        e.pack(padx=14, pady=4, fill="x")
+        e.focus_set()
+
+        def ok(_e=None):
+            self.result = var.get().strip()
+            top.destroy()
+
+        def cancel():
+            self.result = None
+            top.destroy()
+
+        e.bind("<Return>", ok)
+        row = tk.Frame(top, bg=PANEL)
+        row.pack(pady=(6, 12))
+        tk.Button(row, text="Annuler", command=cancel, bd=0, bg="#1c1e20", fg=TXT).pack(side="left", padx=6)
+        tk.Button(row, text="OK", command=ok, bd=0, bg=TEAL, fg="#032").pack(side="left", padx=6)
+        top.grab_set()
+        parent.wait_window(top)
+
+
 def main():
     ap = argparse.ArgumentParser(description="X32 Gain Float — fenêtre compagnon toujours au premier plan")
     ap.add_argument("--version", action="version", version="X32 Gain Float %s" % FLOAT_VERSION)
-    ap.add_argument("--ip", help="adresse IP de la X32")
-    ap.add_argument("--sim", action="store_true", help="démarre un simulateur de X32 intégré (sans console)")
+    ap.add_argument("--port", type=int, default=8032,
+                     help="port local de x32_gain_recall.py déjà lancé (défaut 8032, mode serveur)")
+    ap.add_argument("--direct", action="store_true",
+                     help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
+    ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")
+    ap.add_argument("--sim", action="store_true",
+                     help="démarre un simulateur de X32 intégré, sans console (avec --direct)")
     ap.add_argument("--clip-db", type=float, default=-3.0,
                      help="seuil (dBFS) à partir duquel la diode passe au rouge (défaut -3 ; "
                           "ce n'est PAS le vrai détecteur de clip matériel, voir l'en-tête du fichier)")
     args = ap.parse_args()
-    app = FloatApp(args)
-    app.run()
+    try:
+        app = FloatApp(args)
+        app.run()
+    except Exception as e:  # pas de console visible en .exe --windowed : on affiche l'erreur plutôt que de disparaître
+        try:
+            messagebox.showerror("X32 Gain Float — erreur au démarrage", "%s: %s" % (type(e).__name__, e))
+        except Exception:
+            raise
+        raise
 
 
 if __name__ == "__main__":

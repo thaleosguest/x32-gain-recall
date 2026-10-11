@@ -2,6 +2,14 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [1.4.1]
+- **Correctif important sur `x32_gain_float.py`** : la v1.4.0 ne proposait aucun moyen de se connecter à la console *depuis la fenêtre flottante elle-même* (il fallait passer `--ip`/`--sim` en ligne de commande au lancement) — ce qui la rendait inutilisable pour qui double-clique dessus sans argument. Corrigé :
+  - La fenêtre flottante se connecte maintenant **par défaut à l'appli principale `x32_gain_recall.py` déjà lancée**, via son API HTTP locale (port 8032 par défaut, réglable avec `--port`) : c'est littéralement la même connexion OSC, le même état (gains, 48V) que dans le navigateur — se connecter depuis l'un connecte aussi l'autre. Gère automatiquement l'écran de code d'accès si l'appli principale tourne en mode réseau local protégé (par défaut depuis la 1.3).
+  - Nouvelle barre de connexion visible dans la fenêtre flottante : champ IP, boutons **Connecter**, **Scanner**, **Démo** — mêmes actions que dans le navigateur.
+  - Nouveau sélecteur de banque direct (menu déroulant : Local 1-16, Local 17-32, AES50-A 1-16, etc.) en plus des flèches ◀▶.
+  - Option `--direct` pour retrouver l'ancien comportement (connexion OSC indépendante, sans l'appli principale, avec `--ip`/`--sim`) pour qui ne veut pas lancer le navigateur du tout.
+  - Les erreurs de démarrage s'affichent maintenant dans une fenêtre (au lieu de disparaître silencieusement) : l'exécutable `.exe` est compilé en mode `--windowed`, sans console visible pour voir une éventuelle erreur Python.
+
 ## [1.4.0]
 - Retrait de la sonde OSC en lecture seule (« Setup console ») ajoutée en 1.3 : elle n'a pas donné de résultat utile pour la source d'horloge et n'est plus affichée. Le mécanisme de lecture générique (`/node`) reste utilisé en interne par le Routing.
 - Nouveau bouton « Scanner » (barre du haut) : diffuse `/xinfo` en broadcast UDP sur le port OSC (10023) et liste les consoles X32/M32 qui répondent, pour éviter de taper l'IP à la main. Le champ IP manuel reste disponible en toutes circonstances (le scan peut échouer sur un réseau qui filtre le broadcast entre appareils — Wi-Fi « AP isolation », VLAN, pare-feu). **Non vérifié sur une vraie X32 en dehors du simulateur** : le simulateur intégré ne répond pas au broadcast (il n'écoute que sur 127.0.0.1, par construction), donc seul un test sur le réseau réel du prochain lancement confirmera que ça fonctionne derrière votre matériel réseau (switch/Wi-Fi/routeur) — rien dans la documentation OSC non-officielle ne décrit la découverte réseau ; la technique broadcast + port 10023 s'appuie sur une capture Wireshark indépendante rapportant le comportement de X32-Edit, pas sur une spécification officielle.

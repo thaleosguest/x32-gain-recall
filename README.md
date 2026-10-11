@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.4.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.4.1** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -21,11 +21,19 @@ Version courante : **1.4.0** (voir [CHANGELOG](CHANGELOG.md)).
 ### Fenêtre compagnon (mode réduit, toujours au premier plan)
 `x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat`, ou `X32_Gain_Float.exe` dans les Releases) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille et banque affichée sont mémorisées dans `x32_float_config.json` (non versionné) pour le prochain lancement.
 
-Se connecte en direct à la console, indépendamment de `x32_gain_recall.py` (les deux peuvent tourner en même temps) :
+**Par défaut, c'est la même appli que dans le navigateur** : la fenêtre flottante se connecte en HTTP à `x32_gain_recall.py` déjà lancé sur la même machine (port 8032 par défaut) — même connexion OSC, même état. **Il faut donc avoir lancé `x32_gain_recall.py` (ou son `.exe`) avant d'ouvrir la fenêtre flottante.** Une barre de connexion (IP, Connecter, Scanner, Démo) est directement intégrée à la fenêtre flottante — pas besoin de garder l'onglet navigateur ouvert, se connecter depuis l'un connecte aussi l'autre :
 ```
-python x32_gain_float.py --ip 192.168.1.50
-python x32_gain_float.py --sim
+python x32_gain_float.py                  # se connecte à x32_gain_recall.py sur 127.0.0.1:8032
+python x32_gain_float.py --port 8033      # si l'appli principale a pris un autre port (affiché dans son terminal)
 ```
+Si l'appli principale tourne avec son code d'accès réseau local (par défaut depuis la 1.3), la fenêtre flottante le demande automatiquement au premier lancement.
+
+Pour se passer complètement du navigateur, `--direct` fait une connexion OSC indépendante à la console (reprend l'ancien comportement de la 1.4.0) :
+```
+python x32_gain_float.py --direct --ip 192.168.1.50
+python x32_gain_float.py --direct --sim
+```
+
 **Nécessite tkinter**, inclus par défaut avec l'installeur officiel python.org (case « tcl/tk and IDLE » cochée par défaut) — pas une dépendance à installer séparément, mais à ne pas décocher à l'installation. L'exécutable Windows des Releases n'a pas ce problème (tkinter est inclus dedans).
 
 Pas d'alignement automatique avec la fenêtre LV1 réelle : ça dépend de votre résolution d'écran et du zoom de la LV1, qu'on ne peut pas deviner depuis ici — à régler à la main une fois, puis c'est mémorisé. La diode de niveau n'est pas le vrai détecteur de clip de la console (voir [CHANGELOG](CHANGELOG.md)), c'est une approximation par seuil sur le niveau mesuré.
