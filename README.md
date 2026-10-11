@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.6.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.7.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -13,6 +13,7 @@ Version courante : **1.6.0** (voir [CHANGELOG](CHANGELOG.md)).
 - Onglet Routing : charger en un clic un routing X32 (profil « Routing LV1 » intégré), avec aperçu des différences, vérification et annulation.
 - Bouton « Scanner » : recherche les X32/M32 sur le réseau local (broadcast `/xinfo`, voir [CHANGELOG](CHANGELOG.md)) ; la saisie manuelle de l'IP reste toujours possible si le scan ne trouve rien.
 - Accès depuis une tablette/téléphone sur le réseau local (`--lan`), protégé par un jeton d'accès.
+- Interface web **responsive** (depuis la 1.7.0) : sous ~980px de large, la colonne latérale (banques/scènes) passe sous les voies au lieu d'à côté, et la barre du haut passe à la ligne. Les voies elles-mêmes gardent leur défilement horizontal (seize potards côte à côte reste le principe, même sur petit écran).
 
 ## Utilisation
 **Avec Python** : `python x32_gain_recall.py` (ou double-clic sur `Lancer_X32_Gain_Recall.bat`), puis entrer l'IP de la X32 (Setup → Network) et *Connecter*, ou *Scanner* pour la trouver automatiquement sur le réseau local. Option `--sim` : X32 simulée, sans console.
@@ -24,7 +25,7 @@ Bouton **« Float »** dans la barre du haut du navigateur : lance la fenêtre f
 
 `x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `X32_Gain_Recall.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut à gauche, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille et banque affichée sont mémorisées dans `x32_float_config.json` (non versionné) pour le prochain lancement.
 
-Barre de titre pensée pour le tactile (depuis la 1.5.0) : boutons de repli (▾/▸) et de taille (−/+) regroupés à **gauche**, agrandis pour le doigt ; le reste de la barre (pointillés ⋯) est une zone de glisser-déposer dédiée, toujours large, pour déplacer la fenêtre au doigt même repliée (quand elle n'est plus qu'un simple bandeau de titre).
+Depuis la 1.7.0, la **barre de connexion** (IP, Connecter, Scanner, Démo) est **en haut**, et la barre de titre (repli/zoom, banque, Scènes, Routing, verrou) juste en dessous — ordre inversé par rapport aux versions précédentes, à la demande. Les deux barres ont leur propre zone de glisser-déposer dédiée (pointillés ⋯), toujours large, pour déplacer la fenêtre au doigt même repliée (quand elle n'est plus qu'un simple bandeau de titre). Boutons de repli (▾/▸) et de taille (−/+) regroupés à **gauche** de la barre de titre, agrandis pour le doigt, depuis la 1.5.0. Boutons globalement plus contrastés (couleurs par rôle, contours visibles) depuis la 1.7.0 — précision : tkinter ne fait pas de vrais bords arrondis sur un bouton natif, l'effet est simulé par un contour, pas un arrondi réel.
 
 **Par défaut, c'est la même appli que dans le navigateur** : la fenêtre flottante se connecte en HTTP à `x32_gain_recall.py` déjà lancé sur la même machine (port 8032 par défaut) — même connexion OSC, même état. **Il faut donc avoir lancé `x32_gain_recall.py` (ou son `.exe`) avant d'ouvrir la fenêtre flottante.** Une barre de connexion (IP, Connecter, Scanner, Démo) est directement intégrée à la fenêtre flottante — pas besoin de garder l'onglet navigateur ouvert, se connecter depuis l'un connecte aussi l'autre :
 ```
@@ -41,7 +42,7 @@ python x32_gain_float.py --direct --sim
 
 **Nécessite tkinter**, inclus par défaut avec l'installeur officiel python.org (case « tcl/tk and IDLE » cochée par défaut) — pas une dépendance à installer séparément, mais à ne pas décocher à l'installation. L'exécutable Windows des Releases n'a pas ce problème (tkinter est inclus dedans).
 
-Boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau (la fenêtre s'agrandit) pour sauvegarder ou rappeler une scène de gains, ou charger un profil de routing, avec confirmation — version simplifiée de ce que propose le navigateur (pas d'option 48V, pas de renommer/supprimer/importer, pas de patch de sortie). Le fichier `x32_presets.json` est partagé avec le navigateur : une scène sauvegardée depuis l'un apparaît dans l'autre. Bouton **▾/▸** pour replier toute la fenêtre en une simple barre de titre et libérer de la place sur l'écran de la LV1. Le glisser sur un potard est volontairement moins sensible que dans la 1.4.1 pour le tactile (`--sensitivity` pour ajuster) ; cliquer sur la valeur en dB permet de taper le chiffre exact.
+Boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau (la fenêtre s'agrandit) pour sauvegarder, rappeler, **renommer, supprimer ou écraser** une scène de gains (ces trois derniers depuis la 1.7.0 — avant, seul « Charger » était disponible ici, il fallait repasser par le navigateur), ou charger un profil de routing, avec confirmation avant tout envoi/écrasement/suppression. Reste simplifié par rapport au navigateur sur deux points précis : pas d'option 48V au rappel, pas de patch de sortie console, pas d'import de `.scn` — pour ça, utiliser le navigateur. Le fichier `x32_presets.json` est partagé avec le navigateur : une scène sauvegardée, renommée, écrasée ou supprimée depuis l'un se reflète dans l'autre. Bouton **▾/▸** pour replier toute la fenêtre en une simple barre de titre et libérer de la place sur l'écran de la LV1. Le glisser sur un potard est volontairement moins sensible que dans la 1.4.1 pour le tactile (`--sensitivity` pour ajuster) ; cliquer sur la valeur en dB permet de taper le chiffre exact.
 
 Pas d'alignement automatique avec la fenêtre LV1 réelle : ça dépend de votre résolution d'écran et du zoom de la LV1, qu'on ne peut pas deviner depuis ici — à régler à la main une fois, puis c'est mémorisé. La diode de niveau n'est pas le vrai détecteur de clip de la console (voir [CHANGELOG](CHANGELOG.md)), c'est une approximation par seuil sur le niveau mesuré.
 

@@ -20,14 +20,16 @@ DEUX MODES DE CONNEXION :
 SCENES / ROUTING : boutons "Scènes" et "Routing" dans la barre de titre, ouvrent un panneau sous les
 potards (la fenêtre s'agrandit). Le panneau Scènes a un champ "nom + Sauvegarder" en haut (capture TOUS
 les gains actuellement lus sur la console, pas seulement la banque affichée — comme le "Sauvegarder" du
-navigateur) et liste les scènes existantes avec un bouton "Charger" chacune. Le panneau Routing liste les
-profils de routing (importés via le navigateur) avec un bouton "Charger". Confirmation avant tout envoi.
-Version volontairement simplifiée par rapport au navigateur : le rappel de scène ne touche jamais le 48V
-(comme le comportement par défaut du navigateur), et le chargement de routing ne touche que le routing
-E/S, jamais le patch de sortie console — pour les options plus fines (sous-ensemble de voies, inclure le
-48V, patch de sortie, renommer/supprimer une scène, importer un .scn), utiliser le navigateur. Le fichier
-x32_presets.json (scènes) est partagé entre le navigateur et le float : une scène sauvegardée depuis l'un
-apparaît dans l'autre.
+navigateur) et liste les scènes existantes, chacune avec 4 boutons : Charger, Écraser (remplace le
+contenu de la scène par les gains actuels de la console), Renommer et Supprimer (depuis la 1.7.0 — avant,
+seul "Charger" existait ici, il fallait passer par le navigateur pour les 3 autres). Le panneau Routing
+liste les profils de routing (importés via le navigateur) avec un bouton "Charger". Confirmation avant
+tout envoi/écrasement/suppression. Version volontairement simplifiée par rapport au navigateur sur deux
+points : le rappel de scène ne touche jamais le 48V (comme le comportement par défaut du navigateur), et
+le chargement de routing ne touche que le routing E/S, jamais le patch de sortie console — pour ça
+(sous-ensemble de voies, inclure le 48V, patch de sortie, importer un .scn), utiliser le navigateur. Le
+fichier x32_presets.json (scènes) est partagé entre le navigateur et le float : une scène sauvegardée,
+renommée, écrasée ou supprimée depuis l'un se reflète dans l'autre.
 
 REPLIER / DEPLIER : bouton ▾/▸ dans la barre de titre, replie toute la fenêtre à une simple barre de
 titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'identique (banque, taille,
@@ -76,7 +78,7 @@ from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
 
-FLOAT_VERSION = "2.3.0"
+FLOAT_VERSION = "2.4.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
@@ -86,6 +88,7 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
 
 BG, PANEL, LINE, LINE2 = "#08090a", "#111213", "#2c2f33", "#3a3e43"
 TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939a", "#e9edf0", "#3ddc84", "#f2b63b"
+BLUE = "#31b6f7"   # meme bleu "action primaire" que le navigateur (.pill.on), pour une identite visuelle coherente
 
 
 def short_label(idx):
@@ -231,6 +234,15 @@ class ServerBackend:
     def recall_preset(self, pid):
         return self._post("/api/presets/recall", {"id": pid}) or {"ok": False, "error": self.last_error}
 
+    def rename_preset(self, pid, name):
+        return self._post("/api/presets/rename", {"id": pid, "name": name}) or {"ok": False, "error": self.last_error}
+
+    def delete_preset(self, pid):
+        return self._post("/api/presets/delete", {"id": pid}) or {"ok": False, "error": self.last_error}
+
+    def overwrite_preset(self, pid):
+        return self._post("/api/presets/save", {"overwrite_id": pid}) or {"ok": False, "error": self.last_error}
+
     def routings(self):
         return (self._get("/api/routings") or {}).get("profiles", [])
 
@@ -318,6 +330,24 @@ class DirectBackend:
         if not self.client.snapshot()["connected"]:
             return {"ok": False, "error": "Non connecté à la console"}
         return {"ok": True, "result": self.client.recall(pr)}
+
+    def rename_preset(self, pid, name):
+        ok = PresetStore(self._data_path).rename(pid, name)
+        return {"ok": ok, "error": "" if ok else "Scène introuvable"}
+
+    def delete_preset(self, pid):
+        ok = PresetStore(self._data_path).delete(pid)
+        return {"ok": ok, "error": "" if ok else "Scène introuvable"}
+
+    def overwrite_preset(self, pid):
+        snap = self.client.snapshot()
+        gains = {str(i): g for i, g in enumerate(snap["gains"]) if g is not None}
+        if not gains:
+            return {"ok": False, "error": "Aucune valeur de gain lue : connectez-vous d'abord."}
+        phantom = {str(i): p for i, p in enumerate(snap["phantom"]) if p is not None}
+        names = {str(i): n for i, n in enumerate(snap["names"]) if n}
+        ok = PresetStore(self._data_path).overwrite(pid, gains, phantom, names, snap["info"])
+        return {"ok": ok, "error": "" if ok else "Scène introuvable"}
 
     def routings(self):
         return RoutingStore(self._routing_path).summaries()
@@ -514,8 +544,13 @@ class FloatApp:
         x = cfg.get("x", 200); y = cfg.get("y", 200)
         self.root.geometry("+%d+%d" % (x, y))
 
-        self._build_titlebar()
+        # Depuis la 1.7.0 : la barre de connexion (IP/Connecter/Scanner/Démo) est EN HAUT, la barre de
+        # titre (repli/zoom/banque/Scènes/Routing) juste en dessous - a la demande explicite de
+        # l'utilisateur (ordre inverse de la 1.5.0/1.6.0). L'ordre d'empilement tkinter suit l'ordre des
+        # appels a pack(side="top"), donc l'inversion se fait simplement en appelant les deux methodes
+        # dans l'autre sens ; aucune des deux ne depend de l'autre.
         self.connectbar = self._build_connectbar()
+        self._build_titlebar()
         self.strips_frame = tk.Frame(self.root, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
         self.strips = []
@@ -571,18 +606,28 @@ class FloatApp:
         self.bank_menu["menu"].config(bg="#15171a", fg=TXT)
         self.bank_menu.pack(side="left", padx=2)
 
-        self.btn_scenes = tk.Button(bar, text="Scènes", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8, "bold"),
-                                     activebackground="#1c1e20", command=lambda: self._toggle_panel("scenes"))
-        self.btn_scenes.pack(side="left", padx=(8, 1))
-        self.btn_routing = tk.Button(bar, text="Routing", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8, "bold"),
-                                      activebackground="#1c1e20", command=lambda: self._toggle_panel("routing"))
-        self.btn_routing.pack(side="left", padx=1)
+        # Boutons Scenes/Routing plus "explicites" (demande utilisateur) : contour visible au repos,
+        # et bascule vers le meme bleu "actif" que les onglets Gains/Routing du navigateur une fois le
+        # panneau ouvert (gere dans _toggle_panel), plutot qu'un simple gris a peine plus clair.
+        self.btn_scenes = tk.Button(bar, text="Scènes", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                                     activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
+                                     highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                     command=lambda: self._toggle_panel("scenes"))
+        self.btn_scenes.pack(side="left", padx=(8, 2))
+        self.btn_routing = tk.Button(bar, text="Routing", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                                      activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
+                                      highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                      command=lambda: self._toggle_panel("routing"))
+        self.btn_routing.pack(side="left", padx=2)
 
-        self.btn_lock = tk.Button(bar, text="🔓", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9),
-                                   activebackground="#0d0e0f", padx=5, pady=3, command=self._toggle_lock)
-        self.btn_lock.pack(side="right", padx=4)
-        tk.Button(bar, text="✕", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 9),
-                  activebackground="#0d0e0f", padx=5, pady=3, command=self.quit).pack(side="right", padx=4)
+        self.btn_lock = tk.Button(bar, text="🔓", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10),
+                                   activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
+                                   highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                   command=self._toggle_lock)
+        self.btn_lock.pack(side="right", padx=4, pady=2)
+        tk.Button(bar, text="✕", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10), activebackground=WARN,
+                  relief="flat", padx=7, pady=5, highlightthickness=1, highlightbackground=LINE2,
+                  cursor="hand2", command=self.quit).pack(side="right", padx=4, pady=2)
 
         # Poignee de glisser : prend tout l'espace restant entre les boutons de gauche et de droite.
         # Memes bindings que la barre elle-meme, mais garantie d'etre toujours presente et large, meme
@@ -594,26 +639,49 @@ class FloatApp:
         self.drag_handle = handle
 
     def _build_connectbar(self):
-        """Barre de connexion, toujours visible : IP + Connecter + Scanner + Démo (mode --direct),
-        ou juste un statut + bouton Scanner/Connecter qui agissent sur l'appli principale (mode serveur)."""
+        """Barre de connexion, EN HAUT depuis la 1.7.0 (a la demande explicite : avant, elle etait sous
+        la barre de titre banque/Scenes/Routing - l'ordre est desormais inverse). Toujours visible :
+        IP + Connecter + Scanner + Démo (mode --direct), ou juste un statut + bouton Scanner/Connecter
+        qui agissent sur l'appli principale (mode serveur).
+        Boutons plus "explicites" (a la demande) : couleurs distinctes par role - Connecter en bleu
+        (action primaire, meme bleu que le bouton "Connecter" du navigateur), Scanner neutre, Démo avec
+        un liseré ambre pour bien le distinguer d'une vraie connexion console - plus de "padding" pour
+        le tactile. Note honnete : tkinter ne sait pas dessiner de bords vraiment arrondis sur un bouton
+        natif (pas d'equivalent CSS border-radius) ; l'effet "bouton" est simule par un contour
+        (highlightthickness) + du remplissage, pas par un veritable arrondi."""
         bar = tk.Frame(self.root, bg="#111213")
         bar.pack(side="top", fill="x")
+        bar.bind("<ButtonPress-1>", self._win_drag_start)
+        bar.bind("<B1-Motion>", self._win_drag_move)
+
+        self.ip_entry = None  # cree ci-dessous, reference gardee pour _connect()
         self.ip_var = tk.StringVar(value="")
         self.ip_entry = tk.Entry(bar, textvariable=self.ip_var, width=13, bg="#000000", fg=CYAN,
-                                  insertbackground=CYAN, bd=0, font=("Consolas", 9))
-        self.ip_entry.pack(side="left", padx=(4, 2), pady=3)
+                                  insertbackground=CYAN, bd=0, font=("Consolas", 10), highlightthickness=1,
+                                  highlightbackground=LINE2, highlightcolor=BLUE)
+        self.ip_entry.pack(side="left", padx=(6, 4), pady=5, ipady=3)
         self.ip_entry.bind("<Return>", lambda e: self._connect())
 
-        self.btn_connect = tk.Button(bar, text="Connecter", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 8, "bold"),
-                                      activebackground="#2a2c2e", command=self._connect)
-        self.btn_connect.pack(side="left", padx=2)
-        tk.Button(bar, text="Scanner", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 8, "bold"),
-                  activebackground="#2a2c2e", command=self._scan).pack(side="left", padx=2)
-        tk.Button(bar, text="Démo", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 8, "bold"),
-                  activebackground="#2a2c2e", command=self._demo).pack(side="left", padx=2)
+        self.btn_connect = tk.Button(bar, text="Connecter", bd=0, bg=BLUE, fg="#001a2a", font=("Segoe UI", 9, "bold"),
+                                      activebackground="#5cc9ff", relief="flat", padx=12, pady=6,
+                                      highlightthickness=0, cursor="hand2", command=self._connect)
+        self.btn_connect.pack(side="left", padx=3, pady=4)
+        tk.Button(bar, text="Scanner", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                  activebackground="#2a2c2e", relief="flat", padx=11, pady=6, highlightthickness=1,
+                  highlightbackground=LINE2, cursor="hand2", command=self._scan).pack(side="left", padx=2, pady=4)
+        tk.Button(bar, text="Démo", bd=0, bg="#1c1e20", fg=AMBER, font=("Segoe UI", 9, "bold"),
+                  activebackground="#2a2c2e", relief="flat", padx=11, pady=6, highlightthickness=1,
+                  highlightbackground=AMBER, cursor="hand2", command=self._demo).pack(side="left", padx=(2, 6), pady=4)
 
         self.status_lbl = tk.Label(bar, text="", bg="#111213", fg=MUT, font=("Segoe UI", 8))
         self.status_lbl.pack(side="left", padx=6)
+
+        # Poignee de glisser (meme principe que celle de la barre de titre, 1.5.0) : desormais que cette
+        # barre est tout en haut, il lui faut aussi une zone large pour deplacer la fenetre au doigt.
+        handle = tk.Label(bar, text="⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯", bg="#111213", fg="#2a2c2e", font=("Segoe UI", 8))
+        handle.pack(side="left", fill="both", expand=True)
+        handle.bind("<ButtonPress-1>", self._win_drag_start)
+        handle.bind("<B1-Motion>", self._win_drag_move)
         return bar
 
     def _build_strips(self):
@@ -668,7 +736,9 @@ class FloatApp:
 
     def _toggle_lock(self):
         self.locked = not self.locked
-        self.btn_lock.config(text="🔒" if self.locked else "🔓")
+        self.btn_lock.config(text="🔒" if self.locked else "🔓",
+                              bg=(WARN if self.locked else "#1c1e20"),
+                              fg=("#fff" if self.locked else MUT))
 
     def _toggle_collapse(self):
         """Replie la fenêtre en un simple bandeau (barre de titre seule) pour libérer de la place sur
@@ -689,14 +759,16 @@ class FloatApp:
         if self.panel_mode == mode or mode is None:
             self.panel.pack_forget()
             self.panel_mode = None
-            self.btn_scenes.config(bg="#0d0e0f")
-            self.btn_routing.config(bg="#0d0e0f")
+            self.btn_scenes.config(bg="#1c1e20", fg=TXT)
+            self.btn_routing.config(bg="#1c1e20", fg=TXT)
             return
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
-        self.btn_scenes.config(bg=("#1c1e20" if mode == "scenes" else "#0d0e0f"))
-        self.btn_routing.config(bg=("#1c1e20" if mode == "routing" else "#0d0e0f"))
+        self.btn_scenes.config(bg=(TEAL if mode == "scenes" else "#1c1e20"),
+                                fg=("#032" if mode == "scenes" else TXT))
+        self.btn_routing.config(bg=(TEAL if mode == "routing" else "#1c1e20"),
+                                 fg=("#032" if mode == "routing" else TXT))
         if mode == "scenes":
             self._fill_scenes_panel()
         else:
@@ -714,6 +786,35 @@ class FloatApp:
             tk.Label(txt, text=sub, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8), anchor="w").pack(fill="x")
         tk.Button(row, text="Charger", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
                   command=on_click).pack(side="right", padx=6, pady=4)
+
+    def _scene_row(self, p):
+        """Une scène, avec Charger + Écraser + Renommer + Supprimer cote a cote - depuis la 1.7.0,
+        a la demande explicite : avant, seul "Charger" existait ici (il fallait passer par le
+        navigateur pour renommer/supprimer/ecraser une scene, cf. README/limites connues)."""
+        pid, name = p["id"], p.get("name", "?")
+        row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
+        row.pack(fill="x", padx=6, pady=3)
+        txt = tk.Frame(row, bg="#0d0e0f")
+        txt.pack(side="left", fill="x", expand=True, padx=6, pady=4)
+        tk.Label(txt, text=name, bg="#0d0e0f", fg=TXT, font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+        created = p.get("created", "")
+        if created:
+            tk.Label(txt, text=created, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8), anchor="w").pack(fill="x")
+
+        btns = tk.Frame(row, bg="#0d0e0f")
+        btns.pack(side="right", padx=4, pady=4)
+        tk.Button(btns, text="Charger", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
+                  relief="flat", padx=8, pady=4, cursor="hand2",
+                  command=lambda: self._recall_scene(pid, name)).pack(side="left", padx=2)
+        tk.Button(btns, text="⟳ Écraser", bd=0, bg="#1c1e20", fg=AMBER, font=("Segoe UI", 8, "bold"),
+                  relief="flat", padx=8, pady=4, highlightthickness=1, highlightbackground=AMBER,
+                  cursor="hand2", command=lambda: self._overwrite_scene(pid, name)).pack(side="left", padx=2)
+        tk.Button(btns, text="✎", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                  relief="flat", padx=8, pady=4, highlightthickness=1, highlightbackground=LINE2,
+                  cursor="hand2", command=lambda: self._rename_scene(pid, name)).pack(side="left", padx=2)
+        tk.Button(btns, text="✕", bd=0, bg="#1c1e20", fg=WARN, font=("Segoe UI", 9, "bold"),
+                  relief="flat", padx=8, pady=4, highlightthickness=1, highlightbackground=WARN,
+                  cursor="hand2", command=lambda: self._delete_scene(pid, name)).pack(side="left", padx=2)
 
     def _fill_scenes_panel(self):
         tk.Label(self.panel, text="SCÈNES DE GAINS", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
@@ -741,7 +842,7 @@ class FloatApp:
                      justify="left").pack(padx=8, pady=(0, 6))
             return
         for p in items:
-            self._panel_row(p.get("name", "?"), p.get("created", ""), lambda pid=p["id"], n=p.get("name", "?"): self._recall_scene(pid, n))
+            self._scene_row(p)
 
     def _fill_routing_panel(self):
         tk.Label(self.panel, text="PROFILS DE ROUTING", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
@@ -790,6 +891,50 @@ class FloatApp:
             messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
         else:
             self.status_lbl.config(text="Scène « %s » rappelée" % name, fg=OK)
+
+    def _overwrite_scene(self, pid, name):
+        if not messagebox.askyesno(
+            "Écraser la scène ?",
+            "Remplacer le contenu de « %s » par les gains actuellement lus sur la console "
+            "(TOUS les gains, pas seulement la banque affichée) ? Cette action est irréversible." % name,
+            parent=self.root,
+        ):
+            return
+        r = self.backend.overwrite_preset(pid)
+        if not r.get("ok"):
+            messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
+        else:
+            self.status_lbl.config(text="Scène « %s » mise à jour" % name, fg=OK)
+            self._fill_scenes_panel_refresh()
+
+    def _rename_scene(self, pid, name):
+        r = _SimpleAsk(self.root, "Renommer la scène", "Nouveau nom :", initial=name).result
+        if r is None:
+            return
+        new_name = r.strip()[:60]
+        if not new_name:
+            messagebox.showwarning("Scènes", "Le nom ne peut pas être vide.", parent=self.root)
+            return
+        res = self.backend.rename_preset(pid, new_name)
+        if not res.get("ok"):
+            messagebox.showerror("Scènes", res.get("error", "Échec"), parent=self.root)
+        else:
+            self.status_lbl.config(text="Scène renommée en « %s »" % new_name, fg=OK)
+            self._fill_scenes_panel_refresh()
+
+    def _delete_scene(self, pid, name):
+        if not messagebox.askyesno(
+            "Supprimer définitivement ?",
+            "Supprimer la scène « %s » ? Cette action est irréversible." % name,
+            parent=self.root,
+        ):
+            return
+        r = self.backend.delete_preset(pid)
+        if not r.get("ok"):
+            messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
+        else:
+            self.status_lbl.config(text="Scène « %s » supprimée" % name, fg=OK)
+            self._fill_scenes_panel_refresh()
 
     def _apply_routing(self, pid, name):
         if not messagebox.askyesno("Charger ce routing ?",

@@ -43,7 +43,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1772,6 +1772,29 @@ body.v-rout #rview{display:grid}
   .pi{padding:10px 10px}
   .bank{height:46px}
   .kn svg{width:min(72px,90%)}
+}
+/* Ecrans etroits (tablette en portrait, telephone) : la mise en page fixe (grille 56px/1fr/26px, colonne
+   laterale de 310px cote a cote avec les voies) deborde sur un ecran de moins de ~980px de large - avant
+   la 1.7.0, rien ne gerait ce cas, l'appli etait pensee pour un PC/tablette en paysage. Ici on empile la
+   colonne laterale (scenes/banques) SOUS les voies au lieu d'a cote, et on laisse la barre du haut passer
+   a la ligne. Les 16 voies elles-memes restent cote a cote (min-width:1180px sur #strips, voir plus haut)
+   avec defilement horizontal : les reduire en-dessous d'une largeur lisible au doigt n'aurait pas de sens
+   sur une console de mixage, le defilement horizontal est le compromis assume ici.*/
+@media(max-width:980px){
+  #app{grid-template-rows:auto 1fr auto}
+  #top{flex-wrap:wrap;height:auto;row-gap:6px}
+  .spacer{flex:1 1 100%;height:0}
+  #main{grid-template-columns:1fr;grid-auto-rows:minmax(0,auto);overflow-y:auto}
+  #stripwrap{min-height:280px;flex:0 0 auto}
+  #side{border-left:0;border-top:1px solid #000;max-height:52vh}
+  #rview{grid-template-columns:1fr;grid-auto-rows:auto;overflow-y:auto}
+  .rcol{max-height:none}
+  .screen input{width:100px}
+}
+@media(max-width:560px){
+  .sel{min-width:0;flex:1 1 auto}
+  .screen input{width:80px}
+  #welcome{left:10px;right:10px;max-width:none}
 }
 </style></head>
 <body>
