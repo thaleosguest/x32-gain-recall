@@ -23,9 +23,9 @@ DEUX SOURCES, combinées :
   2) Automatique : la session LV1 — par défaut la base en direct CurrentLV1.dat, sinon un .emo, ou un
      dossier (le dossier History avec "Auto Save Every X Minutes") dont on relit le .emo le plus récent.
      Pour chaque canal, on prend la source du premier device de `devices` qui l'alimente (défaut :
-     X32RACK — la carte DN32-WSG de la X32, dont la voie N est l'EXP N côté X32 — puis TracksLive sur
-     l'entrée B seulement, où il rejoue ces mêmes voies avec les mêmes numéros). Quel que soit le status
-     de la route (voir lv1/session_patch.py).
+     X32RACK seul — la carte DN32-WSG de la X32, dont la voie N est l'EXP N côté X32 ; voir
+     lv1/session_patch.py pour pourquoi TracksLive n'est pas pris par défaut). Quel que soit le status
+     de la route, et en ignorant la voie droite des canaux mono.
   La table manuelle est prioritaire : un canal qu'elle décrit remplace ce que dit la session.
 
 Les deux sont relues à chaud (contrôle toutes les `poll` secondes, sur un thread ; la session n'est
@@ -68,17 +68,23 @@ def parse_manual(data):
     return out
 
 
-def build_exp_map(channels):
+def build_exp_map(channels, ranks=None):
     """{canal: [exp, ...]} -> ({exp: canal}, [exp alimentant plusieurs canaux]). Un même EXP peut
     alimenter plusieurs canaux dans la LV1 : on garde alors le plus petit numéro de canal (choix
-    arbitraire mais stable) et on le signale."""
-    exp_to_ch, conflicts = {}, set()
-    for ch in sorted(channels):
+    arbitraire mais stable) et on le signale.
+    ranks : {canal: rang} optionnel (0 = source la plus fiable). Un EXP déjà placé par un rang meilleur
+    n'est pas un conflit : la source moins fiable est simplement écartée (ex. le repli TracksLive en
+    entrée B qui annonce encore EXP 8 sur In 9 alors que X32RACK 8 est patché sur In 7)."""
+    ranks = ranks or {}
+    exp_to_ch, exp_rank, conflicts = {}, {}, set()
+    for ch in sorted(channels, key=lambda c: (ranks.get(c, 0), c)):
+        r = ranks.get(ch, 0)
         for exp in channels[ch]:
-            if exp in exp_to_ch and exp_to_ch[exp] != ch:
-                conflicts.add(exp)
+            if exp in exp_to_ch:
+                if exp_to_ch[exp] != ch and exp_rank[exp] == r:
+                    conflicts.add(exp)
                 continue
-            exp_to_ch[exp] = ch
+            exp_to_ch[exp], exp_rank[exp] = ch, r
     return exp_to_ch, sorted(conflicts)
 
 
@@ -90,6 +96,7 @@ class PatchMap:
         self.poll = poll
         self._manual = {}          # {canal: [exp]}
         self._session = {}         # {canal: [exp]}
+        self._session_ranks = {}   # {canal: rang du device retenu dans self.devices}
         self._manual_sig = None    # (mtime, taille) du dernier fichier manuel lu
         self._session_sig = None   # (chemin, signature fichier + -wal) de la derniere session lue
         self._session_file = None
@@ -145,6 +152,7 @@ class PatchMap:
             return False
         self._session_sig, self._session_file = sig, f
         self._session = {ch: list(info["sources"]) for ch, info in chans.items()}
+        self._session_ranks = {ch: info.get("rank", 0) for ch, info in chans.items()}
         self.session_read_at = time.time()
         if self._session:
             self.errors.pop("session", None)
@@ -161,7 +169,10 @@ class PatchMap:
             if changed:
                 merged = dict(self._session)
                 merged.update(self._manual)   # la table manuelle a le dernier mot, canal par canal
-                self._exp_to_ch, self._conflicts = build_exp_map(merged)
+                # rangs : table manuelle (-1) > 1er device de self.devices (0) > suivants
+                ranks = {ch: self._session_ranks.get(ch, 0) for ch in self._session}
+                ranks.update({ch: -1 for ch in self._manual})
+                self._exp_to_ch, self._conflicts = build_exp_map(merged, ranks)
             return changed
 
     def start(self):

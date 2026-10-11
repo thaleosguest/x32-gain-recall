@@ -19,14 +19,15 @@ Sens des colonnes, établi sur une vraie session (STUDIO_PAVJS_i5_3570_20261011_
                              (vraisemblablement l'entrée sélectionnée). On garde donc toutes les routes,
                              quel que soit le status, et on l'affiche à titre indicatif.
 Exemple vérifié : In 19 = A : X32RACK 21,22 / B : TracksLive-FL 21,22 — mêmes numéros des deux côtés
-(TracksLive enregistre / rejoue les voies de la carte X32 une pour une), et cohérent avec l'affichage
+sur cette session-là (pas une règle générale, voir plus bas), et cohérent avec l'affichage
 LV1 ("EX 21" / "EX 22").
 
 Pour l'appli (lv1/patchmap.py), on choisit pour chaque canal la source d'après une liste de devices par
 ordre de priorité, "NOM" ou "NOM:A" / "NOM:B" pour n'accepter ce device que sur une entrée. Défaut :
-X32RACK (la carte DN32-WSG de la X32 : sa voie N est l'EXP N côté X32), puis TracksLive mais SEULEMENT
-sur l'entrée B, où il rejoue les voies de la X32 avec les mêmes numéros. Sur l'entrée A, TracksLive est
-une vraie source de lecture (vu : In 65 <- TracksLive 1,2 en A) qui n'a rien à voir avec les préamplis.
+X32RACK SEUL (la carte DN32-WSG de la X32 : sa voie N est l'EXP N côté X32). TracksLive n'est PAS pris
+par défaut : il ne rejoue pas forcément les voies X32 avec les mêmes numéros (vu en live : X32RACK 1
+en A d'In 1, mais TracksLive 1 en B d'In 2), et en entrée A c'est une vraie source de lecture (In 65 <-
+TracksLive 1,2). L'ajouter (--device X32RACK,TracksLive:B) seulement si ce miroir est garanti.
 
 Usage (session EN DIRECT de la LV1 qui tourne sur ce PC, voir LIVE_DB) :
     python -m lv1.session_patch --live
@@ -34,7 +35,7 @@ Usage (session EN DIRECT de la LV1 qui tourne sur ce PC, voir LIVE_DB) :
 Usage (un seul fichier, depuis la racine du repo) :
     python -m lv1.session_patch STUDIO_PAVJS_i5_3570.emo                   # toutes les routes, A et B
     python -m lv1.session_patch STUDIO_PAVJS_i5_3570.emo --json out.json   # table canal -> EXP (format lv1_patch_map.json)
-    python -m lv1.session_patch STUDIO_PAVJS_i5_3570.emo --device X32RACK,TracksLive:B --json out.json
+    python -m lv1.session_patch STUDIO_PAVJS_i5_3570.emo --device X32RACK,TracksLive:B --json out.json  # + repli TracksLive
 
 Usage (mode surveillance — nécessite "Auto Save Every X Minutes" activé dans
 la LV1, qui écrit un nouveau .emo horodaté dans le dossier History à chaque
@@ -54,7 +55,7 @@ import sys
 import tempfile
 import time
 
-DEFAULT_DEVICES = ("X32RACK", "TracksLive:B")
+DEFAULT_DEVICES = ("X32RACK",)
 INPUT_NAMES = {0: "A", 1: "B"}
 
 # Base de travail EN DIRECT de la LV1 (même schéma qu'un .emo, en mode WAL). Vérifié en live le
@@ -118,14 +119,31 @@ def load_device_labels(con):
     return labels
 
 
+def load_channel_widths(con):
+    """{canal idx 0-based: 1 (mono) ou 2 (stéréo)}, ou {} si la session n'a pas cette info.
+    La largeur est chainer.num_inputs de l'objet canal (object.obj_type = 0, obj_index = canal) —
+    établi en passant un canal de mono à stéréo dans une LV1 V17 en cours (seul num_inputs 1 -> 2 et
+    les plugins M -> S changent). Nécessaire car repasser un canal en mono NE supprime PAS la route de
+    sa voie droite dans `routes` (vu : In 17 remis en mono gardait « voie D -> X32RACK 18 »)."""
+    try:
+        return dict(con.execute("""
+            SELECT o.obj_index, ch.num_inputs FROM chainer ch JOIN object o ON o.id = ch.obj_id
+            WHERE o.obj_type = 0
+        """).fetchall())
+    except sqlite3.Error:
+        return {}
+
+
 def extract_routes(db_path):
     """{canal LV1 (1-based): [{"input": "A"/"B", "device": libellé, "sources": [voie 1-based, ...],
     "active": bool}, ...]} — toutes les routes vers les canaux, entrées A et B, quel que soit le status
-    ("active" = au moins une voie en status 1)."""
+    ("active" = au moins une voie en status 1). Les voies au-delà de la largeur du canal (voie droite
+    d'un canal mono, restes d'un ancien patch stéréo) sont ignorées."""
     con, tmp = open_copy(db_path)
     try:
         cur = con.cursor()
         device_labels = load_device_labels(con)
+        widths = load_channel_widths(con)
         cur.execute("""
             SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
                    src_cluster_type_index, src_channel_index, status
@@ -140,6 +158,8 @@ def extract_routes(db_path):
     # Plusieurs lignes pour la même (canal, entrée, voie) : on garde l'id le plus élevé (la plus récente).
     latest = {}
     for row_id, ch_idx, section, slot, assign, src_idx, status in rows:
+        if slot >= widths.get(ch_idx, 2):
+            continue
         key = (ch_idx, section, slot)
         if key not in latest or row_id > latest[key][0]:
             latest[key] = (row_id, assign, src_idx, status)
@@ -171,12 +191,17 @@ def extract_patch(db_path, devices=DEFAULT_DEVICES):
     aucun de ces devices ne l'alimente. devices=None : n'importe quel device, l'entrée active d'abord."""
     out = {}
     for ch, groups in extract_routes(db_path).items():
+        rank = 0
         if devices:
-            pick = next((g for d in devices for g in groups if _matches(d, g)), None)
+            pick = next(((r, g) for r, d in enumerate(devices) for g in groups if _matches(d, g)), None)
+            rank, pick = pick if pick else (0, None)
         else:
             pick = next((g for g in groups if g["active"]), groups[0])
         if pick:
-            out[ch] = {"device": pick["device"], "input": pick["input"], "sources": list(pick["sources"])}
+            # rank = position du device retenu dans devices (0 = le plus fiable), utilisé par
+            # lv1/patchmap.py pour qu'un repli (TracksLive) ne l'emporte jamais sur X32RACK ailleurs
+            out[ch] = {"device": pick["device"], "input": pick["input"], "sources": list(pick["sources"]),
+                       "rank": rank}
     return out
 
 
