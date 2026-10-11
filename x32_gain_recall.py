@@ -33,6 +33,7 @@ import re
 import secrets
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -42,7 +43,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.4"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1081,6 +1082,7 @@ SIM = None
 ALLOWED_HOSTS = set()
 ALLOW_ANY_HOST = False  # active par --lan : accepte tout Host: (protection deplacee sur le code de connexion)
 LAN_CODE = None  # code a 4 chiffres requis pour se connecter en --lan ; None = --lan-sans-mdp (aucune protection)
+WEB_PORT = 8032  # port reellement utilise par ce serveur (peut differer de --web-port si deja pris) ; pour le bouton "Lancer Float"
 LAN_COOKIE = "x32lansess"
 SESSIONS = set()  # jetons de session valides, en memoire seulement (perdus a l'arret du script)
 LOGIN_ATTEMPTS = {}  # ip -> {"fails": int, "locked_until": epoch, "seen": epoch} - limite le brute-force du code
@@ -1180,6 +1182,35 @@ def scan_network(timeout=1.5, port=X32_PORT):
     finally:
         s.close()
     return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
+
+
+def launch_float_window():
+    """Lance x32_gain_float.py (ou son .exe) en tant que processus separe, SUR CETTE MACHINE.
+
+    Important : ce lancement se fait du cote serveur, pas du cote de l'appareil qui a clique
+    le bouton. Si le navigateur qui a clique est sur une tablette connectee a ce serveur via le
+    reseau local, la fenetre flottante s'ouvre quand meme ICI (sur le PC qui fait tourner ce
+    script), jamais sur la tablette - une tablette ne peut pas executer un .exe/.py de toute
+    facon. Ce bouton n'a donc d'utilite que pour qui clique depuis le navigateur de CETTE
+    machine (cas typique : PC qui heberge aussi la LV1).
+    """
+    frozen = getattr(sys, "frozen", False)
+    here = os.path.dirname(os.path.abspath(sys.executable if frozen else __file__))
+    try:
+        if frozen:
+            # Build Windows : X32_Gain_Recall.exe et X32_Gain_Float.exe sont cote a cote (voir build.yml)
+            exe = os.path.join(here, "X32_Gain_Float.exe")
+            if not os.path.isfile(exe):
+                return False, "X32_Gain_Float.exe introuvable a cote de %s (voir la page Releases)." % os.path.basename(sys.executable)
+            subprocess.Popen([exe, "--port", str(WEB_PORT)], cwd=here)
+        else:
+            script = os.path.join(here, "x32_gain_float.py")
+            if not os.path.isfile(script):
+                return False, "x32_gain_float.py introuvable a cote de x32_gain_recall.py."
+            subprocess.Popen([sys.executable, script, "--port", str(WEB_PORT)], cwd=here)
+    except OSError as e:
+        return False, "Lancement impossible : %s" % e
+    return True, ""
 
 
 def start_sim():
@@ -1413,6 +1444,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
+        if p == "/api/launch-float":
+            ok, err = launch_float_window()
+            return self._json({"ok": ok, "error": err})
         if p == "/api/gain":
             v = CLIENT.set_gain(int(d["idx"]), float(d["db"]))
             return self._json({"ok": v is not None, "db": v})
@@ -1665,6 +1699,7 @@ body.v-rout #rview{display:grid}
     <button class="pill" id="bdemo" title="Simulateur de X32 en local pour essayer l'appli sans console">D&eacute;mo</button>
     <button class="mini" id="bscan" title="Chercher les X32/M32 sur le r&eacute;seau local (diffusion /xinfo)">&#128269; Scanner</button>
     <button class="mini" id="bref" title="Relire tous les gains depuis la console">&#8635; Relire</button>
+    <button class="mini" id="bfloat" title="Ouvre la fenêtre flottante compagnon sur CETTE machine (pas sur la tablette, si vous consultez cette page depuis une tablette)">&#128433; Float</button>
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
@@ -1947,6 +1982,14 @@ $("#bscan").onclick=()=>{
   }).catch(()=>{b.disabled=false;b.innerHTML="&#128269; Scanner";});
 };
 $("#bref").onclick=()=>{api("/api/refresh",{});toast("Relecture des gains…");};
+$("#bfloat").onclick=()=>{
+  const b=$("#bfloat");b.disabled=true;
+  api("/api/launch-float",{}).then(r=>{
+    b.disabled=false;
+    if(r.ok)toast("Fenêtre flottante lancée sur cette machine","ok");
+    else modal("Lancement impossible",`<p>${esc(r.error||"Erreur inconnue")}</p><p style="color:var(--mut)">Rappel : ce bouton ouvre la fenêtre flottante sur la machine qui fait tourner ce serveur — pas sur l'appareil où cette page est affichée. Si vous consultez cette page depuis une tablette, la fenêtre s'ouvre (ou tente de s'ouvrir) sur le PC, pas sur la tablette.</p>`,[{t:"OK",go:1}]);
+  }).catch(()=>{b.disabled=false;toast("Erreur réseau","err");});
+};
 $("#bvu").onclick=()=>api("/api/meters",{on:!S.meters_on});
 $("#block").onclick=()=>{locked=!locked;document.body.classList.toggle("locked",locked);$("#block").classList.toggle("act",locked);
   $("#block").innerHTML=locked?"&#128274; Verrouillé":"&#128274; Verrou";update();};
@@ -2115,7 +2158,7 @@ def main():
     a = ap.parse_args()
     a.lan = not a.local_only  # accessible au reseau local par defaut depuis la 1.3 ; --local-only revient a l'ancien comportement
 
-    global ALLOW_ANY_HOST, LAN_CODE
+    global ALLOW_ANY_HOST, LAN_CODE, WEB_PORT
     ALLOW_ANY_HOST = bool(a.lan)
 
     STORE = PresetStore(a.data or pick_data_path())
@@ -2138,6 +2181,7 @@ def main():
         print("Impossible d'ouvrir un port local pour l'interface.")
         sys.exit(1)
     port = srv.server_address[1]
+    WEB_PORT = port
     ALLOWED_HOSTS.update({"127.0.0.1:%d" % port, "localhost:%d" % port})
     url = "http://127.0.0.1:%d/" % port
 

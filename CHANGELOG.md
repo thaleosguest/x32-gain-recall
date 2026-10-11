@@ -2,6 +2,9 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [1.4.4]
+- Nouveau bouton **« Float »** dans la barre du haut du navigateur : lance `x32_gain_float.py` (ou `X32_Gain_Float.exe` si l'appli principale tourne elle-même en `.exe`) en tant que processus séparé, sans avoir à chercher le fichier à la main. **Important, ce n'est pas symétrique avec l'accès tablette** : ce lancement se fait sur la machine qui exécute `x32_gain_recall.py` — pas sur l'appareil qui a cliqué le bouton. Cliqué depuis le navigateur d'une tablette connectée au serveur via le réseau local, le bouton ouvre (ou tente d'ouvrir) la fenêtre flottante sur le PC serveur, pas sur la tablette, qui ne peut de toute façon pas exécuter un exécutable Windows ou un script Python. Utile uniquement pour qui clique depuis le navigateur de la machine qui héberge déjà le serveur (cas typique : PC qui héberge aussi la LV1).
+
 ## [1.4.3]
 - Fenêtre flottante — le panneau **Scènes** permet maintenant de **sauvegarder** une nouvelle scène (champ nom + bouton, capture tous les gains actuellement lus sur la console, pas seulement la banque affichée), en plus de les rappeler. Jusqu'ici seul le rappel était possible depuis le float. Partage le même fichier `x32_presets.json` que le navigateur dans les deux modes (serveur et `--direct`).
 

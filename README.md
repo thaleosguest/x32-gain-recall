@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.4.3** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.4.4** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -19,6 +19,8 @@ Version courante : **1.4.3** (voir [CHANGELOG](CHANGELOG.md)).
 **Exécutable Windows** : dans l'onglet *Releases* du dépôt (généré automatiquement par GitHub Actions à chaque tag `vX.Y.Z`). Non signé : Windows SmartScreen / antivirus peuvent le signaler ; comparer avec le fichier `.sha256` fourni.
 
 ### Fenêtre compagnon (mode réduit, toujours au premier plan)
+Bouton **« Float »** dans la barre du haut du navigateur (depuis la 1.4.4) : lance la fenêtre flottante sans quitter le navigateur ni chercher le fichier. **À réserver au cas où le navigateur et le serveur tournent sur la même machine** (PC qui héberge aussi la LV1) : ce bouton lance le processus sur la machine qui exécute `x32_gain_recall.py`, pas sur l'appareil où la page est affichée — cliqué depuis une tablette connectée au serveur via le réseau local, il ouvre la fenêtre sur le PC, pas sur la tablette (qui ne peut de toute façon pas exécuter de script Python ni d'exe Windows).
+
 `x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat`, ou `X32_Gain_Float.exe` dans les Releases) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille et banque affichée sont mémorisées dans `x32_float_config.json` (non versionné) pour le prochain lancement.
 
 **Par défaut, c'est la même appli que dans le navigateur** : la fenêtre flottante se connecte en HTTP à `x32_gain_recall.py` déjà lancé sur la même machine (port 8032 par défaut) — même connexion OSC, même état. **Il faut donc avoir lancé `x32_gain_recall.py` (ou son `.exe`) avant d'ouvrir la fenêtre flottante.** Une barre de connexion (IP, Connecter, Scanner, Démo) est directement intégrée à la fenêtre flottante — pas besoin de garder l'onglet navigateur ouvert, se connecter depuis l'un connecte aussi l'autre :
