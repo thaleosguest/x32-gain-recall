@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.4.2** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **1.4.3** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -36,7 +36,7 @@ python x32_gain_float.py --direct --sim
 
 **Nécessite tkinter**, inclus par défaut avec l'installeur officiel python.org (case « tcl/tk and IDLE » cochée par défaut) — pas une dépendance à installer séparément, mais à ne pas décocher à l'installation. L'exécutable Windows des Releases n'a pas ce problème (tkinter est inclus dedans).
 
-Boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau (la fenêtre s'agrandit) pour rappeler une scène de gains ou charger un profil de routing, avec confirmation — version simplifiée de ce que propose le navigateur (pas d'option 48V ni de patch de sortie). Bouton **▾/▸** pour replier toute la fenêtre en une simple barre de titre et libérer de la place sur l'écran de la LV1. Le glisser sur un potard est volontairement moins sensible que dans la 1.4.1 pour le tactile (`--sensitivity` pour ajuster) ; cliquer sur la valeur en dB permet de taper le chiffre exact.
+Boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau (la fenêtre s'agrandit) pour sauvegarder ou rappeler une scène de gains, ou charger un profil de routing, avec confirmation — version simplifiée de ce que propose le navigateur (pas d'option 48V, pas de renommer/supprimer/importer, pas de patch de sortie). Le fichier `x32_presets.json` est partagé avec le navigateur : une scène sauvegardée depuis l'un apparaît dans l'autre. Bouton **▾/▸** pour replier toute la fenêtre en une simple barre de titre et libérer de la place sur l'écran de la LV1. Le glisser sur un potard est volontairement moins sensible que dans la 1.4.1 pour le tactile (`--sensitivity` pour ajuster) ; cliquer sur la valeur en dB permet de taper le chiffre exact.
 
 Pas d'alignement automatique avec la fenêtre LV1 réelle : ça dépend de votre résolution d'écran et du zoom de la LV1, qu'on ne peut pas deviner depuis ici — à régler à la main une fois, puis c'est mémorisé. La diode de niveau n'est pas le vrai détecteur de clip de la console (voir [CHANGELOG](CHANGELOG.md)), c'est une approximation par seuil sur le niveau mesuré.
 

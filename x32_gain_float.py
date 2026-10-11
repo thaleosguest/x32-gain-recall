@@ -18,12 +18,16 @@ DEUX MODES DE CONNEXION :
      x32_gain_recall.py (meme fichier requis a cote). --ip / --sim comme avant.
 
 SCENES / ROUTING : boutons "Scènes" et "Routing" dans la barre de titre, ouvrent un panneau sous les
-potards (la fenêtre s'agrandit) listant respectivement les scènes de gains et les profils de routing,
-avec un bouton "Charger" par ligne (confirmation avant envoi). Version volontairement simplifiée par
-rapport au navigateur : le rappel de scène ne touche jamais le 48V (comme le comportement par défaut du
-navigateur), et le chargement de routing ne touche que le routing E/S, jamais le patch de sortie console
-— pour les options plus fines (sous-ensemble de voies, inclure le 48V, patch de sortie), utiliser le
-navigateur.
+potards (la fenêtre s'agrandit). Le panneau Scènes a un champ "nom + Sauvegarder" en haut (capture TOUS
+les gains actuellement lus sur la console, pas seulement la banque affichée — comme le "Sauvegarder" du
+navigateur) et liste les scènes existantes avec un bouton "Charger" chacune. Le panneau Routing liste les
+profils de routing (importés via le navigateur) avec un bouton "Charger". Confirmation avant tout envoi.
+Version volontairement simplifiée par rapport au navigateur : le rappel de scène ne touche jamais le 48V
+(comme le comportement par défaut du navigateur), et le chargement de routing ne touche que le routing
+E/S, jamais le patch de sortie console — pour les options plus fines (sous-ensemble de voies, inclure le
+48V, patch de sortie, renommer/supprimer une scène, importer un .scn), utiliser le navigateur. Le fichier
+x32_presets.json (scènes) est partagé entre le navigateur et le float : une scène sauvegardée depuis l'un
+apparaît dans l'autre.
 
 REPLIER / DEPLIER : bouton ▾/▸ dans la barre de titre, replie toute la fenêtre à une simple barre de
 titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'identique (banque, taille,
@@ -192,6 +196,9 @@ class ServerBackend:
     def presets(self):
         return (self._get("/api/presets") or {}).get("presets", [])
 
+    def save_preset(self, name):
+        return self._post("/api/presets/save", {"name": name}) or {"ok": False, "error": self.last_error}
+
     def recall_preset(self, pid):
         return self._post("/api/presets/recall", {"id": pid}) or {"ok": False, "error": self.last_error}
 
@@ -261,6 +268,16 @@ class DirectBackend:
 
     def presets(self):
         return PresetStore(self._data_path).all()
+
+    def save_preset(self, name):
+        snap = self.client.snapshot()
+        gains = {str(i): g for i, g in enumerate(snap["gains"]) if g is not None}
+        if not gains:
+            return {"ok": False, "error": "Aucune valeur de gain lue : connectez-vous d'abord."}
+        phantom = {str(i): p for i, p in enumerate(snap["phantom"]) if p is not None}
+        names = {str(i): n for i, n in enumerate(snap["names"]) if n}
+        pr = PresetStore(self._data_path).add(name, gains, phantom, names, snap["info"])
+        return {"ok": True, "id": pr["id"]}
 
     def recall_preset(self, pid):
         pr = PresetStore(self._data_path).get(pid)
@@ -631,10 +648,27 @@ class FloatApp:
     def _fill_scenes_panel(self):
         tk.Label(self.panel, text="SCÈNES DE GAINS", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
             anchor="w", padx=6, pady=(6, 2))
+
+        save_row = tk.Frame(self.panel, bg=PANEL)
+        save_row.pack(fill="x", padx=6, pady=(0, 6))
+        name_var = tk.StringVar(value="")
+        name_entry = tk.Entry(save_row, textvariable=name_var, bg="#000000", fg=CYAN, insertbackground=CYAN,
+                               bd=0, font=("Consolas", 9))
+        name_entry.pack(side="left", fill="x", expand=True, ipady=3)
+
+        def do_save():
+            self._save_scene(name_var.get().strip())
+
+        name_entry.bind("<Return>", lambda e: do_save())
+        tk.Button(save_row, text="Sauvegarder", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
+                  command=do_save).pack(side="left", padx=(4, 0))
+
         items = self.backend.presets()
         if not items:
-            tk.Label(self.panel, text="Aucune scène (ou appli principale non connectée).", bg=PANEL, fg=MUT,
-                      font=("Segoe UI", 8), wraplength=self._panel_width()).pack(padx=8, pady=6)
+            tk.Label(self.panel, text="Aucune scène pour l'instant — tapez un nom ci-dessus et "
+                                       "« Sauvegarder » pour créer la première, à partir des gains actuels.",
+                     bg=PANEL, fg=MUT, font=("Segoe UI", 8), wraplength=self._panel_width(),
+                     justify="left").pack(padx=8, pady=(0, 6))
             return
         for p in items:
             self._panel_row(p.get("name", "?"), p.get("created", ""), lambda pid=p["id"], n=p.get("name", "?"): self._recall_scene(pid, n))
@@ -654,6 +688,27 @@ class FloatApp:
 
     def _panel_width(self):
         return max(200, len(self.strips) * self.strip_w)
+
+    def _save_scene(self, name):
+        if not name:
+            messagebox.showwarning("Scènes", "Entrez un nom pour la scène.", parent=self.root)
+            return
+        if not messagebox.askyesno("Sauvegarder cette scène ?",
+                                    "Sauvegarder « %s » avec TOUS les gains actuellement lus sur la console "
+                                    "(pas seulement la banque affichée) ?" % name, parent=self.root):
+            return
+        r = self.backend.save_preset(name)
+        if not r.get("ok"):
+            messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
+        else:
+            self.status_lbl.config(text="Scène « %s » sauvegardée" % name, fg=OK)
+            self._fill_scenes_panel_refresh()
+
+    def _fill_scenes_panel_refresh(self):
+        if self.panel_mode == "scenes":
+            for w in self.panel.winfo_children():
+                w.destroy()
+            self._fill_scenes_panel()
 
     def _recall_scene(self, pid, name):
         if not messagebox.askyesno("Rappeler la scène ?",

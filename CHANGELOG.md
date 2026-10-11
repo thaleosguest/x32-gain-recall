@@ -2,6 +2,9 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [1.4.3]
+- Fenêtre flottante — le panneau **Scènes** permet maintenant de **sauvegarder** une nouvelle scène (champ nom + bouton, capture tous les gains actuellement lus sur la console, pas seulement la banque affichée), en plus de les rappeler. Jusqu'ici seul le rappel était possible depuis le float. Partage le même fichier `x32_presets.json` que le navigateur dans les deux modes (serveur et `--direct`).
+
 ## [1.4.2]
 - Fenêtre flottante — potard plus adapté au tactile : sensibilité du glisser réduite par défaut (0,10 dB/px, était 0,25 ; réglable avec `--sensitivity`), et la valeur en dB est maintenant cliquable pour taper le chiffre exact au clavier plutôt que de toujours glisser.
 - Fenêtre flottante — boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau sous les potards (la fenêtre s'agrandit) listant respectivement les scènes de gains et les profils de routing, avec confirmation avant chargement. Volontairement simplifié par rapport au navigateur : le rappel de scène ne touche jamais le 48V, et le routing ne touche que le routing E/S (jamais le patch de sortie) — pour un contrôle plus fin, utiliser le navigateur.
