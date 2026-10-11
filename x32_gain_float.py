@@ -78,7 +78,7 @@ from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
 
-FLOAT_VERSION = "2.4.0"
+FLOAT_VERSION = "2.4.1"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
 
@@ -526,6 +526,7 @@ class FloatApp:
         self.logged_in = False
         self.collapsed = False
         self.panel_mode = None
+        self.active_scene_id = None   # id de la derniere scene chargee/renommee/ecrasee - pour la surligner dans le panneau
 
         if args.direct:
             self.backend = DirectBackend()
@@ -550,7 +551,7 @@ class FloatApp:
         # appels a pack(side="top"), donc l'inversion se fait simplement en appelant les deux methodes
         # dans l'autre sens ; aucune des deux ne depend de l'autre.
         self.connectbar = self._build_connectbar()
-        self._build_titlebar()
+        self.titlebar = self._build_titlebar()
         self.strips_frame = tk.Frame(self.root, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
         self.strips = []
@@ -637,6 +638,7 @@ class FloatApp:
         handle.bind("<ButtonPress-1>", self._win_drag_start)
         handle.bind("<B1-Motion>", self._win_drag_move)
         self.drag_handle = handle
+        return bar
 
     def _build_connectbar(self):
         """Barre de connexion, EN HAUT depuis la 1.7.0 (a la demande explicite : avant, elle etait sous
@@ -750,7 +752,12 @@ class FloatApp:
             self.strips_frame.pack_forget()
             self.btn_collapse.config(text="▸")
         else:
-            self.connectbar.pack(side="top", fill="x")
+            # BUG corrige (1.7.1) : pack_forget() puis pack() replace un widget a la FIN de la pile
+            # d'empilement courante, pas a sa position d'origine - comme la barre de titre restait
+            # packee pendant le repli, un simple pack(side="top") la repoussait en dessous d'elle a
+            # chaque depli, inversant l'ordre voulu (connexion en haut) au bout d'un cycle repli/depli.
+            # Fix : forcer explicitement la position avec before=.
+            self.connectbar.pack(side="top", fill="x", before=self.titlebar)
             self.strips_frame.pack(side="top", fill="x")
             self.btn_collapse.config(text="▾")
         self.root.update_idletasks()
@@ -790,18 +797,29 @@ class FloatApp:
     def _scene_row(self, p):
         """Une scène, avec Charger + Écraser + Renommer + Supprimer cote a cote - depuis la 1.7.0,
         a la demande explicite : avant, seul "Charger" existait ici (il fallait passer par le
-        navigateur pour renommer/supprimer/ecraser une scene, cf. README/limites connues)."""
+        navigateur pour renommer/supprimer/ecraser une scene, cf. README/limites connues).
+        Depuis la 1.7.1 : la ligne de la DERNIERE scene chargee/renommee/ecrasee est surlignee
+        (bordure + fond teal, badge "SCENE ACTIVE") - avant, rien n'indiquait quelle scene etait la
+        scene courante une fois le panneau refermé puis rouvert, ou apres un renommage."""
         pid, name = p["id"], p.get("name", "?")
-        row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
+        active = (pid == self.active_scene_id)
+        row_bg = "#0a2a2a" if active else "#0d0e0f"
+        row = tk.Frame(self.panel, bg=row_bg, highlightthickness=2 if active else 1,
+                        highlightbackground=TEAL if active else LINE)
         row.pack(fill="x", padx=6, pady=3)
-        txt = tk.Frame(row, bg="#0d0e0f")
+        txt = tk.Frame(row, bg=row_bg)
         txt.pack(side="left", fill="x", expand=True, padx=6, pady=4)
-        tk.Label(txt, text=name, bg="#0d0e0f", fg=TXT, font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x")
+        name_row = tk.Frame(txt, bg=row_bg)
+        name_row.pack(fill="x")
+        tk.Label(name_row, text=name, bg=row_bg, fg=TXT, font=("Segoe UI", 9, "bold"), anchor="w").pack(side="left")
+        if active:
+            tk.Label(name_row, text="  ● SCÈNE ACTIVE", bg=row_bg, fg=TEAL, font=("Segoe UI", 8, "bold"),
+                     anchor="w").pack(side="left")
         created = p.get("created", "")
         if created:
-            tk.Label(txt, text=created, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8), anchor="w").pack(fill="x")
+            tk.Label(txt, text=created, bg=row_bg, fg=MUT, font=("Segoe UI", 8), anchor="w").pack(fill="x")
 
-        btns = tk.Frame(row, bg="#0d0e0f")
+        btns = tk.Frame(row, bg=row_bg)
         btns.pack(side="right", padx=4, pady=4)
         tk.Button(btns, text="Charger", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
                   relief="flat", padx=8, pady=4, cursor="hand2",
@@ -873,6 +891,7 @@ class FloatApp:
             messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
         else:
             self.status_lbl.config(text="Scène « %s » sauvegardée" % name, fg=OK)
+            self.active_scene_id = r.get("id")
             self._fill_scenes_panel_refresh()
 
     def _fill_scenes_panel_refresh(self):
@@ -891,6 +910,8 @@ class FloatApp:
             messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
         else:
             self.status_lbl.config(text="Scène « %s » rappelée" % name, fg=OK)
+            self.active_scene_id = pid
+            self._fill_scenes_panel_refresh()
 
     def _overwrite_scene(self, pid, name):
         if not messagebox.askyesno(
@@ -905,6 +926,7 @@ class FloatApp:
             messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
         else:
             self.status_lbl.config(text="Scène « %s » mise à jour" % name, fg=OK)
+            self.active_scene_id = pid
             self._fill_scenes_panel_refresh()
 
     def _rename_scene(self, pid, name):
@@ -934,6 +956,9 @@ class FloatApp:
             messagebox.showerror("Scènes", r.get("error", "Échec"), parent=self.root)
         else:
             self.status_lbl.config(text="Scène « %s » supprimée" % name, fg=OK)
+            if self.active_scene_id == pid:
+                self.active_scene_id = None
+            self._fill_scenes_panel_refresh()
             self._fill_scenes_panel_refresh()
 
     def _apply_routing(self, pid, name):
