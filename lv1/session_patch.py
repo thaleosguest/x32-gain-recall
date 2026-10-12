@@ -57,10 +57,12 @@ import time
 
 from .channelinfo import read_channel_info
 
-# La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG"), pas
-# seulement par son nom ("X32RACK" ici, mais chacun peut renommer son appareil) : indispensable pour que
-# l'appli marche telle quelle chez quelqu'un d'autre.
-DEFAULT_DEVICES = ("DN32-WSG", "X32RACK")
+# La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG", vu sur
+# une vraie base ; "X-WSG", la carte Waves pour X32, ajoutée sur la foi de son nom commercial, pas encore
+# vue dans une base), pas seulement par son nom ("X32RACK" ici, mais chacun peut renommer son appareil) :
+# indispensable pour que l'appli marche telle quelle chez quelqu'un d'autre. Recherche par sous-chaîne :
+# "X-WSG-1", "X-WSG-2"... (plusieurs cartes dans le rack) sont reconnues aussi.
+DEFAULT_DEVICES = ("DN32-WSG", "X-WSG", "X32RACK")
 INPUT_NAMES = {0: "A", 1: "B"}
 
 # Base de travail EN DIRECT de la LV1 (même schéma qu'un .emo, en mode WAL). Vérifié en live le

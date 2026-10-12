@@ -38,16 +38,20 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import uuid
 import webbrowser
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from brand_icon import LOGO_SVG
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 
-APP_NAME = "X32 Gain Recall"
-APP_VERSION = "2.0.0"
+APP_NAME = "X/M32 Gain Recall for eMotion LV1"
+APP_SHORT = "X/M32 Gain Recall"
+APP_AUTHOR = "Joseph Savigny"
+APP_VERSION = "2.1.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -65,7 +69,9 @@ def lv1_channels_snapshot(client):
     valeurs passent en priorite."""
     if not LV1 or LV1_NO_COLORS:
         return {}
-    out = LV1.channel_info(lv1_channels_in_use(client))
+    # tous les canaux connus de la LV1 (la vue LV1 affiche aussi ceux sans preampli X32, pour rester
+    # alignee sur ses tranches), plus ceux en service absents de la session (table manuelle)
+    out = LV1.channel_info(set(LV1.channel_info()) | lv1_channels_in_use(client))
     if LV1_COMPANION:
         for ch, v in LV1_COMPANION.snapshot().items():
             if ch in out:
@@ -435,6 +441,9 @@ class X32Client:
                 # numero EXP -> canal LV1 ("In N") : table manuelle et/ou session .emo, voir lv1/patchmap.py.
                 # Vide si rien n'est configure - jamais de correspondance devinee.
                 "lv1_map": LV1.exp_to_channel() if LV1 else {},
+                # vue LV1 : canal -> [EXP voie G, EXP voie D] (un EXP peut alimenter plusieurs canaux)
+                "lv1_sources": LV1.channel_sources() if LV1 else {},
+                "lv1_count": LV1.channel_count() if LV1 else 0,
                 "lv1": LV1.status() if LV1 else None,
                 # couleur / nom / libelle a afficher par canal LV1, partages par le navigateur et le float
                 # (base LV1, + Companion si active) - voir lv1_channels_snapshot()
@@ -1275,7 +1284,7 @@ def launch_float_window():
     """Lance la fenetre flottante en tant que processus separe, SUR CETTE MACHINE.
 
     Depuis la 1.5.0, plus de second .exe a gerer : la fenetre flottante est integree au meme
-    executable (X32_Gain_Recall.exe --float), et ce bouton relance simplement ce meme
+    executable (XM32_Gain_Recall_LV1.exe --float), et ce bouton relance simplement ce meme
     executable/script avec ce drapeau interne. Sous Windows, CREATE_NO_WINDOW evite qu'une
     deuxieme fenetre de console (noire, vide) n'apparaisse a cote de la fenetre flottante.
 
@@ -1638,7 +1647,8 @@ class Handler(BaseHTTPRequestHandler):
 LOGIN_HTML = r"""<!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>X32 Gain Recall</title>
+<title>__APP_NAME__</title>
+<link rel="icon" type="image/svg+xml" href="__APP_ICON__">
 <style>
 :root{--bg:#0b0c0d;--panel:#171819;--line:#2a2c2e;--cyan:#38d0e0;--mut:#8a9096;--danger:#e0555a}
 *{box-sizing:border-box}
@@ -1657,7 +1667,8 @@ button:disabled{opacity:.5}
 </style></head>
 <body>
 <div class="card">
-  <h1>X32 Gain Recall</h1>
+  <h1>__APP_SHORT__</h1>
+  <h2 style="margin:-2px 0 18px">for eMotion LV1 &middot; by __APP_AUTHOR__</h2>
   <h2>Acces reseau local &middot; code a 4 chiffres</h2>
   <form id="f" autocomplete="off">
     <input id="code" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="&middot;&middot;&middot;&middot;" autofocus>
@@ -1691,7 +1702,8 @@ f.addEventListener("submit",e=>{
 HTML = r"""<!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>X32 Gain Recall</title>
+<title>__APP_NAME__</title>
+<link rel="icon" type="image/svg+xml" href="__APP_ICON__">
 <style>
 :root{
   --bg:#08090a; --panel:#111213; --panel2:#17191b; --line:#2c2f33; --line2:#3a3e43;
@@ -1721,7 +1733,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .mini.act{background:var(--blue);color:#001a2a;border-color:var(--blue)}
 .mini.lock.act{background:var(--warn);border-color:var(--warn);color:#fff}
 .spacer{flex:1}
-.logo{font-weight:800;letter-spacing:.06em;font-size:20px;color:#dfe5ea;text-align:right;line-height:1}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;letter-spacing:.06em;font-size:20px;color:#dfe5ea;text-align:right;line-height:1}
+.logo svg{width:38px;height:38px;flex:none}
 .logo small{display:block;font-size:9px;letter-spacing:.25em;color:var(--mut);font-weight:600;margin-top:2px}
 
 /* ---- zone principale ---- */
@@ -1763,6 +1776,18 @@ button{font:inherit;color:inherit;cursor:pointer}
   padding:3px 4px;font-weight:800;font-size:12px;line-height:1.2}
 .strip .ft span{white-space:nowrap}
 .strip .hd.nolv1{background:#39424a;color:#c3cbd2}
+/* vue LV1 : colonne = canal LV1 ; bandeau du canal en haut, 1 ou 2 preamplis dessous (stereo en demi-largeur) */
+.grp{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--panel);border:1px solid #000;border-radius:3px}
+.grp>.hd{font-weight:700;text-align:center;padding:5px 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px}
+.gb{display:flex;flex:1;min-height:0;gap:2px}
+.grp .strip{flex:1;min-width:0;border:0;border-radius:0}
+.grp .strip .hd{display:none}
+.grp.st .bw{margin:3px 3px}
+.grp.st .val{margin:1px 2px 0;font-size:12px}
+.grp.st .step{margin:3px 2px 0}
+.grp.st .ph{margin:5px 2px 3px}
+.grp.st .strip .ft{font-size:10px;padding:3px 1px}
+.gempty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:#5d646b;font-size:11px;padding:4px}
 .strip.na .ft{background:#39424a;color:#9aa4ac}
 .pdirrow{align-items:center}
 .pdir{flex:1;min-width:0;font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
@@ -1774,6 +1799,7 @@ body.locked .strip .bar,body.locked .strip .kn,body.locked .strip .step,body.loc
 #banks{display:grid;grid-template-columns:1fr 1fr;gap:5px}
 .bank{background:#0d0e0f;border:1px solid var(--line2);border-radius:6px;padding:7px 4px;font-weight:700;font-size:13px;height:40px}
 .bank.on{background:#0a2a45;border:2px solid var(--blue);color:#fff}
+.bank.lv{border-color:#6b5a2e}
 #scenes{display:flex;flex-direction:column;min-height:0;flex:1;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:8px;gap:6px}
 #plist{flex:1;overflow:auto;display:flex;flex-direction:column;gap:4px;min-height:60px}
 .pi{background:#0d0e0f;border:1px solid var(--line2);border-radius:5px;padding:6px 8px;cursor:pointer}
@@ -1881,7 +1907,7 @@ body.v-rout #rview{display:grid}
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
     <button id="lancode" class="mini" style="display:none" title="Version, adresses et code d'accès"></button>
-    <div class="logo">X32 GAIN RECALL<small>OSC &middot; UDP 10023 &middot; v__APP_VERSION__</small></div>
+    <div class="logo">__APP_LOGO__<div>X/M32 GAIN RECALL<small>FOR EMOTION LV1 &middot; v__APP_VERSION__</small></div></div>
   </div>
 
   <div id="main">
@@ -1946,6 +1972,9 @@ const BANKS=[["Local 1-16",0],["Local 17-32",16],["AES50-A 1-16",32],["AES50-A 1
              ["AES50-B 1-16",80],["AES50-B 17-32",96],["AES50-B 33-48",112]];
 const GMIN=-12,GMAX=60;
 let S={gains:Array(128).fill(null),phantom:Array(128).fill(null),names:Array(32).fill(null),connected:false,trying:false,info:{},known:0};
+// Vue LV1 (depuis la 2.1.0) : une colonne par canal LV1 (couches « Ch 1-16 »... de la LV1)
+const LV1_BANKS=[["LV1 Ch 1-16",1],["LV1 Ch 17-32",17],["LV1 Ch 33-48",33],["LV1 Ch 49-64",49],["LV1 Ch 65-80",65]];
+let gview="lv1", lv1bank=0;
 let bank=0, presets=[], selId=null, locked=false, L={};   // L: valeurs locales recentes (evite le clignotement)
 let presetPath="";
 
@@ -1997,23 +2026,59 @@ function knobSVG(){return `<svg viewBox="0 0 64 64"><circle cx="32" cy="32" r="2
   <line class="kptr" x1="32" y1="32" x2="32" y2="12" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>`;}
 
 /* ---------- construction des strips ---------- */
+function makeStrip(i){
+  const el=document.createElement("div");el.className="strip na";el.dataset.i=i;
+  el.innerHTML=`<div class="hd"></div><button class="ph" title="Alimentation fantôme +48 V">48V</button>
+    <div class="bw"><div class="bar"><div class="fill"></div><div class="zero"></div><div class="tgt"></div></div>
+    <div class="vu" title="Niveau d'entrée après préampli (dBFS) · vert jusqu'à −18, ambre jusqu'à −6, rouge au-delà"><i class="lv"></i><b class="pk"></b></div></div>
+    <div class="kn">${knobSVG()}</div><input class="val" value="—" spellcheck="false">
+    <div class="step"><button data-d="-0.5">&minus;</button><button data-d="0.5">+</button></div>
+    <div class="dl"></div><div class="ft">${footHTML(i)}</div>`;
+  wire(el,i);return el;
+}
+/* Vue LV1 (2.1.0) : une colonne par canal LV1 de la banque, alignee sur les tranches de la LV1. Un canal
+   stereo regroupe ses deux preamplis (gains NON lies sur la X32 : regroupes seulement a l'ecran). Preampli
+   retrouve par son numero EXP lu en direct sur la X32 ; canal sans preampli X32 = colonne vide. */
+function lv1Layout(){
+  const e2i={};Object.entries(S.exp_map||{}).forEach(([i,e])=>{if(e)e2i[e]=+i;});
+  const src=S.lv1_sources||{},start=LV1_BANKS[lv1bank][1],out=[];
+  for(let ch=start;ch<start+16;ch++){const exps=src[ch]||[];out.push([ch,exps.filter(e=>e in e2i).map(e=>e2i[e]),exps]);}
+  return out;
+}
+let layoutKey="";
 function buildStrips(){
   const box=$("#strips");box.innerHTML="";
-  for(let k=0;k<16;k++){
-    const i=BANKS[bank][1]+k;
-    const el=document.createElement("div");el.className="strip na";el.dataset.i=i;
-    el.innerHTML=`<div class="hd"></div><button class="ph" title="Alimentation fantôme +48 V">48V</button>
-      <div class="bw"><div class="bar"><div class="fill"></div><div class="zero"></div><div class="tgt"></div></div>
-      <div class="vu" title="Niveau d'entrée après préampli (dBFS) · vert jusqu'à −18, ambre jusqu'à −6, rouge au-delà"><i class="lv"></i><b class="pk"></b></div></div>
-      <div class="kn">${knobSVG()}</div><input class="val" value="—" spellcheck="false">
-      <div class="step"><button data-d="-0.5">&minus;</button><button data-d="0.5">+</button></div>
-      <div class="dl"></div><div class="ft">${footHTML(i)}</div>`;
-    box.appendChild(el);
-    wire(el,i);
+  if(gview==="lv1"){
+    const lay=lv1Layout();layoutKey=JSON.stringify(lay);
+    lay.forEach(([ch,idxs])=>{
+      const g=document.createElement("div");g.className="grp"+(idxs.length>1?" st":"");g.dataset.ch=ch;
+      g.innerHTML=`<div class="hd"></div><div class="gb"></div>`;const gb=g.querySelector(".gb");
+      if(idxs.length)idxs.forEach(i=>gb.appendChild(makeStrip(i)));
+      else gb.innerHTML=`<div class="gempty">Aucun préampli X32</div>`;
+      box.appendChild(g);
+    });
+    // colonne stereo plus large (2 preamplis lisibles) : le navigateur n'est pas pose sur la LV1, pas
+    // besoin d'y garder des colonnes de largeur egale comme dans le float
+    const cols=lay.map(([,idxs])=>idxs.length>1?[124,1.7]:[70,1]);
+    box.style.gridTemplateColumns=cols.map(([m,f])=>`minmax(${m}px,${f}fr)`).join(" ");
+    box.style.minWidth=(cols.reduce((a,[m])=>a+m,0)+3*15)+"px";
+    $("#bankname").textContent=LV1_BANKS[lv1bank][0];
+  }else{
+    layoutKey="";box.style.gridTemplateColumns="";box.style.minWidth="";
+    for(let k=0;k<16;k++)box.appendChild(makeStrip(BANKS[bank][1]+k));
+    $("#bankname").textContent=BANKS[bank][0];
   }
-  $("#bankname").textContent=BANKS[bank][0];
-  document.querySelectorAll(".bank").forEach((b,n)=>b.classList.toggle("on",n===bank));
+  document.querySelectorAll(".bank").forEach(b=>b.classList.toggle("on",b.dataset.v===gview&&+b.dataset.n===(gview==="lv1"?lv1bank:bank)));
+  try{localStorage.setItem("x32view",JSON.stringify({view:gview,bank,lv1bank}));}catch(_){}
   update();
+}
+function updateGroups(){
+  document.querySelectorAll(".grp").forEach(g=>{
+    const ch=+g.dataset.ch,inf=(S.lv1_channels||{})[ch]||{},hd=g.querySelector(".hd"),lb=inf.label||("In "+ch);
+    const exps=(S.lv1_sources||{})[ch]||[];
+    hd.textContent=lb;hd.title=lb+" — canal LV1 In "+ch+(exps.length?" · EXP "+exps.join("/"):" · aucune entrée X32");
+    hd.style.background=inf.color||"#39424a";hd.style.color=inf.color?inkFor(inf.color):"#e9edf0";
+  });
 }
 function cur(i){const l=L[i];if(l&&performance.now()-l.t<900)return l.db;const v=S.gains[i];return v===undefined?null:v;}
 
@@ -2060,8 +2125,9 @@ function wire(el,i){
       [{t:"Annuler"},{t:"Activer +48 V",go:1,f:send}]);}else send();
   };
 }
-function updateStrip(i){
-  const el=document.querySelector(`.strip[data-i="${i}"]`);if(!el)return;
+/* un meme preampli peut apparaitre dans deux colonnes en vue LV1 (EXP qui alimente deux canaux LV1) */
+function updateStrip(i){document.querySelectorAll(`.strip[data-i="${i}"]`).forEach(el=>updateStripEl(el,i));}
+function updateStripEl(el,i){
   const v=cur(i),known=v!==null;
   el.classList.toggle("na",!known);
   const nm=S.names[i]||(i<32?"Ch "+(i+1):(i<80?"AES50-A "+(i-31):"AES50-B "+(i-79)));
@@ -2093,7 +2159,8 @@ function updateStrip(i){
   else{tg.style.display="none";dl.className="dl";dl.textContent="";}
 }
 function update(){
-  document.querySelectorAll(".strip").forEach(el=>updateStrip(+el.dataset.i));
+  document.querySelectorAll(".strip").forEach(el=>updateStripEl(el,+el.dataset.i));
+  updateGroups();
   // etat de connexion
   const led=$("#led");led.className="led"+(S.connected?" ok":(S.trying?" try":""));
   $("#bconn").textContent=(S.connected||S.trying)?"Déconnecter":"Connecter";
@@ -2116,7 +2183,7 @@ function openNetInfo(){
   const btns=[{t:"Fermer"}];
   if(S.code_rotatable)btns.unshift({t:"Nouveau code…",f:confirmNewCode});
   modal("Accès réseau",
-    `<p>Version : <b>v__APP_VERSION__</b></p><p>Adresse locale (cet ordinateur) : <b>${esc(S.local_url||"—")}</b></p>${urls}${code}`,
+    `<p><b>__APP_NAME__</b> v__APP_VERSION__<br>by __APP_AUTHOR__</p><p>Adresse locale (cet ordinateur) : <b>${esc(S.local_url||"—")}</b></p>${urls}${code}`,
     btns);
 }
 function confirmNewCode(){
@@ -2135,7 +2202,7 @@ function renderStatus(){
   let r="";const lr=S.last_recall;
   if(lr){r=` · Dernier rappel « ${esc(lr.name)} » : ${lr.sent_gain} gains`+(lr.sent_phantom?`, ${lr.sent_phantom} 48V`:"")+" envoyés — "+
     (lr.verified===null?"vérification…":(lr.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${lr.bad.length} écart(s) à la relecture : ${lr.bad.slice(0,8).map(label).join(", ")}</b>`));}
-  $("#status").innerHTML=c+r+routingMsg()+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span>';
+  $("#status").innerHTML=c+r+routingMsg()+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span><span>by __APP_AUTHOR__</span>';
 }
 
 /* ---------- scenes ---------- */
@@ -2185,7 +2252,7 @@ function renderPresetButtons(){
   const has=!!selId;$("#precall").disabled=!(has&&S.connected&&!locked);$("#pover").disabled=!(has&&S.connected&&!locked);
   $("#pren").disabled=!has;$("#pdel").disabled=!has;$("#psave").disabled=!S.connected;$("#pundo").disabled=!(S.can_undo&&S.connected);
 }
-function scopeIdx(){return $("#pscope").value==="bank"?Array.from({length:16},(_,k)=>BANKS[bank][1]+k):null;}
+function scopeIdx(){return $("#pscope").value==="bank"?[...new Set([...document.querySelectorAll(".strip")].map(el=>+el.dataset.i))]:null;}
 $("#psave").onclick=()=>{
   api("/api/presets/save",{name:$("#pname").value}).then(r=>{
     if(!r.ok)return toast(r.error,"err");$("#pname").value="";selId=r.id;toast("Scène sauvegardée","ok");loadPresets();});
@@ -2359,17 +2426,28 @@ async function meterLoop(){
 
 /* ---------- init ---------- */
 (function(){
-  const b=$("#banks");BANKS.forEach((x,n)=>{const e=document.createElement("button");e.className="bank";e.textContent=x[0].replace("AES50-","");
-    e.title=x[0];e.onclick=()=>{bank=n;buildStrips();};b.appendChild(e);});
+  const b=$("#banks");
+  const addBank=(v,x,n)=>{const e=document.createElement("button");e.className="bank"+(v==="lv1"?" lv":"");
+    e.textContent=x[0].replace("AES50-","");e.dataset.v=v;e.dataset.n=n;
+    e.title=v==="lv1"?x[0]+" : une colonne par canal LV1, paires stéréo regroupées":x[0]+" : une colonne par préampli X32";
+    e.onclick=()=>{gview=v;if(v==="lv1")lv1bank=n;else bank=n;buildStrips();};b.appendChild(e);};
+  LV1_BANKS.forEach((x,n)=>addBank("lv1",x,n));
+  if(LV1_BANKS.length%2)b.appendChild(document.createElement("span"));
+  BANKS.forEach((x,n)=>addBank("x32",x,n));
   try{const ip=localStorage.getItem("x32ip");if(ip)$("#ip").value=ip;}catch(_){}
+  try{const sv=JSON.parse(localStorage.getItem("x32view")||"null");
+    if(sv){gview=sv.view==="x32"?"x32":"lv1";bank=Math.min(BANKS.length-1,Math.max(0,sv.bank|0));
+      lv1bank=Math.min(LV1_BANKS.length-1,Math.max(0,sv.lv1bank|0));}}catch(_){}
   buildStrips();loadPresets();meterLoop();
   let rev=-1,lv1sig="";
   async function poll(){
     try{const s=await api("/api/state");
       // rev ne bouge qu'avec l'etat X32 : un repatch / une couleur / un nom change dans la LV1 doit aussi
       // redessiner les voies (sinon le navigateur restait fige sur l'ancien patch LV1)
-      const sig=JSON.stringify([s.exp_map,s.lv1_map,s.lv1_channels]);
-      if(s.rev!==rev||sig!==lv1sig||s.connected!==S.connected||s.trying!==S.trying){rev=s.rev;lv1sig=sig;S=s;update();}
+      const sig=JSON.stringify([s.exp_map,s.lv1_map,s.lv1_channels,s.lv1_sources]);
+      if(s.rev!==rev||sig!==lv1sig||s.connected!==S.connected||s.trying!==S.trying){rev=s.rev;lv1sig=sig;S=s;
+        // vue LV1 : un repatch (LV1 ou X32) change les colonnes elles-memes
+        if(gview==="lv1"&&JSON.stringify(lv1Layout())!==layoutKey)buildStrips();else update();}
     }catch(_){S.connected=false;S.trying=false;update();}
     setTimeout(poll,150);
   }
@@ -2377,7 +2455,17 @@ async function meterLoop(){
 })();
 </script></body></html>
 """
-HTML = HTML.replace("__APP_VERSION__", APP_VERSION)  # numero de version visible dans l'interface (coin haut droit)
+def _brand(html):
+    """Nom, auteur, version et logo (brand_icon.py, généré par tools/make_icon.py) dans les pages HTML."""
+    for k, v in (("__APP_NAME__", APP_NAME), ("__APP_SHORT__", APP_SHORT), ("__APP_AUTHOR__", APP_AUTHOR),
+                 ("__APP_VERSION__", APP_VERSION), ("__APP_LOGO__", LOGO_SVG),
+                 ("__APP_ICON__", "data:image/svg+xml," + urllib.parse.quote(LOGO_SVG))):
+        html = html.replace(k, v)
+    return html
+
+
+HTML = _brand(HTML)  # nom, auteur, version visibles dans l'interface
+LOGIN_HTML = _brand(LOGIN_HTML)
 
 
 # --------------------------------------------------------------------------
@@ -2538,7 +2626,7 @@ def browse_folder(initial):
     root.attributes("-topmost", True)
     try:
         d = filedialog.askdirectory(parent=root, initialdir=initial or app_data_dir(), mustexist=True,
-                                    title="Dossier des scènes — X32 Gain Recall")
+                                    title="Dossier des scènes — " + APP_SHORT)
     finally:
         root.destroy()
     return os.path.normpath(d) if d else None
@@ -2547,7 +2635,7 @@ def browse_folder(initial):
 def main():
     global STORE, ROUTINGS, X32_PORT
     ap = argparse.ArgumentParser(description=APP_NAME)
-    ap.add_argument("--version", action="version", version="%s %s" % (APP_NAME, APP_VERSION))
+    ap.add_argument("--version", action="version", version="%s %s - by %s" % (APP_NAME, APP_VERSION, APP_AUTHOR))
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
@@ -2665,7 +2753,7 @@ def main():
     elif a.ip:
         CLIENT.connect(a.ip)
 
-    print("%s v%s  -  interface : %s" % (APP_NAME, APP_VERSION, url))
+    print("%s v%s  -  by %s  -  interface : %s" % (APP_NAME, APP_VERSION, APP_AUTHOR, url))
     if a.lan:
         print("")
         if LAN_CODE:

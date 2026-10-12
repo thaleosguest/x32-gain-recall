@@ -85,7 +85,8 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   coloré comme In 17 au lieu d'In 21). Ignorer `dst_channel_index >= num_inputs`.
 - Un serveur SGS peut avoir le même `assign` qu'un device d'E/S : exclure SGS/Host.
 - La carte de la X32/M32 est reconnue par son **modèle** `device.description = "DN32-WSG"`
-  (défaut `--lv1-device DN32-WSG,X32RACK`) : « X32RACK » n'est que le nom que Joseph a donné
+  ou `"X-WSG"` (défaut `--lv1-device DN32-WSG,X-WSG,X32RACK`, sous-chaîne : « X-WSG-1 », « X-WSG-2 »
+  aussi). X-WSG ajouté sur la foi de son nom (Joseph n'en a pas pour tester) : pas encore vu dans une base : « X32RACK » n'est que le nom que Joseph a donné
   à l'appareil, il peut être différent chez quelqu'un d'autre.
 - Setup réel (portable-js) : **A = X32RACK** (carte DN32-WSG de la X32 : voie N = EXP N),
   B = souvent TracksLive-FL (virtual soundcheck). **Seule la carte X32 compte par défaut** :
@@ -100,6 +101,21 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   (options écartées : afficher les deux noms, ou priorité au canal stéréo).
 - Le navigateur doit redessiner aussi quand seul le côté LV1 change : la page compare
   `exp_map`/`lv1_map`/`lv1_channels`, pas seulement `rev` (qui ne suit que la X32).
+
+## Nom et signature (décidés le 2026-10-12, v2.1.0)
+
+- Nom : **X/M32 Gain Recall for eMotion LV1** (`APP_NAME`), court `X/M32 Gain Recall` (`APP_SHORT`),
+  signature **by Joseph Savigny** (`APP_AUTHOR`) — dans `x32_gain_recall.py`, repris par le float.
+  Pages HTML : jetons `__APP_NAME__`/`__APP_SHORT__`/`__APP_AUTHOR__`/`__APP_VERSION__` (`_brand()`).
+- « Tandem » envisagé puis écarté : Joseph veut un nom explicite. Exe : `XM32_Gain_Recall_LV1.exe` (choix de Joseph,
+  spécifique LV1). Le dossier `%APPDATA%\X32 Gain Recall` garde l'ancien nom (pas de migration).
+- **Logo = piste C « pont »** (choisie le 2026-10-12 parmi potard / potard+rappel / pont / monogramme) :
+  bloc gris X/M32 (potard = disque plein + index incliné, PAS vertical : sinon ça lit « marche/arrêt »)
+  relié au bloc ambre `#F2B63B` LV1 (vumètre), fond anthracite `#2B2E33`. Pas de teal (= couleur de canal LV1).
+  Source unique : `tools/make_icon.py` (Python pur, pas de Pillow sur ce PC) → `assets/logo.svg`,
+  `assets/icon.ico` (`--icon` de PyInstaller), `brand_icon.py` (généré : `LOGO_SVG`, `ICON_PNG_B64`).
+- Une seule carte X32 par rack LV1 supportée (choix de Joseph) : avec deux cartes (X-WSG-1/-2 = deux
+  consoles), la voie N de chacune serait prise pour l'EXP N de la console connectée. Pas traité.
 
 ## Données de l'appli (depuis la 2.0.0)
 
@@ -122,6 +138,17 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   teintes du thème (`apply_theme()` sur tout l'arbre + `tc()` pour les couleurs posées en cours
   de route). Toute nouvelle couleur sombre en dur doit être ajoutée à `_CANON` et aux thèmes.
 - Ligne « L 15 = EXP 15 » puis nom LV1 en plus gros ; tout tient sur une ligne dès ~60 px.
+- **Vue LV1 (float 2.7.0 / appli 2.1.0, demande de Joseph)** : Joseph pose le float SUR la LV1, entre
+  la rangée du haut et les faders, chaque colonne au-dessus de sa tranche LV1. Donc colonne = canal
+  LV1 (banques « LV1 Ch 1-16 »…), pas préampli : sinon un EXP non patché (EXP 7) décale tout.
+  Stéréo = 2 `Unit` demi-largeur dans un `Strip` ; gains NON liés (regroupement visuel seulement).
+  Canal sans préampli X32 = colonne vide (alignement). Préampli retrouvé par EXP (`exp_map` inversée),
+  canal → EXP par `lv1_sources` (`PatchMap.channel_sources()`). Vue X32 conservée (choix de Joseph :
+  vue au choix, même menu de banques). Navigateur : idem (`.grp`), colonnes stéréo plus larges.
+- **Replié** : seulement le point de connexion (= poignée de déplacement) + la flèche (demande de Joseph).
+- Tester le float : il enregistre sa config dans `%APPDATA%` → la sauvegarder avant et la remettre après.
+  Le simulateur (`--sim`) n'a pas d'EXP tant qu'on n'y applique pas le profil « Routing LV1 »
+  (`POST /api/routings/apply`).
 
 ## Publier une version
 
@@ -129,7 +156,7 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
 2. Fusionner dans `main`, puis tag annoté `vX.Y.Z` (doit égaler `APP_VERSION`) et `git push origin vX.Y.Z`.
 3. GitHub Actions (`build.yml`) compile l'exe, lance `--version` et `--help` (normal et `--float`),
    publie la release. `gh workflow run build.yml --ref <branche>` compile une branche **sans**
-   publier (artefact « X32_Gain_Recall-windows ») : pratique pour faire tester l'exe à Joseph.
+   publier (artefact « XM32_Gain_Recall_LV1-windows ») : pratique pour faire tester l'exe à Joseph.
 
 ## Pièges de ce PC
 
