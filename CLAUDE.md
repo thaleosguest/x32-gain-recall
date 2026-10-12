@@ -65,6 +65,10 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   (teal `#0FA2AB`, couleur par défaut). Palette relevée en donnant les 32 couleurs aux canaux
   In 33-64 et en lisant Companion ; vérifiée identique à Companion sur 64/64 canaux.
 - Companion n'expose que In 1-64 ; la base donne aussi In 65-80.
+- **Couche affichée (établi le 2026-10-12)** : `surface_property_int` (surface 2 = `eSurface_OVV1`
+  « Mixer 1 », 3 = OVV2) ; propriété 12 `eProp_LayersMode` (0 = Factory), 14 `eProp_LayersPage`
+  (Factory : 0-3 = Ch 1-16..49-64, 4 = Grp/Fx). Libellés dans `surface_type` / `surface_property_type`.
+  Écrit aussitôt, sans sauvegarde. `lv1/layers.py` ; le float suit en vue LV1 (pas le navigateur).
 - Méthode qui marche pour trouver un réglage : photo de toutes les tables de la base (sur copie),
   Joseph change UN réglage dans la LV1, nouvelle photo, diff.
 
@@ -146,6 +150,11 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   canal → EXP par `lv1_sources` (`PatchMap.channel_sources()`). Vue X32 conservée (choix de Joseph :
   vue au choix, même menu de banques). Navigateur : idem (`.grp`), colonnes stéréo plus larges.
 - **Replié** : seulement le point de connexion (= poignée de déplacement) + la flèche (demande de Joseph).
+- **Une seule barre** en haut (demande de Joseph) : la barre de connexion s'ouvre SOUS les voies (bouton
+  « Console », auto tant que non connecté) pour ne jamais décaler les voies calées sur la LV1.
+- **Calage** : `strip_w` = largeur moyenne à virgule ; `_col_widths()` répartit les pixels (somme exacte).
+  Profils par résolution dans `x32_float_config.json` (`screens`, `last_screen`) ; écran inconnu = dernier
+  profil mis à l'échelle. Écrans de Joseph de tailles différentes : c'est la raison.
 - Tester le float : il enregistre sa config dans `%APPDATA%` → la sauvegarder avant et la remettre après.
   Le simulateur (`--sim`) n'a pas d'EXP tant qu'on n'y applique pas le profil « Routing LV1 »
   (`POST /api/routings/apply`).

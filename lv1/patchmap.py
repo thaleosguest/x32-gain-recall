@@ -106,6 +106,7 @@ class PatchMap:
         self.errors = {}           # "manual" / "session" -> message
         self._exp_to_ch, self._conflicts = {}, []
         self._merged = {}              # {canal: [exp, ...]} (voie G puis D), table manuelle comprise
+        self._layer = None             # couche affichée sur la LV1 (lv1/layers.py)
         self._lock = threading.Lock()
         self.refresh()
 
@@ -147,7 +148,7 @@ class PatchMap:
         if sig == self._session_sig:
             return False
         try:
-            routes, info = read_session(f)
+            routes, info, layer = read_session(f)
             chans = pick_sources(routes, self.devices)
         except (sqlite3.Error, OSError) as e:
             # souvent : copie prise pendant une écriture de la LV1 - on garde le résultat précédent et on
@@ -158,6 +159,7 @@ class PatchMap:
         self._session = {ch: list(info["sources"]) for ch, info in chans.items()}
         self._session_ranks = {ch: c.get("rank", 0) for ch, c in chans.items()}
         self._info = info
+        self._layer = layer
         self.session_read_at = time.time()
         if self._session:
             self.errors.pop("session", None)
@@ -205,6 +207,10 @@ class PatchMap:
         Contrairement à exp_to_channel(), un même EXP peut figurer sur plusieurs canaux."""
         with self._lock:
             return {ch: list(v) for ch, v in self._merged.items()}
+
+    def layer(self):
+        """Couche affichée sur la LV1 (Mixer 1) : {"mode", "page", "bank"} (voir lv1/layers.py) ou None."""
+        return dict(self._layer) if self._layer else None
 
     def channel_count(self):
         """Nombre de canaux d'entrée connus de la LV1 (plus grand numéro vu dans la session ou la table)."""

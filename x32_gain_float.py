@@ -171,6 +171,31 @@ def strip_tag(idx):
     return "B %d" % (idx - 79)
 
 
+def monitor_rect(x, y):
+    """(gauche, haut, largeur, hauteur) de l'écran qui contient le point (x, y) (Windows, multi-écrans) ;
+    à défaut l'écran principal vu par Tk (None : appelant)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+        u32 = ctypes.windll.user32
+        u32.MonitorFromPoint.restype = wintypes.HMONITOR
+        u32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        u32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+        h = u32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)   # 2 = MONITOR_DEFAULTTONEAREST
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        if h and u32.GetMonitorInfoW(h, ctypes.byref(mi)):
+            r = mi.rcMonitor
+            return r.left, r.top, r.right - r.left, r.bottom - r.top
+    except (AttributeError, OSError, ValueError):
+        pass
+    return None
+
+
 def load_cfg():
     try:
         with open(CFG_PATH, "r", encoding="utf-8-sig") as f:
@@ -605,8 +630,8 @@ class Strip(tk.Frame):
     tranches de la LV1).
     Vue X32 : idxs = [préampli], ch = None. Vue LV1 : idxs = préamplis du canal ch (voie G puis D)."""
 
-    def __init__(self, master, owner, idxs, width, ch=None):
-        super().__init__(master, bg=PANEL, width=width, height=width + STRIP_EXTRA_H,
+    def __init__(self, master, owner, idxs, width, ch=None, height=None):
+        super().__init__(master, bg=PANEL, width=width, height=height or width + STRIP_EXTRA_H,
                           highlightthickness=1, highlightbackground="#000000")
         self.owner = owner
         self.idxs = list(idxs)
@@ -645,9 +670,9 @@ class Strip(tk.Frame):
     def _unit_width(self):
         return (self.width - 2) // max(1, len(self.idxs))
 
-    def resize(self, width):
+    def resize(self, width, height=None):
         self.width = width
-        self.config(width=width, height=width + STRIP_EXTRA_H)
+        self.config(width=width, height=height or width + STRIP_EXTRA_H)
         for u in self.units:
             u.resize(self._unit_width())
         if self._tag_one is not None:
@@ -711,7 +736,16 @@ class FloatApp:
             self.lv1_bank = 0
         self.lv1_sources = {}          # {canal LV1: [EXP voie G, EXP voie D]} (vue LV1)
         self._layout = None            # [(canal, [préamplis])] affichés en vue LV1 (reconstruit s'il change)
-        self.strip_w = cfg.get("strip_w", 46)
+        self._lv1_layer_seen = None    # dernière couche LV1 vue (le float suit ses changements)
+        # Largeur d'une colonne en pixels, à virgule (2.1.0) : les 16 colonnes se calent au pixel près sur
+        # les 16 tranches de la LV1 (la largeur totale est répartie, certaines colonnes ont 1 px de plus).
+        # Position + largeur mémorisées PAR ÉCRAN (résolution) : chaque écran garde son calage, et un
+        # écran jamais vu part du dernier calage mis à l'échelle (la LV1 plein écran suit la taille de
+        # l'écran). Voir _apply_screen_profile() / _save_cfg().
+        self.cfg = cfg
+        self.strip_w = float(cfg.get("strip_w", 46))
+        self.console_open = False      # barre de connexion (IP, Connecter...) : sous les voies, à la demande
+        self._console_auto = None      # True si ouverte automatiquement (pas connecté) : refermée à la connexion
         self.locked = False
         self.clip_db = args.clip_db
         self.sensitivity = args.sensitivity
@@ -758,17 +792,16 @@ class FloatApp:
             pass
         self.root.configure(bg=BG)
         x = cfg.get("x", 200); y = cfg.get("y", 200)
+        x, y = self._apply_screen_profile(x, y)
         self.root.geometry("+%d+%d" % (x, y))
 
-        # Depuis la 1.7.0 : la barre de connexion (IP/Connecter/Scanner/Démo) est EN HAUT, la barre de
-        # titre (repli/zoom/banque/Scènes/Routing) juste en dessous - a la demande explicite de
-        # l'utilisateur (ordre inverse de la 1.5.0/1.6.0). L'ordre d'empilement tkinter suit l'ordre des
-        # appels a pack(side="top"), donc l'inversion se fait simplement en appelant les deux methodes
-        # dans l'autre sens ; aucune des deux ne depend de l'autre.
-        self.connectbar = self._build_connectbar()
+        # 2.1.0 (demande de Joseph) : UNE seule barre en haut. La barre de connexion (IP/Connecter/Scanner/
+        # Démo) n'est plus empilée au-dessus : elle s'ouvre SOUS les voies (bouton « Console », ou toute
+        # seule tant que la console n'est pas connectée), pour ne jamais décaler les voies calées sur la LV1.
         self.titlebar = self._build_titlebar()
         self.strips_frame = tk.Frame(self.root, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
+        self.connectbar = self._build_connectbar()
         self.strips = []
         self._build_strips()
         self.panel = tk.Frame(self.root, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
@@ -845,6 +878,11 @@ class FloatApp:
                                       highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
                                       command=lambda: self._toggle_panel("routing"))
         self.btn_routing.pack(side="left", padx=2)
+        self.btn_console = tk.Button(bar, text="Console", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                                      activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
+                                      highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                      command=lambda: self._toggle_console())
+        self.btn_console.pack(side="left", padx=2)
 
         self.btn_lock = tk.Button(bar, text="🔓", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10),
                                    activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
@@ -883,8 +921,7 @@ class FloatApp:
         le tactile. Note honnete : tkinter ne sait pas dessiner de bords vraiment arrondis sur un bouton
         natif (pas d'equivalent CSS border-radius) ; l'effet "bouton" est simule par un contour
         (highlightthickness) + du remplissage, pas par un veritable arrondi."""
-        bar = tk.Frame(self.root, bg="#111213")
-        bar.pack(side="top", fill="x")
+        bar = tk.Frame(self.root, bg="#111213")   # pas empilée ici : voir _toggle_console()
         bar.bind("<ButtonPress-1>", self._win_drag_start)
         bar.bind("<B1-Motion>", self._win_drag_move)
 
@@ -947,8 +984,9 @@ class FloatApp:
             self._layout = None
             start = BANKS[self.bank][1]
             cols = [([start + k], None) for k in range(16)]
-        for idxs, ch in cols:
-            s = Strip(self.strips_frame, self, idxs, self.strip_w, ch=ch)
+        widths, height = self._col_widths(len(cols))
+        for (idxs, ch), w in zip(cols, widths):
+            s = Strip(self.strips_frame, self, idxs, w, ch=ch, height=height)
             s.pack(side="left")
             self.strips.append(s)
         apply_theme(self.strips_frame)
@@ -960,7 +998,7 @@ class FloatApp:
         grip.place(relx=1.0, rely=1.0, anchor="se")
         grip.create_line(1, 9, 9, 1, fill=MUT)
         grip.create_line(4, 9, 9, 4, fill=MUT)
-        grip.bind("<ButtonPress-1>", lambda e: setattr(self, "_grip_x0", e.x_root))
+        grip.bind("<ButtonPress-1>", lambda e: setattr(self, "_grip0", (e.x_root, self.strip_w)))
         grip.bind("<B1-Motion>", self._grip_drag)
 
     # -- fenetre : deplacement / redimensionnement -----------------------
@@ -972,15 +1010,59 @@ class FloatApp:
         self.root.geometry("+%d+%d" % (e.x_root - self._drag_ox, e.y_root - self._drag_oy))
 
     def _grip_drag(self, e):
-        dx = e.x_root - getattr(self, "_grip_x0", e.x_root)
-        self._grip_x0 = e.x_root
-        if abs(dx) >= 3:
-            self._resize_strips(1 if dx > 0 else -1)
+        """Coin bas-droit : la largeur TOTALE suit la souris au pixel près (répartie sur les 16 colonnes),
+        pour caler le bord droit du float sur le bord droit de la 16e tranche de la LV1."""
+        x0, w0 = getattr(self, "_grip0", (e.x_root, self.strip_w))
+        n = max(1, len(self.strips))
+        self._set_strip_w(w0 + (e.x_root - x0) / n)
+
+    def _col_widths(self, n):
+        """Largeurs entières des n colonnes pour une largeur moyenne self.strip_w (somme = round(n * w)),
+        et la hauteur commune."""
+        w = self.strip_w
+        widths = [int(round((i + 1) * w)) - int(round(i * w)) for i in range(n)]
+        return widths, int(round(w)) + STRIP_EXTRA_H
+
+    def _set_strip_w(self, w):
+        w = max(28.0, min(140.0, w))
+        if abs(w - self.strip_w) < 0.01:
+            return
+        self.strip_w = w
+        widths, height = self._col_widths(len(self.strips))
+        for s, cw in zip(self.strips, widths):
+            if s.width != cw or int(s.cget("height")) != height:
+                s.resize(cw, height)
 
     def _resize_strips(self, delta):
-        self.strip_w = max(28, min(90, self.strip_w + delta))
-        for s in self.strips:
-            s.resize(self.strip_w)
+        """Boutons −/+ : un quart de pixel par colonne (4 px sur la largeur totale), pour le réglage fin."""
+        self._set_strip_w(self.strip_w + delta / 8.0)
+
+    # -- calage par écran -----------------------------------------------------
+    @staticmethod
+    def _screen_key(rect):
+        return "%dx%d" % (rect[2], rect[3])
+
+    def _apply_screen_profile(self, x, y):
+        """Position + largeur des colonnes pour l'écran où se trouve le float : celles mémorisées pour
+        cette résolution, sinon le dernier calage mis à l'échelle de cet écran, sinon (x, y) tels quels."""
+        rect = monitor_rect(x, y)
+        screens = self.cfg.get("screens") or {}
+        if not rect:
+            return x, y
+        prof = screens.get(self._screen_key(rect))
+        if prof:
+            self.strip_w = float(prof.get("strip_w", self.strip_w))
+            return rect[0] + prof["dx"], rect[1] + prof["dy"]
+        last = screens.get(self.cfg.get("last_screen") or "")
+        if last:
+            try:
+                w0, h0 = (int(v) for v in self.cfg["last_screen"].split("x"))
+            except ValueError:
+                return x, y
+            sx, sy = rect[2] / float(w0), rect[3] / float(h0)
+            self.strip_w = float(last.get("strip_w", self.strip_w)) * min(sx, sy)
+            return rect[0] + int(last["dx"] * sx), rect[1] + int(last["dy"] * sy)
+        return x, y
 
     def _select_bank(self, name):
         for view, banks in (("lv1", LV1_BANKS), ("x32", BANKS)):
@@ -1025,8 +1107,17 @@ class FloatApp:
         self.root.after(1000, self._theme_pass)
 
     def _save_cfg(self):
-        save_cfg({"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank, "strip_w": self.strip_w,
-                  "theme": self.theme, "x": self.root.winfo_x(), "y": self.root.winfo_y()})
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        screens = dict(self.cfg.get("screens") or {})
+        last = self.cfg.get("last_screen")
+        rect = monitor_rect(x, y)
+        if rect:
+            last = self._screen_key(rect)
+            screens[last] = {"dx": x - rect[0], "dy": y - rect[1], "strip_w": round(self.strip_w, 3)}
+        self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
+                    "strip_w": round(self.strip_w, 3), "theme": self.theme, "x": x, "y": y,
+                    "screens": screens, "last_screen": last}
+        save_cfg(self.cfg)
 
     def _toggle_lock(self):
         self.locked = not self.locked
@@ -1063,10 +1154,24 @@ class FloatApp:
             # packee pendant le repli, un simple pack(side="top") la repoussait en dessous d'elle a
             # chaque depli, inversant l'ordre voulu (connexion en haut) au bout d'un cycle repli/depli.
             # Fix : forcer explicitement la position avec before=.
-            self.connectbar.pack(side="top", fill="x", before=self.titlebar)
-            self.strips_frame.pack(side="top", fill="x")
+            self.strips_frame.pack(side="top", fill="x", after=self.titlebar)
+            if self.console_open:
+                self.connectbar.pack(side="top", fill="x", after=self.strips_frame)
             self.btn_collapse.config(text="▾")
         self.root.update_idletasks()
+
+    def _toggle_console(self, show=None, auto=False):
+        """Barre de connexion (IP, Connecter, Scanner, Démo) SOUS les voies : ne décale jamais les voies."""
+        show = (not self.console_open) if show is None else show
+        if show == self.console_open:
+            return
+        self.console_open = show
+        self._console_auto = auto if show else False   # refermée : plus jamais rouverte d'office
+        if show and not self.collapsed:
+            self.connectbar.pack(side="top", fill="x", after=self.strips_frame)
+        else:
+            self.connectbar.pack_forget()
+        self.btn_console.config(bg=(TEAL if show else tc("#1c1e20")), fg=("#032" if show else TXT))
 
     def _toggle_panel(self, mode):
         if self.panel_mode == mode or mode is None:
@@ -1183,7 +1288,7 @@ class FloatApp:
             self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n))
 
     def _panel_width(self):
-        return max(200, len(self.strips) * self.strip_w)
+        return int(max(200, len(self.strips) * self.strip_w))
 
     def _save_scene(self, name):
         if not name:
@@ -1353,6 +1458,15 @@ class FloatApp:
                 self.status_lbl.config(text="Non connecté à la console", fg=MUT)
         else:
             self.status_lbl.config(text="", fg=MUT)
+        # barre de connexion : ouverte d'office tant que la console n'est pas connectée (une fois), refermée
+        # toute seule dès la connexion si c'est elle qui s'était ouverte
+        if self._console_auto is None:
+            if snap.get("connected"):
+                self._console_auto = False
+            elif not snap.get("trying") and self.backend.reachable:
+                self._toggle_console(True, auto=True)
+        elif self._console_auto and snap.get("connected"):
+            self._toggle_console(False)
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
         lm = snap.get("lv1_map") or {}
@@ -1361,6 +1475,16 @@ class FloatApp:
         self.lv1_map = lm
         # cles string (JSON, mode serveur) ou int (dict Python direct, mode --direct) : normalisees en int
         self.lv1_sources = {int(k): [int(e) for e in v] for k, v in (snap.get("lv1_sources") or {}).items()}
+        # Suit la couche affichée sur la LV1 (Ch 1-16, 17-32... lue dans sa base, lv1/layers.py) : seulement
+        # quand elle CHANGE, pour qu'un choix fait à la main dans le float tienne jusqu'au prochain
+        # changement de couche dans la LV1. Grp/Fx, Custom... (bank None) : on ne bouge pas.
+        lay = snap.get("lv1_layer") or {}
+        lb = lay.get("bank")
+        if lb != self._lv1_layer_seen:
+            self._lv1_layer_seen = lb
+            if lb is not None and 0 <= lb < len(LV1_BANKS) and self.view == "lv1" and lb != self.lv1_bank:
+                self.lv1_bank = lb
+                self._build_strips()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
         for s in self.strips:

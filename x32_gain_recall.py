@@ -444,6 +444,8 @@ class X32Client:
                 # vue LV1 : canal -> [EXP voie G, EXP voie D] (un EXP peut alimenter plusieurs canaux)
                 "lv1_sources": LV1.channel_sources() if LV1 else {},
                 "lv1_count": LV1.channel_count() if LV1 else 0,
+                # couche affichee sur la LV1 (bank = 0 pour Ch 1-16...) : le float la suit en vue LV1
+                "lv1_layer": LV1.layer() if LV1 else None,
                 "lv1": LV1.status() if LV1 else None,
                 # couleur / nom / libelle a afficher par canal LV1, partages par le navigateur et le float
                 # (base LV1, + Companion si active) - voir lv1_channels_snapshot()
@@ -1762,18 +1764,21 @@ button{font:inherit;color:inherit;cursor:pointer}
 .bar .tgt::after{content:"";position:absolute;right:-2px;top:-6px;border:5px solid transparent;border-right-color:var(--amber)}
 .strip.na .bar{cursor:default;opacity:.35}
 .tickl{position:absolute;left:3px;font-size:9px;color:#6d757c;pointer-events:none;transform:translateY(-50%)}
-.kn{display:flex;justify-content:center;margin:2px 0 0;cursor:ns-resize;touch-action:none}
-.kn svg{width:min(64px,90%);height:auto}
+/* hauteurs FIXES sous la barre (potard, valeur, pied) : les potards de toutes les voies restent alignes,
+   meme quand une voie est etroite (stereo) ou que son pied passe sur 2 lignes (2.1.0) */
+.kn{display:flex;justify-content:center;align-items:center;height:60px;margin:2px 0 0;cursor:ns-resize;touch-action:none}
+.kn svg{height:100%;width:auto;max-width:92%}
+.strip>.ph,.strip>.kn,.strip>.val,.strip>.step,.strip>.dl,.strip>.ft{flex:none}
 .val{margin:1px 8px 0;background:#000;border:1px solid #26292c;border-radius:3px;color:var(--cyan);text-align:center;
-  font:700 15px "Consolas","Segoe UI",monospace;width:auto;padding:3px 0;outline:none;user-select:text}
+  font:700 15px "Consolas","Segoe UI",monospace;width:auto;height:26px;padding:0;outline:none;user-select:text}
 .val:focus{border-color:var(--blue)}
 .step{display:flex;gap:3px;margin:3px 8px 0}
 .step button{flex:1;height:22px;background:#202326;border:1px solid var(--line2);border-radius:3px;font-weight:700;font-size:14px;line-height:1;padding:0}
 .step button:hover{border-color:var(--blue)}
 .dl{height:16px;margin:2px 4px 0;text-align:center;font-size:10.5px;color:var(--mut);white-space:nowrap;overflow:hidden}
 .dl.d{color:var(--amber);font-weight:700}
-.strip .ft{margin-top:4px;background:var(--teal);color:#021;display:flex;flex-wrap:wrap;justify-content:center;column-gap:4px;
-  padding:3px 4px;font-weight:800;font-size:12px;line-height:1.2}
+.strip .ft{margin-top:4px;background:var(--teal);color:#021;display:flex;flex-wrap:wrap;justify-content:center;align-content:center;column-gap:4px;
+  padding:3px 4px;font-weight:800;font-size:12px;line-height:1.2;height:36px;overflow:hidden}
 .strip .ft span{white-space:nowrap}
 .strip .hd.nolv1{background:#39424a;color:#c3cbd2}
 /* vue LV1 : colonne = canal LV1 ; bandeau du canal en haut, 1 ou 2 preamplis dessous (stereo en demi-largeur) */
@@ -1866,7 +1871,7 @@ body.v-rout #rview{display:grid}
   #modal .row .btn{padding:12px 18px}
   .pi{padding:10px 10px}
   .bank{height:46px}
-  .kn svg{width:min(72px,90%)}
+  .kn{height:70px}
 }
 /* Ecrans etroits (tablette en portrait, telephone) : la mise en page fixe (grille 56px/1fr/26px, colonne
    laterale de 310px cote a cote avec les voies) deborde sur un ecran de moins de ~980px de large - avant
