@@ -1834,7 +1834,8 @@ select.inp{padding:6px}
 
 /* ---- modale / toast ---- */
 #modal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:10}
-#modal .box{background:#15171a;border:1px solid var(--line2);border-radius:8px;padding:18px 20px;max-width:520px;width:calc(100% - 30px)}
+#gone{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:30}
+#modal .box,#gone .box{background:#15171a;border:1px solid var(--line2);border-radius:8px;padding:18px 20px;max-width:520px;width:calc(100% - 30px)}
 #modal h3{margin:0 0 8px;font-size:16px}
 #modal p{margin:6px 0;color:#c9cfd4;line-height:1.4;user-select:text}
 #modal .row{margin-top:14px;justify-content:flex-end}
@@ -2446,7 +2447,7 @@ async function meterLoop(){
     if(sv){gview=sv.view==="x32"?"x32":"lv1";bank=Math.min(BANKS.length-1,Math.max(0,sv.bank|0));
       lv1bank=Math.min(LV1_BANKS.length-1,Math.max(0,sv.lv1bank|0));}}catch(_){}
   buildStrips();loadPresets();meterLoop();
-  let rev=-1,lv1sig="";
+  let rev=-1,lv1sig="",downSince=0;
   async function poll(){
     try{const s=await api("/api/state");
       // rev ne bouge qu'avec l'etat X32 : un repatch / une couleur / un nom change dans la LV1 doit aussi
@@ -2455,8 +2456,20 @@ async function meterLoop(){
       if(s.rev!==rev||sig!==lv1sig||s.connected!==S.connected||s.trying!==S.trying){rev=s.rev;lv1sig=sig;S=s;
         // vue LV1 : un repatch (LV1 ou X32) change les colonnes elles-memes
         if(gview==="lv1"&&JSON.stringify(lv1Layout())!==layoutKey)buildStrips();else update();}
-    }catch(_){S.connected=false;S.trying=false;update();}
-    setTimeout(poll,150);
+      if(downSince){location.reload();return;} // appli relancee : repartir d'une page neuve
+    }catch(e){S.connected=false;S.trying=false;update();
+      // appli principale arretee (fenetre noire fermee) : fetch echoue (TypeError), pas une simple reponse
+      // invalide. Sur ce PC, on ferme l'onglet ; ailleurs (tablette) ou si le navigateur refuse, on le dit.
+      if(e instanceof TypeError){
+        if(!downSince)downSince=Date.now();
+        else if(Date.now()-downSince>2000&&!$("#gone")){
+          if(/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname))window.close();
+          const g=document.createElement("div");g.id="gone";
+          g.innerHTML="<div class='box'><h3>Appli arrêtée</h3><p>La fenêtre de l'appli a été fermée. "+
+            "Vous pouvez fermer cet onglet ; il se recharge tout seul si l'appli est relancée.</p></div>";
+          document.body.appendChild(g);}
+      }}
+    setTimeout(poll,downSince?1000:150);
   }
   poll();
 })();

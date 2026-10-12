@@ -20,6 +20,8 @@ Version courante : **2.2.0** (voir [CHANGELOG](CHANGELOG.md)).
 - Interface web **responsive** (depuis la 1.7.0) : sous ~980px de large, la colonne latérale (banques/scènes) passe sous les voies au lieu d'à côté, et la barre du haut passe à la ligne. Les voies elles-mêmes gardent leur défilement horizontal (seize potards côte à côte reste le principe, même sur petit écran).
 
 ## Démarrage rapide (PC de la LV1)
+Première fois ? Voir le **[mode d'emploi pas à pas](MODE_EMPLOI.md)**.
+
 1. Télécharger **`XM32_Gain_Recall_LV1.exe`** (onglet *Releases*) et le lancer. Aucune installation, pas de Python, **pas de Companion** à configurer.
 2. Au premier lancement, Windows peut afficher :
    - **SmartScreen** (« Windows a protégé votre ordinateur ») : l'exe n'est pas signé → *Informations complémentaires* → *Exécuter quand même*. Pour vérifier le fichier, comparer son empreinte avec le `.sha256` de la release.

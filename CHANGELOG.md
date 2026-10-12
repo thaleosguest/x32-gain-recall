@@ -2,6 +2,9 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [Non publié]
+- **Fermer la fenêtre noire de l'appli ferme aussi le reste** : le float se ferme tout seul (environ 4 s après, dès que plus rien ne répond sur le port de l'appli) ; l'onglet du navigateur de ce PC se ferme aussi. Sur une tablette, ou si le navigateur refuse de fermer l'onglet, la page affiche « Appli arrêtée » et se recharge toute seule quand l'appli est relancée. Un float lancé avant l'appli continue de l'attendre ; un float `--direct` n'est pas concerné.
+
 ## [2.2.0]
 - **Float sans barre du haut** : une **languette de 14 px à gauche** des voies, à fond transparent, avec ses boutons au milieu de la hauteur (sans cacher les libellés de la LV1) (point de connexion = poignée pour déplacer, flèche de repli, menu **⋯** : banque, largeur, console, verrou, fond, version, fermer), posée sur la colonne « Insert / Input Select » de la LV1. **Replié**, il ne reste que cette languette, **à gauche du canal 1** : les plugins du premier canal restent visibles. Un calage d'avant la 2.2.0 est converti pour garder les voies au même endroit.
 - **Scènes et Routing** dans le menu **⋯** de la languette ; le panneau s'ouvre juste sous le float (au-dessus s'il manque de place).

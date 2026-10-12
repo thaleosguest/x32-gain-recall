@@ -417,6 +417,7 @@ class ServerBackend:
         self.needs_login = False
         self.last_error = ""
         self.reachable = False
+        self.refused = False   # connexion refusee : plus rien n'ecoute sur le port (appli principale fermee)
         if session_token:
             # Deja authentifie par le bouton "Float" du navigateur (qui a lui-meme deja le code
             # d'acces --lan valide) : on recoit une session toute prete, pas besoin de retaper le
@@ -437,6 +438,7 @@ class ServerBackend:
                 ct = r.headers.get("Content-Type", "")
                 body = r.read()
             self.reachable = True
+            self.refused = False
             if "application/json" not in ct:
                 self.needs_login = True
                 return None
@@ -449,8 +451,9 @@ class ServerBackend:
             else:
                 self.last_error = "HTTP %d" % e.code
             return None
-        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
             self.reachable = False
+            self.refused = isinstance(getattr(e, "reason", e), ConnectionRefusedError)
             return None
 
     def _post(self, path, data):
@@ -484,6 +487,8 @@ class ServerBackend:
         return self._get("/api/state") or EMPTY_SNAPSHOT
 
     def meters(self):
+        if not self.reachable:   # appli principale absente : ne pas attendre un 2e refus (~2 s sous Windows)
+            return EMPTY_METERS
         return self._get("/api/meters") or EMPTY_METERS
 
     def connect(self, ip):
@@ -1779,6 +1784,16 @@ class FloatApp:
         snap = self.backend.snapshot()
         self.led_conn.itemconfig(self._conn_id, fill=(OK if snap.get("connected") else
                                                         ("#f2b63b" if snap.get("trying") else "#555555")))
+        if not self.args.direct:
+            # fenetre noire de l'appli principale fermee : le float, qui n'existe que par elle, se ferme aussi
+            # (seulement si elle a deja repondu : un float lance avant l'appli attend qu'elle demarre)
+            if self.backend.reachable:
+                self._server_seen, self._refused_since = True, None
+            elif self.backend.refused and getattr(self, "_server_seen", False):
+                self._refused_since = getattr(self, "_refused_since", None) or time.monotonic()
+                if time.monotonic() - self._refused_since > 1.5:
+                    self.quit()
+                    return
         if not self.backend.reachable and not self.args.direct:
             self.status_lbl.config(text="Appli principale non trouvée sur le port %d" % self.args.port, fg=WARN)
         elif not snap.get("connected") and not snap.get("trying"):
