@@ -92,10 +92,10 @@ from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa:
 FLOAT_VERSION = "2.6.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
-# A cote des scenes (dossier de l'exe ou du script, sinon le dossier personnel - voir pick_data_path) :
+# Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
 # PAS a cote de __file__, qui dans l'exe PyInstaller pointe vers son dossier temporaire _MEI..., efface a
 # chaque fermeture (position/taille/banque du float etaient oubliees a chaque lancement de l'exe).
-CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(pick_data_path())), "x32_float_config.json")
+CFG_PATH = os.path.join(x32_gain_recall.app_data_dir(), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
 BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A 17-32", 48),
@@ -118,7 +118,7 @@ def strip_tag(idx):
 
 def load_cfg():
     try:
-        with open(CFG_PATH, "r", encoding="utf-8") as f:
+        with open(CFG_PATH, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
@@ -282,6 +282,7 @@ class DirectBackend:
         # Memes fichiers JSON que l'appli principale (scenes de gains, profils de routing) : on les relit a
         # chaque appel plutot qu'une seule fois au demarrage, au cas ou l'appli principale (ou le navigateur)
         # les modifie entre-temps.
+        x32_gain_recall.migrate_legacy_files()   # float lance seul (--direct) : meme recopie qu'au demarrage de l'appli
         self._data_path = pick_data_path()
         self._routing_path = os.path.join(os.path.dirname(os.path.abspath(self._data_path)), "x32_routings.json")
         # Table EXP -> canal LV1 : en mode serveur c'est l'appli principale qui la tient (champ lv1_map de
@@ -289,7 +290,7 @@ class DirectBackend:
         # direct + table manuelle du dossier des scenes). X32Client.snapshot() la lit dans x32_gain_recall.LV1.
         if x32_gain_recall.LV1 is None:
             x32_gain_recall.LV1 = PatchMap(
-                manual_path=os.path.join(os.path.dirname(os.path.abspath(self._data_path)), MANUAL_FILENAME),
+                manual_path=os.path.join(x32_gain_recall.app_data_dir(), MANUAL_FILENAME),
                 session_path=LIVE_DB).start()
         # Couleur + nom des canaux LV1 (Companion) : meme interrogateur que l'appli principale, lu par
         # X32Client.snapshot() dans x32_gain_recall.LV1_COMPANION (champ lv1_channels).

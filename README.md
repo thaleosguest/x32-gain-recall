@@ -77,7 +77,15 @@ Boutons **Scènes** et **Routing** dans la barre de titre : ouvrent un panneau (
 
 Pas d'alignement automatique avec la fenêtre LV1 réelle : ça dépend de votre résolution d'écran et du zoom de la LV1, qu'on ne peut pas deviner depuis ici — à régler à la main une fois, puis c'est mémorisé. La diode de niveau n'est pas le vrai détecteur de clip de la console (voir [CHANGELOG](CHANGELOG.md)), c'est une approximation par seuil sur le niveau mesuré.
 
-Les scènes sont enregistrées à côté du programme (`x32_presets.json`, `x32_routings.json`), non versionnées (voir `.gitignore`).
+### Où sont mes données ?
+Depuis la 2.0.0, dans **`%APPDATA%\X32 Gain Recall`** (séparé de l'exe : on peut télécharger une nouvelle version n'importe où sans perdre ses scènes) :
+- `x32_presets.json` (scènes de gains) et `x32_routings.json` (profils de routing) ;
+- `x32_lan_config.json` (code d'accès tablette), `x32_float_config.json` (position/taille du float), `lv1_patch_map.json` (facultatif) ;
+- `x32_gain_recall_settings.json` (dossier des scènes choisi).
+
+**Choisir un autre dossier pour les scènes** (clé USB, dossier synchronisé…) : panneau *Scènes* du navigateur → **Dossier…** — taper un chemin ou *Parcourir…* (la fenêtre de choix s'ouvre sur le PC de l'appli). Si le dossier contient déjà des scènes, elles sont utilisées ; sinon l'appli propose d'y copier les scènes actuelles. *Dossier par défaut* ramène à `%APPDATA%\X32 Gain Recall`. Le choix est mémorisé.
+
+Au premier lancement de la 2.0.0, les fichiers que les versions précédentes rangeaient à côté de l'exe y sont **recopiés** (pas déplacés). `--data FICHIER` force un fichier de scènes pour une session. Fichiers non versionnés (voir `.gitignore`).
 
 ### Accès depuis une tablette ou un téléphone
 Depuis la 1.3, l'interface est accessible au réseau local **par défaut**, sans rien à taper au lancement : elle génère un **code à 4 chiffres** et l'affiche dans le terminal avec une adresse par appareil réseau détecté :

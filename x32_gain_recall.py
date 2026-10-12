@@ -31,6 +31,7 @@ import os
 import random
 import re
 import secrets
+import shutil
 import socket
 import struct
 import subprocess
@@ -55,6 +56,7 @@ LV1_COMPANION = None  # lv1.companion.CompanionPoller (couleur + nom des canaux 
 
 
 LV1_NO_COLORS = False  # --no-colors : ni couleurs ni noms LV1
+BROWSE_LOCK = threading.Lock()  # une seule fenetre « choisir un dossier » a la fois
 
 
 def lv1_channels_snapshot(client):
@@ -993,7 +995,7 @@ class PresetStore:
 
     def load(self):
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             self.items = data.get("presets", []) if isinstance(data, dict) else []
         except FileNotFoundError:
@@ -1096,7 +1098,7 @@ class RoutingStore:
 
     def load(self):
         try:
-            with open(self.path, "r", encoding="utf-8") as f:
+            with open(self.path, "r", encoding="utf-8-sig") as f:
                 d = json.load(f)
             self.items, self.seeded = d.get("profiles", []), bool(d.get("seeded"))
         except FileNotFoundError:
@@ -1179,7 +1181,7 @@ def load_or_create_lan_config(path, regenerate=False):
     Cree un nouveau code a 4 chiffres si le fichier n'existe pas, est illisible, ou si regenerate=True."""
     if not regenerate:
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             code = data.get("code")
             if isinstance(code, str) and code.isdigit() and len(code) == 4:
@@ -1433,6 +1435,10 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"profiles": ROUTINGS.summaries(), "groups": ROUTING_GROUPS, "path": ROUTINGS.path})
         elif path == "/api/presets":
             self._json({"presets": STORE.all(), "path": STORE.path})
+        elif path == "/api/scenes-dir":
+            d = os.path.dirname(os.path.abspath(STORE.path))
+            self._json(dict(scenes_dir_info(d), default=app_data_dir(),
+                            is_default=os.path.normcase(d) == os.path.normcase(os.path.abspath(app_data_dir()))))
         elif path == "/api/export":
             body = json.dumps({"version": 1, "presets": STORE.all()}, ensure_ascii=False, indent=1).encode("utf-8")
             self.send_response(200)
@@ -1605,6 +1611,24 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": STORE.delete(d["id"])})
         if p == "/api/import":
             return self._json({"ok": True, "added": STORE.import_items(d.get("presets", []))})
+        if p == "/api/scenes-dir":
+            # browse : fenetre de choix sur le PC de l'appli ; check : etat d'un dossier sans rien changer ;
+            # apply : bascule (copy = y recopier les scenes actuelles si le dossier n'en a pas)
+            try:
+                if d.get("browse"):
+                    with BROWSE_LOCK:
+                        chosen = browse_folder(d.get("initial") or os.path.dirname(os.path.abspath(STORE.path)))
+                    return self._json({"ok": True, "path": chosen})
+                target = app_data_dir() if d.get("reset") else str(d.get("path") or "")
+                if not target.strip():
+                    return self._json({"ok": False, "error": "Indiquez un dossier"})
+                if d.get("check"):
+                    target = os.path.abspath(os.path.expanduser(target.strip().strip('"')))
+                    return self._json(dict(scenes_dir_info(target), ok=True,
+                                           current_count=len(STORE.all())))
+                return self._json(dict(set_scenes_dir(target, bool(d.get("copy"))), ok=True))
+            except Exception as e:   # dialogue indisponible, dossier refuse, copie impossible...
+                return self._json({"ok": False, "error": str(e)})
         self._json({"error": "introuvable"}, 404)
 
 
@@ -1740,6 +1764,8 @@ button{font:inherit;color:inherit;cursor:pointer}
 .strip .ft span{white-space:nowrap}
 .strip .hd.nolv1{background:#39424a;color:#c3cbd2}
 .strip.na .ft{background:#39424a;color:#9aa4ac}
+.pdirrow{align-items:center}
+.pdir{flex:1;min-width:0;font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 body.locked .strip .bar,body.locked .strip .kn,body.locked .strip .step,body.locked .strip .ph,body.locked .strip .val{opacity:.4;pointer-events:none}
 
 /* ---- colonne droite ---- */
@@ -1884,6 +1910,7 @@ body.v-rout #rview{display:grid}
           <button class="btn" id="pimp">Importer</button>
           <input type="file" id="pfile" accept=".json,application/json" style="display:none">
         </div>
+        <div class="row pdirrow"><span id="pdir" class="pdir"></span><button class="btn" id="pdirb" style="flex:0 0 88px">Dossier&hellip;</button></div>
       </div>
     </div>
     <div id="rview">
@@ -2112,7 +2139,40 @@ function renderStatus(){
 }
 
 /* ---------- scenes ---------- */
-function loadPresets(){return api("/api/presets").then(r=>{presets=r.presets;presetPath=r.path;if(!presets.find(p=>p.id===selId))selId=null;renderPresets();update();});}
+function loadPresets(){renderDir();return api("/api/presets").then(r=>{presets=r.presets;presetPath=r.path;if(!presets.find(p=>p.id===selId))selId=null;renderPresets();update();});}
+/* ---------- dossier des scenes (depuis la 2.0.0) : defaut %APPDATA%\X32 Gain Recall, ou au choix ---------- */
+let sdir=null;
+function renderDir(){return api("/api/scenes-dir").then(r=>{sdir=r;const e=$("#pdir");
+  e.textContent=(r.is_default?"Dossier par défaut : ":"Dossier : ")+r.path;e.title=r.path;});}
+function openDirDialog(val){
+  const cur=sdir?sdir.path:"";
+  modal("Dossier des scènes",
+    `<p>Les scènes et profils de routing sont enregistrés dans :</p><p><b style="word-break:break-all">${esc(cur)}</b>${sdir&&sdir.is_default?" (par défaut)":""}</p>
+     <p style="margin-top:10px">Nouveau dossier :</p><input class="inp" id="dirin" style="width:100%" value="${esc(val===undefined?cur:val)}" spellcheck="false">
+     <p style="color:var(--mut);font-size:12px;margin-top:6px">« Parcourir » ouvre la fenêtre de choix sur le PC qui fait tourner l'appli (pas sur une tablette).</p>`,
+    [{t:"Annuler"},{t:"Parcourir…",f:browseDir},{t:"Dossier par défaut",f:()=>chooseDir(sdir?sdir.default:"")},
+     {t:"Utiliser ce dossier",go:1,f:()=>chooseDir($("#dirin").value)}]);
+}
+function browseDir(){
+  const v=$("#dirin")?$("#dirin").value:"";toast("Fenêtre de choix ouverte sur le PC de l'appli…","ok");
+  api("/api/scenes-dir",{browse:true,initial:v}).then(r=>{
+    if(!r.ok){toast(r.error,"err");return openDirDialog(v);}openDirDialog(r.path||v);});
+}
+function chooseDir(path){
+  path=(path||"").trim();if(!path)return toast("Indiquez un dossier","err");
+  api("/api/scenes-dir",{path,check:true}).then(r=>{
+    if(!r.ok)return toast(r.error,"err");
+    if(!r.exists)return toast("Dossier introuvable : "+path,"err");
+    if(!r.writable)return toast("Impossible d'écrire dans ce dossier","err");
+    if(r.count<0)return toast("Le fichier de scènes de ce dossier est illisible","err");
+    const apply=copy=>api("/api/scenes-dir",{path:r.path,copy}).then(a=>{
+      if(!a.ok)return toast(a.error,"err");toast("Scènes : "+a.path,"ok");selId=null;loadPresets();loadRoutings();});
+    if(r.has_file)modal("Utiliser ce dossier ?",`<p><b style="word-break:break-all">${esc(r.path)}</b> contient déjà <b>${r.count}</b> scène(s) : elles remplaceront dans l'appli les ${r.current_count} scène(s) actuelles (qui restent dans l'ancien dossier).</p>`,
+      [{t:"Annuler"},{t:"Utiliser ces scènes",go:1,f:()=>apply(false)}]);
+    else modal("Nouveau dossier de scènes",`<p><b style="word-break:break-all">${esc(r.path)}</b> ne contient pas encore de scènes.</p><p>Y copier vos ${r.current_count} scène(s) actuelles (et profils de routing) ?</p>`,
+      [{t:"Annuler"},{t:"Partir de zéro",f:()=>apply(false)},{t:"Copier mes scènes",go:1,f:()=>apply(true)}]);
+  });
+}
 function renderPresets(){
   const l=$("#plist");l.innerHTML="";
   if(!presets.length){l.innerHTML='<div style="color:var(--mut);padding:8px">Aucune scène. Réglez vos gains puis « Sauver ».</div>';return;}
@@ -2156,6 +2216,7 @@ $("#precall").onclick=()=>{
 };
 $("#pundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/presets/undo",{}).then(r=>toast(r.ok?"Valeurs précédentes restaurées":"Rien à annuler",r.ok?"ok":"err"));
 $("#pexp").onclick=()=>{location.href="/api/export";};
+$("#pdirb").onclick=()=>{renderDir().then(()=>openDirDialog());};
 $("#pimp").onclick=()=>$("#pfile").click();
 $("#pfile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>{let j;try{j=JSON.parse(rd.result);}catch(_){return toast("Fichier JSON invalide","err");}
@@ -2322,18 +2383,165 @@ HTML = HTML.replace("__APP_VERSION__", APP_VERSION)  # numero de version visible
 # --------------------------------------------------------------------------
 #  Main
 # --------------------------------------------------------------------------
+# --- Dossiers de donnees (depuis la 2.0.0) -----------------------------------------------------------
+# Par defaut, TOUT va dans %APPDATA%\X32 Gain Recall (dossier "appli"), separe de l'exe : on peut
+# telecharger une nouvelle version n'importe ou sans perdre ses scenes. Les SCENES (et profils de
+# routing) peuvent etre deplacees dans un autre dossier choisi depuis l'interface (panneau Scenes ->
+# "Dossier...") ; ce choix est memorise dans x32_gain_recall_settings.json du dossier appli. Le code
+# d'acces, la config du float et la table LV1 manuelle restent dans le dossier appli.
+APP_DIR_NAME = "X32 Gain Recall"
+SETTINGS_FILE = "x32_gain_recall_settings.json"
+SCENES_FILE = "x32_presets.json"
+ROUTINGS_FILE = "x32_routings.json"
+# fichiers que les versions <= 1.9 rangeaient a cote de l'exe/du script : recopies une fois au 1er lancement
+LEGACY_FILES = (SCENES_FILE, ROUTINGS_FILE, "x32_lan_config.json", "x32_float_config.json", "lv1_patch_map.json")
+
+
+def _writable_dir(d):
+    try:
+        os.makedirs(d, exist_ok=True)
+        test = os.path.join(d, ".x32_write_test")
+        with open(test, "w") as f:
+            f.write("x")
+        os.remove(test)
+        return True
+    except OSError:
+        return False
+
+
+def legacy_dir():
+    """Dossier de l'exe (ou du script) : emplacement des donnees jusqu'a la 1.9."""
+    return os.path.dirname(os.path.abspath(sys.argv[0])) if sys.argv and sys.argv[0] else os.getcwd()
+
+
+def app_data_dir():
+    """%APPDATA%/X32 Gain Recall, cree au besoin ; a defaut le dossier personnel, puis celui de l'exe."""
+    candidates = []
+    if os.environ.get("APPDATA"):
+        candidates.append(os.path.join(os.environ["APPDATA"], APP_DIR_NAME))
+    candidates += [os.path.join(os.path.expanduser("~"), "." + APP_DIR_NAME.lower().replace(" ", "_")), legacy_dir()]
+    for d in candidates:
+        if _writable_dir(d):
+            return d
+    return os.getcwd()
+
+
+def load_settings():
+    try:
+        with open(os.path.join(app_data_dir(), SETTINGS_FILE), "r", encoding="utf-8-sig") as f:
+            s = json.load(f)
+        return s if isinstance(s, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_settings(s):
+    path = os.path.join(app_data_dir(), SETTINGS_FILE)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def scenes_dir():
+    """Dossier des scenes : celui choisi dans l'interface s'il existe encore, sinon le dossier appli."""
+    d = load_settings().get("scenes_dir")
+    if d and os.path.isdir(d):
+        return d
+    return app_data_dir()
+
+
+def migrate_legacy_files():
+    """Une seule fois : recopie (sans les supprimer) les fichiers rangés à côté de l'exe par les versions
+    <= 1.9 vers le dossier appli, s'ils n'y sont pas déjà. Renvoie la liste des fichiers recopiés."""
+    src, dst = legacy_dir(), app_data_dir()
+    if os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
+        return []
+    s = load_settings()
+    if s.get("legacy_migrated"):
+        return []
+    copied = []
+    for name in LEGACY_FILES:
+        a, b = os.path.join(src, name), os.path.join(dst, name)
+        if os.path.isfile(a) and not os.path.exists(b):
+            try:
+                shutil.copy2(a, b)
+                copied.append(name)
+            except OSError:
+                pass
+    s["legacy_migrated"] = True
+    try:
+        save_settings(s)
+    except OSError:
+        pass
+    return copied
+
+
 def pick_data_path():
-    base = os.path.dirname(os.path.abspath(sys.argv[0])) if sys.argv and sys.argv[0] else os.getcwd()
-    for d in (base, os.path.expanduser("~")):
-        try:
-            test = os.path.join(d, ".x32_write_test")
-            with open(test, "w") as f:
-                f.write("x")
-            os.remove(test)
-            return os.path.join(d, "x32_presets.json")
-        except OSError:
-            continue
-    return "x32_presets.json"
+    """Chemin du fichier de scenes (nom conserve : utilise aussi par le float)."""
+    return os.path.join(scenes_dir(), SCENES_FILE)
+
+
+def scenes_dir_info(d):
+    """Etat d'un dossier candidat pour les scenes : existe, modifiable, nombre de scenes deja dedans."""
+    info = {"path": d, "exists": os.path.isdir(d), "writable": False, "count": 0, "has_file": False}
+    if info["exists"]:
+        info["writable"] = _writable_dir(d)
+        f = os.path.join(d, SCENES_FILE)
+        if os.path.isfile(f):
+            info["has_file"] = True
+            try:
+                with open(f, "r", encoding="utf-8-sig") as fh:
+                    data = json.load(fh)
+                info["count"] = len(data.get("presets", [])) if isinstance(data, dict) else 0
+            except (OSError, ValueError):
+                info["count"] = -1      # fichier illisible
+    return info
+
+
+def set_scenes_dir(d, copy_current):
+    """Bascule les scenes (et profils de routing) vers le dossier d. Si d contient deja des scenes, on les
+    utilise ; sinon, copy_current=True y recopie les fichiers actuels (sinon on y part de zero). Le choix
+    est memorise (retour au dossier appli = on oublie le choix). Renvoie scenes_dir_info(d)."""
+    global STORE, ROUTINGS
+    d = os.path.abspath(os.path.expanduser(d.strip().strip('"')))
+    info = scenes_dir_info(d)
+    if not info["exists"]:
+        raise ValueError("Dossier introuvable : %s" % d)
+    if not info["writable"]:
+        raise ValueError("Impossible d'écrire dans ce dossier : %s" % d)
+    if info["count"] == -1:
+        raise ValueError("Le fichier %s de ce dossier est illisible : choisissez un autre dossier" % SCENES_FILE)
+    if copy_current and not info["has_file"]:
+        for name, cur in ((SCENES_FILE, STORE.path), (ROUTINGS_FILE, ROUTINGS.path)):
+            dst = os.path.join(d, name)
+            if os.path.isfile(cur) and not os.path.exists(dst):
+                shutil.copy2(cur, dst)
+    STORE = PresetStore(os.path.join(d, SCENES_FILE))
+    ROUTINGS = RoutingStore(os.path.join(d, ROUTINGS_FILE))
+    s = load_settings()
+    if os.path.normcase(d) == os.path.normcase(os.path.abspath(app_data_dir())):
+        s.pop("scenes_dir", None)
+    else:
+        s["scenes_dir"] = d
+    save_settings(s)
+    return scenes_dir_info(d)
+
+
+def browse_folder(initial):
+    """Fenetre Windows « choisir un dossier », ouverte sur le PC qui fait tourner l'appli (pas sur la
+    tablette qui a clique). Renvoie le dossier choisi ou None. Tkinter importe ici seulement."""
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        d = filedialog.askdirectory(parent=root, initialdir=initial or app_data_dir(), mustexist=True,
+                                    title="Dossier des scènes — X32 Gain Recall")
+    finally:
+        root.destroy()
+    return os.path.normpath(d) if d else None
 
 
 def main():
@@ -2344,7 +2552,7 @@ def main():
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
-    ap.add_argument("--data", help="chemin du fichier de scenes (defaut : x32_presets.json a cote du script)")
+    ap.add_argument("--data", help="chemin du fichier de scenes (defaut : dossier choisi dans l'interface, sinon %%APPDATA%%/X32 Gain Recall)")
     ap.add_argument(
         "--local-only",
         action="store_true",
@@ -2365,7 +2573,7 @@ def main():
     )
     ap.add_argument(
         "--lv1-map",
-        help="table manuelle canal LV1 -> numeros EXP (defaut : %s a cote des scenes), relue a chaud" % MANUAL_FILENAME,
+        help="table manuelle canal LV1 -> numeros EXP (defaut : %s dans le dossier de donnees de l'appli), relue a chaud" % MANUAL_FILENAME,
     )
     ap.add_argument(
         "--lv1-session",
@@ -2403,12 +2611,13 @@ def main():
     global ALLOW_ANY_HOST, LAN_CODE, WEB_PORT, CODE_PATH, LOCAL_URL, LAN_URLS
     ALLOW_ANY_HOST = bool(a.lan)
 
+    migrated = [] if a.data else migrate_legacy_files()
     STORE = PresetStore(a.data or pick_data_path())
-    ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_routings.json"))
+    ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), ROUTINGS_FILE))
 
     global LV1
     LV1 = PatchMap(
-        manual_path=a.lv1_map or os.path.join(os.path.dirname(os.path.abspath(STORE.path)), MANUAL_FILENAME),
+        manual_path=a.lv1_map or os.path.join(app_data_dir(), MANUAL_FILENAME),
         session_path=None if a.lv1_sans_session else a.lv1_session,
         devices=a.lv1_device,
     ).start()
@@ -2419,7 +2628,7 @@ def main():
 
     code_path = None
     if a.lan and not a.lan_sans_mdp:
-        code_path = os.path.join(os.path.dirname(os.path.abspath(STORE.path)), "x32_lan_config.json")
+        code_path = os.path.join(app_data_dir(), "x32_lan_config.json")
         LAN_CODE = load_or_create_lan_config(code_path, regenerate=a.lan_nouveau_code)
 
     bind_host = "0.0.0.0" if a.lan else "127.0.0.1"
@@ -2477,7 +2686,10 @@ def main():
         else:
             print("Aucune adresse reseau locale detectee automatiquement (verifier la connexion Wi-Fi/Ethernet).")
         print("")
+    print("Donnees : %s" % app_data_dir())
     print("Scenes : %s" % STORE.path)
+    if migrated:
+        print("  (recopie depuis le dossier de l'exe, version precedente : %s)" % ", ".join(migrated))
     st = LV1.status()
     print("Patch LV1 (EXP -> canal) : %d EXP connus  [table manuelle : %s (%d canaux)%s]" % (
         len(LV1.exp_to_channel()), st["manual_file"], st["manual_channels"],
