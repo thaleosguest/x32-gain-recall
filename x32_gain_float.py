@@ -336,6 +336,45 @@ def lv1_tab(hwnd):
     return LV1_TABS[tabs.index("C")]
 
 
+# Tranche sélectionnée (mode Edit) : relevés du 2026-10-12 sur la LV1 plein écran 1920x1080, en fractions de
+# la zone client. La LV1 ne l'écrit pas dans sa base (enregistreur : rien pendant 3 sélections).
+SEL_GREY = (120, 120, 120)                  # fond de la zone de fader de la tranche sélectionnée (autres : 17)
+SEL_ROWS = (800 / 1080.0, 880 / 1080.0, 960 / 1080.0)   # lignes lues (une suffit ; plusieurs si l'une est couverte)
+SEL_X0, SEL_PITCH, SEL_W = 143 / 1920.0, 96 / 1920.0, 92 / 1920.0   # 1re tranche, pas, largeur du fond gris
+# Cadre vide du bloc « Input » (sous A/B) de la page Edit, où se pose le réglage de la tranche sélectionnée
+SEL_BOX = (32 / 1920.0, 183 / 1080.0, 92 / 1920.0, 133 / 1080.0)   # x, y, largeur, hauteur
+
+
+def lv1_selected_column(hwnd):
+    """Colonne (0-15) de la tranche sélectionnée dans la couche affichée, lue à l'écran (fond gris de sa
+    zone de fader), ou None : aucune (tranche sélectionnée hors de la couche, LR...) ou illisible."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    for fy in SEL_ROWS:
+        row = screen_row(x, y + round(h * fy), w)
+        runs, start = [], None
+        for i, (r, g, b) in enumerate(row + [(0, 0, 0)]):
+            grey = abs(r - SEL_GREY[0]) <= 6 and abs(g - SEL_GREY[1]) <= 6 and abs(b - SEL_GREY[2]) <= 6
+            if grey and start is None:
+                start = i
+            elif not grey and start is not None:
+                runs.append((start, i - start))
+                start = None
+        # le fond gris est coupé par le fader et le vumètre : on regroupe les morceaux par colonne
+        cols = set()
+        for st, n in runs:
+            if n < 0.008 * w:
+                continue
+            k = int((st / float(w) - SEL_X0) / SEL_PITCH + 0.02)
+            if 0 <= k < 16 and st / float(w) <= SEL_X0 + k * SEL_PITCH + SEL_W:
+                cols.add(k)
+        if len(cols) == 1:
+            return cols.pop()
+    return None
+
+
 def _wintypes(u32, ctypes):
     u32.GetForegroundWindow.restype = ctypes.c_void_p
     u32.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
@@ -1039,6 +1078,10 @@ class FloatApp:
         self._tab_tick = 0
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
+        self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
+        self._sel_col = None           # mode Edit : colonne de la tranche sélectionnée, lue à l'écran
+        self._sel_key = None           # (canal, préamplis) affichés dans la fenêtre de la tranche sélectionnée
+        self._sel_units = []
         self.root.attributes("-topmost", True)
         self.root.configure(bg=BG)        # opaque (2.2.0 ; 0,97 avant)
         try:
@@ -1064,6 +1107,7 @@ class FloatApp:
         self._build_strips()
         self._build_dock()
         self._build_resize_grip()
+        self._build_sel_win()
 
         self.root.bind("<Escape>", lambda e: self.quit())
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -1269,6 +1313,72 @@ class FloatApp:
         apply_theme(self.strips_frame)
         self.bank_var.set(self._bank_name())
 
+    # -- tranche sélectionnée (mode Edit) ----------------------------------
+    def _build_sel_win(self):
+        """Petite fenêtre posée dans le cadre vide du bloc « Input » de la page Edit de la LV1 : gain et 48V
+        du ou des préamplis X32 de la tranche sélectionnée (demande de Joseph). Placée en proportion de la
+        fenêtre de la LV1 (SEL_BOX) : rien à caler."""
+        w = tk.Toplevel(self.root)
+        w.overrideredirect(True)
+        w.withdraw()
+        w.attributes("-topmost", True)
+        w.configure(bg=PANEL)
+        self.sel_win = w
+        self.sel_tag = tk.Label(w, text="", bg=PANEL, fg=MUT, font=("Segoe UI", 7, "bold"))
+        self.sel_tag.pack(side="top", pady=(2, 0))
+        self.sel_body = tk.Frame(w, bg=PANEL)
+        self.sel_body.pack(side="top", fill="both", expand=True)
+        self._sel_geom = None
+
+    def _sel_channel(self):
+        """(canal LV1, [préamplis X32]) de la tranche sélectionnée, ou None."""
+        chans = self._lv1_lay.get("channels") or []
+        if self._sel_col is None or self._sel_col >= len(chans) or not chans[self._sel_col]:
+            return None
+        ch = chans[self._sel_col]
+        exp_to_idx = {int(e): int(k) for k, e in (self.exp_map or {}).items() if e}
+        idxs = [exp_to_idx[e] for e in self.lv1_sources.get(ch, []) if e in exp_to_idx]
+        return (ch, idxs) if idxs else None
+
+    def _sync_sel_win(self, lv1_shown):
+        """Affiche la fenêtre de la tranche sélectionnée en mode Edit (onglet Mixer 1 / 2), si la tranche a
+        un préampli X32 ; la reconstruit quand la tranche change ; la suit si la fenêtre de la LV1 bouge."""
+        sel = None
+        if lv1_shown and self._lv1_tab in MIXER_TABS and self._lv1_lay.get("preset_name") == "Edit":
+            sel = self._sel_channel()
+        if not sel:
+            if self.sel_win.state() != "withdrawn":
+                self.sel_win.withdraw()
+            return
+        rect = client_rect(self._lv1_hwnd)
+        if not rect:
+            return
+        x, y, w, h = rect
+        bx, by = x + round(w * SEL_BOX[0]), y + round(h * SEL_BOX[1])
+        bw, bh = max(40, round(w * SEL_BOX[2])), max(60, round(h * SEL_BOX[3]))
+        if sel != self._sel_key or (bw, bh) != (self._sel_geom or (0, 0, 0, 0))[2:]:
+            self._sel_key = sel
+            for c in self.sel_body.winfo_children():
+                c.destroy()
+            self._sel_units = []
+            ch, idxs = sel
+            self.sel_tag.config(text=join_tags(idxs))
+            avail = bh - self.sel_tag.winfo_reqheight() - 4
+            uw = (bw - 4) // 2                    # comme les colonnes du float : un mono est un demi-stéréo
+            for i in idxs[:2]:
+                u = Unit(self.sel_body, self, i, uw, compact=True)
+                u.resize(uw, avail)
+                u.pack(side="left", expand=True)
+                self._sel_units.append(u)
+            apply_theme(self.sel_win)
+        geom = (bx, by, bw, bh)
+        if geom != self._sel_geom:
+            self._sel_geom = geom
+            self.sel_win.geometry("%dx%d+%d+%d" % (bw, bh, bx, by))
+        if self.sel_win.state() == "withdrawn":
+            self.sel_win.deiconify()
+            self._z_state = None
+
     def _build_resize_grip(self):
         grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0,
                          cursor="bottom_right_corner")
@@ -1418,6 +1528,9 @@ class FloatApp:
                 self._lv1_tab = tab
                 if tab in MIXER_TABS:
                     self._surface = "mixer2" if tab == "Mixer 2" else "mixer1"
+            if self._lv1_lay.get("preset_name") == "Edit":
+                # pas de « dernier connu » ici : une tranche désélectionnée (ou hors couche) vide le cadre
+                self._sel_col = lv1_selected_column(lv1)
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
         if shown != self._shown:
             self._shown = shown
@@ -1427,20 +1540,21 @@ class FloatApp:
             else:
                 self.root.withdraw()
             self._sync_dock()
+        self._sync_sel_win(shown and lv1 and not window_iconic(lv1))
         if shown:
             self._sync_dock()
-            wins = [w for w in (self.root, self.panel_win) if w.state() != "withdrawn"]
+            wins = [w for w in (self.root, self.panel_win, self.sel_win) if w.state() != "withdrawn"]
             hwnds = [h for h in (float_hwnd(w) for w in wins) if h]
             if front:
-                if self._z_state != "top":
+                if self._z_state != ("top", len(hwnds)):    # une fenêtre de plus (tranche sélectionnée) : refaire
                     for h in hwnds:
                         set_topmost(h, True)
-                    self._z_state = "top"
-            elif self._z_state != fg:
+                    self._z_state = ("top", len(hwnds))
+            elif self._z_state != (fg, len(hwnds)):
                 for h in hwnds:
                     set_topmost(h, False)
                     place_below(h, fg)
-                self._z_state = fg
+                self._z_state = (fg, len(hwnds))
         self.root.after(100, self._follow_lv1)
 
     def _theme_pass(self):
@@ -1825,6 +1939,7 @@ class FloatApp:
         # changement de couche dans la LV1. Grp/Fx, Custom... (bank None) : on ne bouge pas.
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
+        self._lv1_lay = lay
         if self._surface != getattr(self, "_surface_seen", None):
             self._surface_seen = self._surface        # Mixer 1 <-> Mixer 2 : tout réappliquer
             self._lv1_layer_seen = self._lv1_preset_seen = None
@@ -1855,6 +1970,10 @@ class FloatApp:
                 self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
+        for u in self._sel_units:
+            u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
+            u.set_phantom(snap["phantom"][u.idx] if snap.get("phantom") else None)
+            u.set_led(m["v"][u.idx] if m.get("live") else None, self.clip_db)
         for s in self.strips:
             for u in s.units:
                 u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)

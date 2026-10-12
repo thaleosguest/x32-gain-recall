@@ -95,6 +95,12 @@ C'est l'outil de tous les jours. Il s'ouvre **tout seul au lancement**. Fermé p
 - Un canal **stéréo** montre ses deux préamplis côte à côte (deux potards, deux 48 V). Les deux
   gains restent indépendants sur la X32.
 
+### En mode Edit : la tranche sélectionnée
+En mode **Edit**, le float se replie, mais le réglage de la **tranche sélectionnée** apparaît dans le
+cadre vide du bloc **Input** de la LV1 (sous les boutons A / B) : potard de gain et 48 V, deux pour un
+canal stéréo. Sélectionnez une autre tranche : il suit. Le cadre reste vide si la tranche ne reçoit
+aucun préampli X32 (entrée B, TracksLive, groupe…).
+
 ### Régler un gain
 - **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien.
 - **Cliquer sur la valeur en dB** pour taper un chiffre exact.

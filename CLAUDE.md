@@ -246,6 +246,12 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Test réaliste = lancer via `explorer.exe fichier.bat` (sinon le processus hérite des droits de Claude).
 - Arrêter un serveur de test par sa ligne de commande (`*8091*`) tue aussi le shell dont la commande
   contient ce texte : filtrer sur `x32_gain_recall.py --web-port`.
+- **Tranche sélectionnée (mode Edit)** : PAS dans la base (enregistreur : aucune écriture pendant 3
+  sélections). Lue à l'écran (`lv1_selected_column`) : fond (120,120,120) de la zone de fader de la tranche
+  sélectionnée (autres : 17), lignes 800/880/960 sur 1080, 1re tranche x=143/1920, pas 96, largeur 92 ;
+  ~5 ms. Réglage posé dans le cadre vide du bloc Input (`SEL_BOX` : x 32, y 183, 92x133 sur 1920x1080),
+  fenêtre `sel_win` du float. Canal -> colonne par `lv1_layers[surface].channels`.
+- Captures d'écran sans Pillow : BitBlt + PNG en Python pur (script `grab.py` refait dans le scratchpad).
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
 

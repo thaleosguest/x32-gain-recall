@@ -3,6 +3,7 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
+- **Tranche sélectionnée en mode Edit** : le gain et le 48V du ou des préamplis X32 de la tranche sélectionnée dans la LV1 s'affichent dans le cadre vide du bloc « Input » (sous A/B), et se règlent là. Rien à caler : placé en proportion de la fenêtre de la LV1. La LV1 n'écrit pas la sélection dans sa base : elle est lue à l'écran (fond gris de la tranche sélectionnée), quand la LV1 est la fenêtre active. Cadre vide si la tranche n'a pas de préampli X32 ou n'est pas dans la couche affichée.
 - **Au lancement, le float s'ouvre tout seul** et l'appli **se reconnecte à la dernière console** (mémorisée à chaque *Connecter*, dans `x32_gain_recall_settings.json`) ; si la console n'est pas encore là, elle se connecte dès qu'elle répond. `--no-float` pour ne pas ouvrir le float. Un seul float à la fois : le bouton *Float* ne rouvre pas un float déjà ouvert.
 - **Le navigateur s'ouvre réduit** dans la barre des tâches (la page est ouverte, mais ne passe plus devant la LV1), et **la LV1 repasse au premier plan** une fois le float ouvert (c'est le float qui l'y met : Windows le refuse à l'appli principale, en arrière-plan à ce moment-là).
 - **Plus de code d'accès sur le PC de l'appli** : seuls les tablettes et téléphones le tapent (vérifié aussi sur le nom d'hôte de la requête, contre une page web piégée qui viserait 127.0.0.1).
