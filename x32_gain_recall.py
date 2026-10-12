@@ -381,6 +381,116 @@ def describe_routing(io):
     return d
 
 
+def port_names(io, port):
+    """Source de chaque voie d'un port (CARD, OUT, AES50A...), voie par voie (non regroupee)."""
+    def ints(path):
+        try:
+            return [int(x) for x in io.get(path, "").split()]
+        except ValueError:
+            return []
+    uin = [_user_name(v, "in") for v in ints("/config/userrout/in")]
+    uout = [_user_name(v, "out") for v in ints("/config/userrout/out")]
+    labels = _BLOCKS[port]
+    toks = io.get("/config/routing/" + port, "").split()
+    if len(toks) < len(labels):
+        return []
+    names = []
+    for tok, lab in zip(toks, labels):
+        cnt = 6 if lab == "AUX" else (int(lab.split("-")[1]) - int(lab.split("-")[0]) + 1)
+        names += _tok_names(tok, cnt, uin, uout)
+    return names
+
+
+_NAME_BASE = (("Local In ", 0), ("AES50-A ", 32), ("AES50-B ", 80), ("Carte In ", 128), ("Aux In ", 160),
+              ("Sortie console ", 168), ("P16 ", 184), ("Aux ", 200))
+
+
+def name_to_value(name):
+    """Inverse de _user_name : « AES50-A 18 » -> 50 (valeur d'un patch utilisateur). Inconnu -> 0 (OFF)."""
+    fixed = {"OFF": 0, "Talkback int.": 167, "Talkback ext.": 168, "Monitor L": 207, "Monitor R": 208}
+    if name in fixed:
+        return fixed[name]
+    for pre, base in _NAME_BASE:
+        if name.startswith(pre) and name[len(pre):].isdigit():
+            return base + int(name[len(pre):])
+    return 0
+
+
+# Routing « éditeur libre » (2.4.0, demande de Joseph) : un modèle simple, converti en lignes de routing X32.
+#   in  : 32 valeurs, la source de EXP 1-32 (= User In 1-32 ; la carte envoie User In 1-32 à la LV1)
+#   out : 48 valeurs, ce qui sort sur X32 OUT 1-16, puis AES50 A voies 1-16, puis AES50 B voies 1-16
+#         (129-160 = retours EXP 1-32 de la LV1 ; = User Out 1-48)
+# Valeurs = celles des patchs utilisateur de la X32 (voir _user_name).
+ROUT_SLOTS_OUT = [("X32 OUT %d" % k) for k in range(1, 17)] + [("AES50 A %d" % k) for k in range(1, 17)] + \
+                 [("AES50 B %d" % k) for k in range(1, 17)]
+ROUT_FIXED = {   # lignes identiques pour tous les profils de l'éditeur
+    "/config/routing": "REC",
+    "/config/routing/IN": "UIN1-8 UIN9-16 UIN17-24 UIN25-32 UIN1-6",
+    "/config/routing/CARD": "UIN1-8 UIN9-16 UIN17-24 UIN25-32",
+    "/config/routing/OUT": "UOUT1-4 UOUT5-8 UOUT9-12 UOUT13-16",
+    # AES50 voies 17-48 : on répète les voies 1-16 (un S16 n'en utilise que 16)
+    "/config/routing/AES50A": "UOUT17-24 UOUT25-32 UOUT17-24 UOUT25-32 UOUT17-24 UOUT25-32",
+    "/config/routing/AES50B": "UOUT33-40 UOUT41-48 UOUT33-40 UOUT41-48 UOUT33-40 UOUT41-48",
+    "/config/routing/PLAY": "CARD1-8 CARD9-16 CARD17-24 CARD25-32 AUX1-4",
+}
+
+
+def routing_choices():
+    """Listes des sources proposées par l'éditeur : entrées (-> EXP) et sorties (<- retours EXP...)."""
+    ins = [(0, "OFF")] + [(v, _user_name(v, "in")) for v in range(1, 129)] + \
+          [(v, _user_name(v, "in")) for v in range(161, 169)]
+    outs = [(0, "OFF")] + [(128 + n, "EXP %d" % n) for n in range(1, 33)] + \
+           [(v, _user_name(v, "out")) for v in list(range(1, 129)) + list(range(161, 209))]
+    return {"in": ins, "out": outs}
+
+
+def routing_model_from_nodes(io):
+    """Lignes de routing X32 (profil, ou console lue en direct) -> modèle de l'éditeur."""
+    card = port_names(io, "CARD")
+    ins = []
+    for k in range(32):
+        v = name_to_value(card[k]) if k < len(card) else 0
+        ins.append(v if v <= 168 and not 129 <= v <= 160 else 0)
+    outs = []
+    for port in ("OUT", "AES50A", "AES50B"):
+        names = port_names(io, port)
+        outs += [name_to_value(names[k]) if k < len(names) else 0 for k in range(16)]
+    return {"in": ins, "out": outs}
+
+
+def routing_nodes_from_model(model):
+    ins = [int(v) for v in (model.get("in") or [])][:32]
+    ins += [0] * (32 - len(ins))
+    outs = [int(v) for v in (model.get("out") or [])][:48]
+    outs += [0] * (48 - len(outs))
+    if any(not (0 <= v <= 168) or 129 <= v <= 160 for v in ins) or any(not 0 <= v <= 208 for v in outs):
+        raise ValueError("valeur de routing hors limites")
+    io = dict(ROUT_FIXED)
+    io["/config/userrout/in"] = " ".join(str(v) for v in ins)
+    io["/config/userrout/out"] = " ".join(str(v) for v in outs)
+    return {"io": io, "out": {}}
+
+
+def _exp(n):
+    return 128 + n
+
+
+def _builtin_models():
+    """Configurations intégrées (2.4.0). Sorties S16 : mêmes retours sur les voies AES50 1-8 ET 9-16, pour
+    que ça marche quelle que soit la position du sélecteur de sorties du S16 (choix de Joseph)."""
+    a16 = [32 + k for k in range(1, 17)]            # AES50-A 1-16
+    b16 = [80 + k for k in range(1, 17)]            # AES50-B 1-16
+    eight = lambda first: [_exp(first + k) for k in range(8)]
+    return [
+        ("x32r_s16a_s16b", "LV1 — X32R + S16 A + S16 B", {
+            "in": a16 + b16,
+            "out": eight(1) + [0] * 8 + eight(9) * 2 + eight(17) * 2}),
+        ("m32c_s16a_s16b", "LV1 — M32C + S16 A + S16 B", {
+            "in": a16 + b16,
+            "out": [0] * 16 + eight(1) * 2 + eight(9) * 2}),
+    ]
+
+
 # --------------------------------------------------------------------------
 #  Client X32
 # --------------------------------------------------------------------------
@@ -1101,12 +1211,21 @@ class RoutingStore:
     def __init__(self, path):
         self.path = path
         self.lock = threading.RLock()
-        self.items, self.seeded = [], False
+        self.items, self.seeded, self.seeded_keys = [], False, []
         self.load()
+        changed = False
         if not self.seeded:
             name, fw, nodes = parse_scn(SEED_SCN)
             self._add(name or "Routing LV1", fw, nodes, "intégré (Routing_LV1.scn)")
-            self.seeded = True
+            self.seeded = changed = True
+        # configurations intégrées ajoutées après coup : une seule fois chacune (supprimable ensuite)
+        for key, name, model in _builtin_models():
+            if key not in self.seeded_keys:
+                pr = self._add(name, None, routing_nodes_from_model(model), "intégré")
+                pr["model"] = model
+                self.seeded_keys.append(key)
+                changed = True
+        if changed:
             self._write()
 
     def load(self):
@@ -1114,6 +1233,7 @@ class RoutingStore:
             with open(self.path, "r", encoding="utf-8-sig") as f:
                 d = json.load(f)
             self.items, self.seeded = d.get("profiles", []), bool(d.get("seeded"))
+            self.seeded_keys = list(d.get("seeded_keys") or [])
         except FileNotFoundError:
             pass
         except (OSError, ValueError):
@@ -1125,7 +1245,8 @@ class RoutingStore:
     def _write(self):
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "seeded": self.seeded, "profiles": self.items}, f, ensure_ascii=False, indent=1)
+            json.dump({"version": 1, "seeded": self.seeded, "seeded_keys": self.seeded_keys, "profiles": self.items},
+                      f, ensure_ascii=False, indent=1)
         os.replace(tmp, self.path)
 
     def _add(self, name, fw, nodes, source):
@@ -1149,6 +1270,20 @@ class RoutingStore:
             return [{"id": x["id"], "name": x["name"], "created": x["created"], "source": x.get("source", ""), "fw": x.get("fw"),
                      "counts": {g: len(x["nodes"].get(g, {})) for g in ROUTING_GROUPS},
                      "desc": describe_routing(x["nodes"].get("io", {}))} for x in self.items]
+
+    def save_model(self, pid, name, model):
+        """Éditeur : enregistre le modèle dans le profil pid (s'il vient de l'éditeur), sinon en crée un."""
+        nodes = routing_nodes_from_model(model)
+        with self.lock:
+            for x in self.items:
+                if pid and x["id"] == pid and x.get("source") == "éditeur":
+                    x.update(name=(name or x["name"])[:60], nodes=nodes, model=model)
+                    self._write()
+                    return x
+            pr = self._add(name or "Routing perso", None, nodes, "éditeur")
+            pr["model"] = model
+            self._write()
+            return pr
 
     def rename(self, pid, name):
         with self.lock:
@@ -1691,7 +1826,8 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
         elif path == "/api/routings":
-            self._json({"profiles": ROUTINGS.summaries(), "groups": ROUTING_GROUPS, "path": ROUTINGS.path})
+            self._json({"profiles": ROUTINGS.summaries(), "groups": ROUTING_GROUPS, "path": ROUTINGS.path,
+                        "choices": routing_choices(), "slots_out": ROUT_SLOTS_OUT})
         elif path == "/api/presets":
             self._json({"presets": STORE.all(), "path": STORE.path})
         elif path == "/api/scenes-dir":
@@ -1741,6 +1877,28 @@ class Handler(BaseHTTPRequestHandler):
         return pr, nodes
 
     def _routing_route(self, p, d):
+        if p == "/api/routings/model":
+            # modèle d'un profil (id) pour l'éditeur, ou du routing actuel de la console (console: true)
+            if d.get("console"):
+                if not CLIENT.snapshot()["connected"]:
+                    return self._json({"ok": False, "error": "Non connecte a la console"})
+                paths = ["/config/userrout/in", "/config/userrout/out"] + ["/config/routing/" + k for k in _BLOCKS]
+                cur = CLIENT.get_nodes(paths)
+                if any(v is None for v in cur.values()):
+                    return self._json({"ok": False, "error": "Lecture du routing de la console incomplete"})
+                return self._json({"ok": True, "name": "Routing console", "model": routing_model_from_nodes(cur)})
+            pr = ROUTINGS.get(d["id"])
+            if not pr:
+                return self._json({"ok": False, "error": "Profil introuvable"})
+            model = pr.get("model") or routing_model_from_nodes(pr["nodes"].get("io", {}))
+            return self._json({"ok": True, "name": pr["name"], "model": model,
+                               "editable": pr.get("source") == "éditeur"})
+        if p == "/api/routings/save":
+            try:
+                pr = ROUTINGS.save_model(d.get("id"), str(d.get("name") or "").strip(), d["model"])
+            except (ValueError, TypeError) as e:
+                return self._json({"ok": False, "error": str(e)})
+            return self._json({"ok": True, "id": pr["id"], "name": pr["name"]})
         if p == "/api/routings/import":
             name, fw, nodes = parse_scn(str(d.get("text", "")))
             if not nodes["io"]:
@@ -2116,6 +2274,10 @@ body.v-rout #rview{display:grid}
 .rsec{background:#0d0e0f;border:1px solid var(--line2);border-radius:5px;padding:8px 10px}
 .rsec h4{margin:0 0 6px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--mut);font-weight:600}
 .rrow{display:flex;gap:10px;padding:3px 0;border-top:1px solid #1a1c1e;font-size:13px}
+.erow{display:flex;gap:6px;align-items:center;padding:1px 0;font-size:12px}
+.erow span{flex:0 0 82px;color:var(--mut)}
+.erow select{flex:1;min-width:0;background:#000;color:var(--txt);border:1px solid var(--line2);border-radius:4px;padding:2px 4px;font:inherit}
+.erow select.chg{border-color:var(--amber)}
 .rrow:first-of-type{border-top:0}
 .rrow .rg{flex:0 0 66px;color:var(--cyan);font:700 13px Consolas,monospace}
 .rrow.off .rs{color:#6b737a}
@@ -2216,6 +2378,7 @@ body.v-rout #rview{display:grid}
         <button class="btn" id="rimp">Importer une scène .scn…</button>
         <input type="file" id="rfile" accept=".scn,.txt" style="display:none">
         <div class="row"><button class="btn" id="rren" disabled>Renommer</button><button class="btn dng" id="rdel" disabled>Suppr.</button></div>
+        <div class="row"><button class="btn" id="redit" disabled title="Ouvre ce profil dans l'éditeur (EXP par EXP, sortie par sortie)">&#9998; Modifier…</button><button class="btn" id="rnew" disabled title="Crée un routing perso à partir de celui de la console">Depuis la console…</button></div>
         <div class="rnote">Seules les lignes de routing sont lues dans la scène (mixage, EQ, faders… ne sont jamais envoyés).</div>
       </div>
       <div class="rcol" id="rdetail"></div>
@@ -2608,7 +2771,8 @@ function setView(v){
   $("#selg").style.display=v==="gains"?"":"none";$("#selr").style.display=v==="routing"?"":"none";
   if(v==="routing")loadRoutings();
 }
-function loadRoutings(){return api("/api/routings").then(r=>{RP=r.profiles;if(!RP.find(p=>p.id===rsel))rsel=RP.length?RP[0].id:null;renderRouting();});}
+let RC=null,RS=[],RED=null;   // éditeur de routing : choix possibles, noms des sorties, profil en cours
+function loadRoutings(){return api("/api/routings").then(r=>{RP=r.profiles;RC=r.choices;RS=r.slots_out||[];if(!RP.find(p=>p.id===rsel))rsel=RP.length?RP[0].id:null;renderRouting();});}
 function rrows(list){return (list||[]).map(r=>`<div class="rrow${r.src==="OFF"?" off":""}"><span class="rg">${r.a===r.b?r.a:r.a+"\u2013"+r.b}</span><span class="rs">${esc(r.src)}</span></div>`).join("")||'<div style="color:var(--mut)">\u2014</div>';}
 function detailHTML(p){
   const d=p.desc,P=d.ports||{};
@@ -2631,19 +2795,52 @@ function renderRouting(){
   $("#rdetail").innerHTML=p?detailHTML(p):'<div style="color:var(--mut);padding:12px">Aucun profil. Importez une scène X32 (.scn).</div>';
   routingButtons();
 }
+function openEditor(src){
+  api("/api/routings/model",src).then(r=>{
+    if(!r.ok)return toast(r.error,"err");
+    RED={id:r.editable?src.id:null,name:r.editable?r.name:(src.console?"Routing perso":r.name+" (perso)"),
+         model:{in:r.model.in.slice(),out:r.model.out.slice()},orig:JSON.stringify(r.model)};
+    renderEditor();
+  });
+}
+function renderEditor(){
+  const opts=l=>l.map(([v,t])=>`<option value="${v}">${esc(t)}</option>`).join("");
+  const oi=opts(RC.in),oo=opts(RC.out),o0=JSON.parse(RED.orig);
+  const row=(lab,k,i)=>`<div class="erow"><span>${esc(lab)}</span><select data-k="${k}" data-i="${i}">${k==="in"?oi:oo}</select></div>`;
+  $("#rdetail").innerHTML=`<div class="h" style="text-align:left">Éditeur de routing</div>
+    <div class="row"><input class="inp" id="ename" maxlength="60" value="${esc(RED.name)}"></div>
+    <div class="rgrid"><div class="rsec"><h4>Entrées → LV1 (EXP 1–32)</h4>${RED.model.in.map((v,i)=>row("EXP "+(i+1),"in",i)).join("")}
+      <div class="rnote">Chaque EXP prend n'importe quelle entrée : Local (X32), AES50-A / B (S16)…</div></div>
+    <div class="rsec"><h4>Sorties ← retours de la LV1</h4>${RED.model.out.map((v,i)=>row(RS[i]||("Sortie "+(i+1)),"out",i)).join("")}
+      <div class="rnote">X32R : seules OUT 1–8 sont physiques. S16 : voies 1–8 si son sélecteur de sorties est sur 1-8, 9–16 s'il est sur 9-16 (même retour sur les deux = marche dans les deux positions).</div></div></div>
+    <div class="row"><button class="btn go" id="esave">${RED.id?"Enregistrer":"Enregistrer comme nouveau profil"}</button>${RED.id?'<button class="btn" id="esaveas">Enregistrer sous…</button>':""}<button class="btn" id="ecancel">Fermer</button></div>
+    <div class="rnote">L'enregistrement ne touche pas la console : sélectionnez ensuite le profil et « Charger ce routing ».</div>`;
+  document.querySelectorAll("#rdetail select").forEach(el=>{
+    const k=el.dataset.k,i=+el.dataset.i;el.value=String(RED.model[k][i]);
+    const mark=()=>el.classList.toggle("chg",RED.model[k][i]!==o0[k][i]);mark();
+    el.onchange=()=>{RED.model[k][i]=+el.value;mark();};});
+  const save=asNew=>api("/api/routings/save",{id:asNew?null:RED.id,name:$("#ename").value,model:RED.model}).then(r=>{
+    if(!r.ok)return toast(r.error,"err");
+    toast("Routing « "+r.name+" » enregistré","ok");RED=null;rsel=r.id;loadRoutings();});
+  $("#esave").onclick=()=>save(false);
+  if($("#esaveas"))$("#esaveas").onclick=()=>save(true);
+  $("#ecancel").onclick=()=>{RED=null;renderRouting();};
+}
 function routingMsg(){
   const rl=S.routing_last;if(!rl)return"";
   return ` · Routing « ${esc(rl.name)} » : ${rl.sent}/${rl.total} lignes envoyées — `+(rl.verified===null?"vérification…":(rl.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${rl.bad.length} écart(s) : ${rl.bad.map(esc).join(", ")}</b>`));
 }
 function routingButtons(){
   const has=!!RP.find(x=>x.id===rsel);
-  $("#rren").disabled=!has;$("#rdel").disabled=!has;
+  $("#rren").disabled=!has;$("#rdel").disabled=!has;$("#redit").disabled=!has;$("#rnew").disabled=!S.connected;
   $("#rload").disabled=!(has&&S.connected&&!locked);$("#rundo").disabled=!(S.routing_can_undo&&S.connected&&!locked);
   const rl=S.routing_last;
   $("#rlast").innerHTML=rl?routingMsg().replace(/^ · /,""):"";
 }
 $("#tgains").onclick=()=>setView("gains");$("#trout").onclick=()=>setView("routing");
 $("#rimp").onclick=()=>$("#rfile").click();
+$("#redit").onclick=()=>{if(rsel)openEditor({id:rsel});};
+$("#rnew").onclick=()=>openEditor({console:true});
 $("#rfile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>api("/api/routings/import",{text:String(rd.result),filename:f.name}).then(r=>{
     if(!r.ok)return toast(r.error,"err");rsel=r.id;toast("Routing importé : "+r.io+" lignes E/S, "+r.out+" lignes de sortie","ok");loadRoutings();});

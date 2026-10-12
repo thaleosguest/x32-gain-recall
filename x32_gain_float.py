@@ -575,6 +575,17 @@ class ServerBackend:
     def routings(self):
         return (self._get("/api/routings") or {}).get("profiles", [])
 
+    def routing_choices(self):
+        d = self._get("/api/routings") or {}
+        return d.get("choices"), d.get("slots_out")
+
+    def routing_model(self, src):
+        return self._post("/api/routings/model", src) or {"ok": False, "error": self.last_error}
+
+    def save_routing(self, pid, name, model):
+        return self._post("/api/routings/save", {"id": pid, "name": name, "model": model}) or \
+            {"ok": False, "error": self.last_error}
+
     def apply_routing(self, pid):
         return self._post("/api/routings/apply", {"id": pid, "groups": ["io"]}) or {"ok": False, "error": self.last_error}
 
@@ -1710,7 +1721,7 @@ class FloatApp:
         self.panel_win.deiconify()
         self._z_state = None
 
-    def _panel_row(self, text, sub, on_click):
+    def _panel_row(self, text, sub, on_click, on_edit=None):
         row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
         row.pack(fill="x", padx=6, pady=3)
         txt = tk.Frame(row, bg="#0d0e0f")
@@ -1720,6 +1731,9 @@ class FloatApp:
             tk.Label(txt, text=sub, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8), anchor="w").pack(fill="x")
         tk.Button(row, text="Charger", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
                   command=on_click).pack(side="right", padx=6, pady=4)
+        if on_edit:
+            tk.Button(row, text="✎", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 9, "bold"), width=2,
+                      command=on_edit).pack(side="right", pady=4)
 
     def _scene_row(self, p):
         """Une scène, avec Charger + Écraser + Renommer + Supprimer cote a cote - depuis la 1.7.0,
@@ -1797,10 +1811,104 @@ class FloatApp:
             tk.Label(self.panel, text="Aucun profil (ou appli principale non connectée).", bg=PANEL, fg=MUT,
                       font=("Segoe UI", 8), wraplength=self._panel_width()).pack(padx=8, pady=6)
             return
+        editable = hasattr(self.backend, "routing_model")      # éditeur : avec l'appli principale seulement
         for p in items:
             counts = p.get("counts", {})
             sub = "%d lignes E/S · %s" % (counts.get("io", 0), p.get("source", ""))
-            self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n))
+            self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n),
+                            (lambda pid=p["id"]: self._edit_routing({"id": pid})) if editable else None)
+        if editable:
+            tk.Button(self.panel, text="✎ Nouveau routing perso, depuis la console…", bd=0, bg="#25282b", fg=TXT,
+                      font=("Segoe UI", 8, "bold"), command=lambda: self._edit_routing({"console": True})).pack(
+                fill="x", padx=6, pady=(4, 6))
+
+    def _edit_routing(self, src):
+        """Éditeur libre (2.4.0) : source de chaque EXP 1-32, retour de chaque sortie (X32 OUT, S16 A/B)."""
+        from tkinter import ttk
+        r = self.backend.routing_model(src)
+        choices, slots = self.backend.routing_choices()
+        if not r.get("ok") or not choices:
+            messagebox.showerror("Routing", r.get("error") or "Éditeur indisponible", parent=self.root)
+            return
+        model = {"in": list(r["model"]["in"]), "out": list(r["model"]["out"])}
+        orig = {"in": list(model["in"]), "out": list(model["out"])}
+        pid = src.get("id") if r.get("editable") else None
+        name0 = r["name"] if r.get("editable") else ("Routing perso" if src.get("console") else r["name"] + " (perso)")
+        lab = {k: {v: t for v, t in choices[k]} for k in ("in", "out")}
+        val = {k: {t: v for v, t in choices[k]} for k in ("in", "out")}
+
+        w = tk.Toplevel(self.root)
+        w.title("Éditeur de routing — %s" % APP_SHORT)
+        w.configure(bg=PANEL)
+        w.attributes("-topmost", True)
+        top = tk.Frame(w, bg=PANEL)
+        top.pack(fill="x", padx=8, pady=6)
+        tk.Label(top, text="Nom", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(side="left")
+        name_var = tk.StringVar(value=name0)
+        tk.Entry(top, textvariable=name_var, width=36, bg="#000000", fg=TXT, insertbackground=TXT,
+                 relief="flat").pack(side="left", fill="x", expand=True, padx=6)
+
+        holder = tk.Frame(w, bg=PANEL)
+        holder.pack(fill="both", expand=True, padx=8)
+        cv = tk.Canvas(holder, bg=PANEL, highlightthickness=0, width=560, height=460)
+        sb = tk.Scrollbar(holder, orient="vertical", command=cv.yview)
+        cv.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        cv.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(cv, bg=PANEL)
+        cv.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.bind_all("<MouseWheel>", lambda e: cv.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        def column(col, title, kind, labels):
+            tk.Label(body, text=title, bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).grid(
+                row=0, column=col * 2, columnspan=2, sticky="w", pady=(0, 4), padx=(0 if col == 0 else 12, 0))
+            for i, text in enumerate(labels):
+                tk.Label(body, text=text, bg=PANEL, fg=TXT, font=("Segoe UI", 8), anchor="w").grid(
+                    row=i + 1, column=col * 2, sticky="w", padx=(0 if col == 0 else 12, 4))
+                cb = ttk.Combobox(body, values=[t for _v, t in choices[kind]], state="readonly", width=17)
+                cb.set(lab[kind].get(model[kind][i], "OFF"))
+
+                def changed(_e=None, cb=cb, i=i, kind=kind):
+                    model[kind][i] = val[kind].get(cb.get(), 0)
+                cb.bind("<<ComboboxSelected>>", changed)
+                cb.grid(row=i + 1, column=col * 2 + 1, sticky="w", pady=1)
+
+        column(0, "ENTRÉES → LV1", "in", ["EXP %d" % (i + 1) for i in range(32)])
+        column(1, "SORTIES ← RETOURS LV1", "out", slots or ["Sortie %d" % (i + 1) for i in range(48)])
+        tk.Label(w, text="X32R : seules OUT 1-8 sont physiques. S16 : voies 1-8 ou 9-16 selon son sélecteur de "
+                         "sorties (même retour sur les deux = marche dans les deux positions). L'enregistrement ne "
+                         "touche pas la console : « Charger » ensuite.", bg=PANEL, fg=MUT, font=("Segoe UI", 8),
+                 wraplength=560, justify="left").pack(fill="x", padx=8, pady=(4, 0))
+
+        def save(as_new):
+            res = self.backend.save_routing(None if as_new else pid, name_var.get().strip(), model)
+            if not res.get("ok"):
+                messagebox.showerror("Routing", res.get("error") or "Échec", parent=w)
+                return
+            cv.unbind_all("<MouseWheel>")
+            w.destroy()
+            self.status_lbl.config(text="Routing « %s » enregistré" % res.get("name"), fg=OK)
+            if self.panel_mode == "routing":
+                self._toggle_panel("routing")
+                self._toggle_panel("routing")
+
+        bar = tk.Frame(w, bg=PANEL)
+        bar.pack(fill="x", padx=8, pady=8)
+        tk.Button(bar, text="Enregistrer" if pid else "Enregistrer comme nouveau profil", bd=0, bg=TEAL, fg="#032",
+                  font=("Segoe UI", 9, "bold"), command=lambda: save(False)).pack(side="left")
+        if pid:
+            tk.Button(bar, text="Enregistrer sous…", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 9, "bold"),
+                      command=lambda: save(True)).pack(side="left", padx=6)
+
+        def close():
+            if model != orig and not messagebox.askyesno("Routing", "Fermer sans enregistrer ?", parent=w):
+                return
+            cv.unbind_all("<MouseWheel>")
+            w.destroy()
+        tk.Button(bar, text="Fermer", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 9, "bold"),
+                  command=close).pack(side="right")
+        w.protocol("WM_DELETE_WINDOW", close)
 
     def _panel_width(self):
         return 300

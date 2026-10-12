@@ -122,7 +122,32 @@ aucun préampli X32 (entrée B, TracksLive, groupe…).
 | **Fond de la fenêtre** | Anthracite (défaut), Noir, Or, Bleu nuit |
 | **Fermer le float** | La page du navigateur reste ouverte |
 
-## 5. Les scènes de gains
+## 5. Le routing de la console
+
+L'appli charge sur la X32 / M32 un **routing tout prêt** pour la LV1 : quelles entrées partent vers la
+carte (EXP 1-32), et quels retours de la LV1 sortent où. Page : onglet **Routing** ; float : **⋯ →
+Routing…**. Avant l'envoi, l'appli montre ce qui va changer ; après, elle relit la console pour
+confirmer, et **Annuler le dernier routing** remet l'état d'avant. À faire hors signal.
+
+Profils fournis :
+
+| Profil | Entrées → EXP | Retours EXP → sorties |
+|---|---|---|
+| **Routing LV1** (X32R + S16 sur AES50 A) | X32R 1-16 → EXP 1-16, S16 A 1-16 → EXP 17-32 | EXP 1-16 → X32R OUT, EXP 1-8 / 9-16 → S16 (selon son sélecteur) |
+| **LV1 — X32R + S16 A + S16 B** | S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 | EXP 1-8 → X32R OUT 1-8, EXP 9-16 → S16 A, EXP 17-24 → S16 B |
+| **LV1 — M32C + S16 A + S16 B** | S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 | EXP 1-8 → S16 A, EXP 9-16 → S16 B |
+
+Pour les deux derniers, les retours sortent des S16 **quelle que soit la position de leur sélecteur de
+sorties** (1-8 ou 9-16).
+
+### Un routing à vous (éditeur libre)
+Pour mettre, par exemple, **L1 sur EXP 1 et A18 sur EXP 2** (une source de la scène plus proche du S16) :
+**✎ Modifier…** sur un profil (ou **Depuis la console…** pour partir du routing actuel), choisissez la
+source de chaque EXP et le retour de chaque sortie, puis **Enregistrer** : c'est un profil de plus, qui se
+charge comme les autres. Pour revenir au standard, rechargez simplement un autre profil. Les couleurs et
+noms LV1 du float suivent tout seuls (EXP 2 affichera le préampli A18).
+
+## 6. Les scènes de gains
 
 Une scène ne contient **que la X32** : gains, 48 V, noms des voies X32. La LV1 garde sa propre
 session, comme d'habitude.
@@ -136,7 +161,7 @@ session, comme d'habitude.
   panneau *Scènes* → **Dossier…**.
 - Export / import JSON : page du navigateur aussi.
 
-## 6. Depuis une tablette ou un téléphone (facultatif)
+## 7. Depuis une tablette ou un téléphone (facultatif)
 
 1. Tablette sur le **même réseau** que le PC.
 2. Le code n'est demandé **qu'aux tablettes et téléphones** (pas sur le PC de l'appli). Sur la page

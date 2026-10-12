@@ -275,8 +275,25 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
 
+## Routing (2.4.0, branche dev-2.4)
+
+- L'appli lit/écrit TOUT le routing X32 par OSC (`/node` pour lire, `/` pour écrire) : `/config/routing/*`
+  (blocs IN, AES50A/B, CARD, OUT, PLAY), `/config/userrout/in` (32) et `/out` (48), `/outputs/*`.
+- Console de Joseph (relevé 2026-10-13) = « Routing LV1 » à l'identique : User In 1-16 = Local 1-16, 17-32 =
+  A 1-16 ; CARD = User In 1-32 (EXP n = User In n) ; User Out 1-16 = Carte 1-16 ; X32R OUT 1-16 et AES50 A
+  1-16 = User Out 1-16. Sa S16 a son sélecteur de sorties sur 9-16 -> sort EXP 9-16 (X32R sort EXP 1-8).
+- Éditeur : modèle `{"in": 32 valeurs (source de EXP n), "out": 48 (X32 OUT 1-16, AES50 A 1-16, AES50 B
+  1-16)}` en valeurs de patch utilisateur (`_user_name`, 129-160 = retours EXP). `routing_nodes_from_model`
+  : blocs fixes `ROUT_FIXED` (OUT = UOUT1-16, AES50A = UOUT17-32, AES50B = UOUT33-48, voies 17-48 répétées).
+  `routing_model_from_nodes` (via `port_names`, `name_to_value`) : conversion fidèle de n'importe quel profil
+  ou de la console (vérifié sur « Routing LV1 »). Profils intégrés en modèle : `_builtin_models()`,
+  ajoutés une fois chacun (`seeded_keys` dans x32_routings.json). Choix de Joseph : sorties S16 doublées
+  sur les voies 1-8 ET 9-16 (sélecteur indifférent) ; éditeur libre (pas d'exceptions), page ET float.
+
 ## Reste à faire / idées
 
+- **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
+  certificat 100-300 €/an). L'avertissement SmartScreen reste, expliqué dans le mode d'emploi. Ne pas reproposer.
 - Rien de bloquant. À revérifier après une mise à jour de la LV1 : écriture en direct de
   `CurrentLV1.dat`, paramètre couleur 592 et palette.
 - Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
