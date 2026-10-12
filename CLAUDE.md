@@ -93,6 +93,11 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
 - Languette : 14 px, fond transparent (HOLE), bloc point/flèche/⋯ au MILIEU de la hauteur (sur le vide
   entre « Gain » et « 48 » de la LV1 ; à 22 px en haut, elle cachait « Preamp/Local »), même position
   replié ou déplié. `layout` 3 ; conversion depuis 2 : x + (22 − 14).
+- **Configurations 16/32/64/80 (relevé complet 2026-10-12)** : 16, 32, 64 -> mode Factory (0), mêmes 8
+  pages (0-3 Ch 1-16..49-64, 4 Grp/Fx, 5 Monitor, 6 Masters, 7 Link DCA) ; 80 -> modes InptChn (4,
+  pages 0-4) et BussChn (5 : Groups, Fx, Mon 1-16, Mon 17-24, Masters, Link DCA). `config_info` (track_type
+  = cluster_type) donne le nombre configuré (0 Input : 16/32/64/80, 1 Group, 25 Mon...), pas utile
+  pour le float : le mode suffit. Après retour en 80, la LV1 peut rester en mode 0 jusqu'au prochain clic.
 - **Talk Back** : routes `dst_cluster_type = 8` (TalkBack), objet `obj_type 8` (A/B : param 0, comme un
   canal). Clé TALKBACK = -8 dans les tables canal -> sources. Position dans les couches : Masters =
   mode 5 (BussChn) page 4, tranche 5 (`BUS_PAGE_INPUTS`, disposition fixe de la LV1, relevée sur
