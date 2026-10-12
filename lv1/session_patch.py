@@ -56,7 +56,7 @@ import tempfile
 import time
 
 from .channelinfo import read_channel_info
-from .layers import read_layer
+from .layers import read_layers
 
 # La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG", vu sur
 # une vraie base ; "X-WSG", la carte Waves pour X32, ajoutée sur la foi de son nom commercial, pas encore
@@ -142,6 +142,31 @@ def load_channel_widths(con):
         return {}
 
 
+PARAM_INPUT_SELECT = 0     # snapshot_chainer_params.param_id : entrée A/B sélectionnée du canal
+# Talk Back de la LV1 (2.2.0, demande de Joseph) : comme un canal, avec ses entrées A/B (routes vers
+# dst_cluster_type 8 = « TalkBack » de cluster_type ; objet obj_type 8). Numéroté TALKBACK (négatif, pour
+# ne jamais se confondre avec un canal d'entrée 1..80) dans les tables canal -> sources.
+TALKBACK = -8
+OBJ_TYPE_TALKBACK = 8
+
+
+def load_input_select(con):
+    """{canal 1-based: "A" | "B"} : entrée sélectionnée de chaque canal (bouton A/B de la LV1, et FlipAB).
+    Établi le 2026-10-12 avec l'enregistreur + captures d'écran : param_id 0 de snapshot_chainer_params
+    (état courant, snapshot_id -1) vaut 1.0 quand le canal est sur B ; pas de ligne (ou 0) = A.
+    ATTENTION : routes.status n'est PAS « entrée sélectionnée » (lu à l'envers dans un 1er essai : il vaut
+    1 sur l'entrée NON sélectionnée, 0 ou 4 sinon) - ne pas s'en servir pour ça.
+    Le Talk Back (objet obj_type 8) a la même règle, sous la clé TALKBACK."""
+    try:
+        rows = con.execute("""
+            SELECT o.obj_type, o.obj_index, p.param_value FROM snapshot_chainer_params p JOIN object o ON o.id = p.chainer_id
+            WHERE o.obj_type IN (0, ?) AND p.snapshot_id = -1 AND p.param_id = ?
+        """, (OBJ_TYPE_TALKBACK, PARAM_INPUT_SELECT)).fetchall()
+    except sqlite3.Error:
+        return {}
+    return {(idx + 1 if t == 0 else TALKBACK): ("B" if (v or 0) >= 0.5 else "A") for t, idx, v in rows}
+
+
 def extract_routes(db_path):
     """Voir read_session() ; ne renvoie que les routes."""
     return read_session(db_path)[0]
@@ -150,7 +175,7 @@ def extract_routes(db_path):
 def read_session(db_path):
     """(routes, infos, couche) lus sur UNE copie de la session :
     infos = {canal: {"name", "color"}} (lv1/channelinfo.py) ;
-    couche = couche affichée sur la LV1 (lv1/layers.py), ou None ;
+    couche = couches affichées sur la LV1, {"mixer1", "mixer2"} (lv1/layers.py) ;
     routes = {canal LV1 (1-based): [{"input": "A"/"B", "device": libellé, "sources": [voie 1-based, ...],
     "active": bool}, ...]} — toutes les routes vers les canaux, entrées A et B, quel que soit le status
     ("active" = au moins une voie en status 1). Les voies au-delà de la largeur du canal (voie droite
@@ -161,12 +186,13 @@ def read_session(db_path):
         device_labels = load_device_labels(con)
         widths = load_channel_widths(con)
         info = read_channel_info(con)
-        layer = read_layer(con)
+        selected = load_input_select(con)
+        layer = read_layers(con)
         cur.execute("""
-            SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
+            SELECT id, dst_cluster_type, dst_cluster_type_index, dst_section_index, dst_channel_index,
                    src_cluster_type_index, src_channel_index, status
             FROM routes
-            WHERE dst_cluster_type = 0 AND src_cluster_type = 10
+            WHERE dst_cluster_type IN (0, 8) AND src_cluster_type = 10
         """)
         rows = cur.fetchall()
     finally:
@@ -175,9 +201,13 @@ def read_session(db_path):
 
     # Plusieurs lignes pour la même (canal, entrée, voie) : on garde l'id le plus élevé (la plus récente).
     latest = {}
-    for row_id, ch_idx, section, slot, assign, src_idx, status in rows:
-        if slot >= widths.get(ch_idx, 2):
-            continue
+    for row_id, dst_type, idx, section, slot, assign, src_idx, status in rows:
+        if dst_type == 0:
+            ch_idx = idx                    # canal d'entrée, 0-based
+            if slot >= widths.get(ch_idx, 2):
+                continue
+        else:
+            ch_idx = TALKBACK - 1           # Talk Back (ch_idx + 1 = TALKBACK)
         key = (ch_idx, section, slot)
         if key not in latest or row_id > latest[key][0]:
             latest[key] = (row_id, assign, src_idx, status)
@@ -190,7 +220,8 @@ def read_session(db_path):
             "device": label, "model": model,
             "sources": [], "active": False})
         g["sources"].append(src_idx + 1)
-        g["active"] = g["active"] or status == 1
+        # entrée sélectionnée (A par défaut), voir load_input_select() - pas routes.status
+        g["active"] = g["input"] == selected.get(ch_idx + 1, "A")
 
     channels = {}
     for (ch, section, assign), g in sorted(groups.items()):
@@ -213,10 +244,18 @@ def extract_patch(db_path, devices=DEFAULT_DEVICES):
     return pick_sources(extract_routes(db_path), devices)
 
 
-def pick_sources(routes, devices=DEFAULT_DEVICES):
-    """Comme extract_patch(), à partir de routes déjà lues (read_session)."""
+def pick_sources(routes, devices=DEFAULT_DEVICES, follow_ab=True):
+    """Comme extract_patch(), à partir de routes déjà lues (read_session).
+    follow_ab (2.2.0, demande de Joseph) : seule l'entrée SÉLECTIONNÉE (A ou B) de chaque canal compte.
+    Entrée sélectionnée : paramètre 0 du canal (load_input_select), réécrit aussitôt par la LV1 à chaque
+    bascule A/B et à FlipAB (enregistreur, 2026-10-12).
+    Canal sur B (TracksLive, virtual soundcheck) : aucun préampli X32 ne l'alimente -> absent."""
     out = {}
     for ch, groups in routes.items():
+        if follow_ab:
+            groups = [g for g in groups if g["active"]]
+            if not groups:
+                continue
         rank = 0
         if devices:
             pick = next(((r, g) for r, d in enumerate(devices) for g in groups if _matches(d, g)), None)

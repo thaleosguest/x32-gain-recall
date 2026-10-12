@@ -20,7 +20,14 @@ import sqlite3
 SURFACE_MIXER1 = 2
 PROP_LAYERS_MODE = 12
 PROP_LAYERS_PAGE = 14
-MODE_FACTORY, MODE_CUSTOM, MODE_INPUTS = 0, 1, 4
+MODE_FACTORY, MODE_CUSTOM, MODE_INPUTS, MODE_BUSSES = 0, 1, 4, 5
+TALKBACK = -8          # Talk Back (même clé que lv1/session_patch.py)
+# Tranches des couches non-entrées qui ont une entrée réglable, par mode : {mode: {page: {tranche: canal}}}.
+# Couche « Masters » : LR, Center, Sub, -, Cue, Talk Back, -, -, Matrix 1-8 -> Talk Back = 6e tranche.
+# Disposition fixe de la LV1 (pas dans la base), relevée par Joseph le 2026-10-12 (enregistreur + captures) :
+#   - 80 canaux : mode BussChn (5), pages Groups, Fx, Mon 1-16, Mon 17-24, Masters (4), Link DCA ;
+#   - 64 canaux : mode Factory (0), pages Ch 1-16..49-64 (0-3), Grp/Fx, Monitor, Masters (6), Link DCA.
+OTHER_PAGE_INPUTS = {MODE_BUSSES: {4: {5: TALKBACK}}, MODE_FACTORY: {6: {5: TALKBACK}}}
 INPUT_PAGES = {MODE_FACTORY: 4, MODE_INPUTS: 5}   # pages de canaux d'entrée par mode
 STRIPS = 16
 
@@ -36,6 +43,8 @@ def _custom_channels(con, surface, page):
             "JOIN object o ON o.id = t.obj_id WHERE t.layer_id = ?", (layers[page],)):
         if 0 <= strip < STRIPS and obj_type == 0:
             out[strip] = obj_index + 1
+        elif 0 <= strip < STRIPS and obj_type == 8:      # Talk Back
+            out[strip] = TALKBACK
     return out
 
 
@@ -58,11 +67,23 @@ def read_layer(con, surface=SURFACE_MIXER1):
             channels = list(range(page * STRIPS + 1, page * STRIPS + STRIPS + 1))
         elif mode == MODE_CUSTOM:
             channels = _custom_channels(con, surface, page)
+        elif page in OTHER_PAGE_INPUTS.get(mode, {}):
+            spots = OTHER_PAGE_INPUTS[mode][page]
+            channels = [spots.get(i) for i in range(STRIPS)]
         preset = _mode_preset(con, surface, mode, page)
     except sqlite3.Error:
         return None
     return {"mode": mode, "page": page, "bank": bank, "channels": channels,
             "preset": preset[0] if preset else None, "preset_name": preset[1] if preset else None}
+
+
+SURFACE_MIXER2 = 3
+
+
+def read_layers(con):
+    """{"mixer1": couche de la vue Mixer 1, "mixer2": couche de la vue Mixer 2} (read_layer).
+    Établi le 2026-10-12 : Mixer 2 = surface 3, mêmes propriétés et mêmes tables que Mixer 1."""
+    return {"mixer1": read_layer(con, SURFACE_MIXER1), "mixer2": read_layer(con, SURFACE_MIXER2)}
 
 
 def _mode_preset(con, surface, mode, page):

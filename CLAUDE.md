@@ -14,13 +14,16 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.1.0 publiée (2026-10-12)
+## État actuel : v2.2.0 publiée (2026-10-12)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.1.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR thaleosguest/x32-gain-recall#4 (v2.1.0) fusionnée dans `main` ; avant : #1, #2 (v2.0.0), #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.2.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.2.0 (branche `dev-2.2`) fusionnée dans `main` ; avant : #4 (v2.1.0), #1, #2 (v2.0.0), #3.
 2.1.0 = nom « X/M32 Gain Recall for eMotion LV1 », logo, X-WSG, vue LV1, float qui suit couches et
-modes de la LV1, calage par écran, float lié à la LV1 (détails dans les sections plus bas).
-Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
+modes de la LV1, calage par écran, float lié à la LV1.
+2.2.0 = float intégré à la LV1 : languette à gauche (plus de barre), caché hors Mixer 1/2 (onglet lu à
+l'écran), Mixer 2, colonnes sans préampli transparentes, flip A/B, Talk Back, couches des 4
+configurations (16/32/64/80), mono/stéréo harmonisés (détails dans les sections plus bas).
+Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push` ambigu, vu en 2.1.0).
 
 
 - **Plug and play (v2.0.0)** : patch, couleurs ET noms des canaux LV1 sont lus dans la
@@ -79,6 +82,29 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
   1 Home, 2 Setup, 3 SndChk, 4 Edit, 5 Fx, 6 Monitor, 7 Status, 8 Dugan) ; 8 lignes par
   `ovv_track_mode` (surface + mode de couche), une par page, ordre des id. Custom : par page ; couches
   d'entrée : les 8 pages changent ensemble. Float : déplié en SndChk/Setup, replié sinon (`AUTO_OPEN_MODES`).
+- **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
+- **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien
+  pendant les clics). Lu à l'écran (`lv1_tab()` : ligne à 14/1080 de la zone client ; 7 boutons de
+  ~4,7 % de largeur, gris (231,231,231), actif bleu (56,201,255)) ; validé sur captures plein écran et
+  en direct (LV1 fenêtrée 1728x970), ~15 ms. Lu seulement quand la LV1 est la fenêtre active.
+- **Disposition 2.2.0** : languette `TAB_W` à gauche (plus de barre en haut) ; Scènes/Routing dans le
+  menu ⋯ (dock en bas à gauche essayé puis retiré à la demande de Joseph), panneau = Toplevel sous le
+  float, même z-order. Colonne sans préampli = trou (`HOLE` + `-transparentcolor` : invisible ET
+  traversable au clic). Vue LV1 sans nom de canal, repère sur une ligne (sinon potards désalignés).
+  Potard = place restante mesurée (`winfo_reqheight`) : 48V toujours visible. Glisser 0,05 dB/px.
+  Calage d'avant (`layout` absent) converti : x − TAB_W, y + OLD_TITLE_H.
+- Languette : 14 px, fond transparent (HOLE), bloc point/flèche/⋯ au MILIEU de la hauteur (sur le vide
+  entre « Gain » et « 48 » de la LV1 ; à 22 px en haut, elle cachait « Preamp/Local »), même position
+  replié ou déplié. `layout` 3 ; conversion depuis 2 : x + (22 − 14).
+- **Configurations 16/32/64/80 (relevé complet 2026-10-12)** : 16, 32, 64 -> mode Factory (0), mêmes 8
+  pages (0-3 Ch 1-16..49-64, 4 Grp/Fx, 5 Monitor, 6 Masters, 7 Link DCA) ; 80 -> modes InptChn (4,
+  pages 0-4) et BussChn (5 : Groups, Fx, Mon 1-16, Mon 17-24, Masters, Link DCA). `config_info` (track_type
+  = cluster_type) donne le nombre configuré (0 Input : 16/32/64/80, 1 Group, 25 Mon...), pas utile
+  pour le float : le mode suffit. Après retour en 80, la LV1 peut rester en mode 0 jusqu'au prochain clic.
+- **Talk Back** : routes `dst_cluster_type = 8` (TalkBack), objet `obj_type 8` (A/B : param 0, comme un
+  canal). Clé TALKBACK = -8 dans les tables canal -> sources. Position dans les couches : Masters =
+  mode 5 (BussChn) page 4, tranche 5 (`BUS_PAGE_INPUTS`, disposition fixe de la LV1, relevée sur
+  capture en 80 canaux) ; Custom : obj_type 8. EXP partagé : le canal d'entrée garde la couleur.
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
 - **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →
@@ -101,8 +127,15 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
 - `src_cluster_type = 10` → devices du Rack A/B SoundGrid ; `src_cluster_type_index`
   = `assign` du device (table `device`, nom via `device_name` par mac + gender) ;
   `src_channel_index` = voie 0-based
-- `status` : **pas** l'existence de la route — semble indiquer l'entrée sélectionnée
-  (routes A X32RACK en 0 quand B est active). Ne pas filtrer dessus.
+- `status` : ni l'existence de la route, ni l'entrée sélectionnée. **Piège (2026-10-12)** : lu une 1re
+  fois comme « 1 = entrée sélectionnée » -> float inversé ; en fait 1 sur l'entrée NON sélectionnée
+  (0 ou 4 sinon). Ne pas s'en servir.
+- **Entrée A/B sélectionnée** = `snapshot_chainer_params` param_id **0** (snapshot -1, chainer = object
+  du canal) : 1.0 = B, pas de ligne = A ; réécrit aussitôt (bascule A/B, FlipAB). Vérifié dans les
+  deux sens avec captures. `load_input_select()` ; depuis la 2.2.0 `pick_sources(follow_ab=True)` ne
+  garde que l'entrée sélectionnée (demande de Joseph ; canal sur B/TracksLive = pas de préampli X32).
+- Leçon : un essai « avant/après » ne suffit pas à trancher un sens (on ne connaît pas l'état de
+  départ) : toujours demander l'état visible à l'écran à un instant donné et le comparer à la base.
 - **Largeur mono/stéréo** : `chainer.num_inputs` (1 ou 2) de l'objet canal
   (`chainer.obj_id = object.id`, `object.obj_type = 0`, `object.obj_index` = canal 0-based).
   Trouvé en comparant la base avant/après un passage mono → stéréo. **Indispensable** :

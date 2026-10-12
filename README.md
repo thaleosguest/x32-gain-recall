@@ -6,7 +6,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **2.1.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **2.2.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -41,7 +41,9 @@ L'exe suffit, sans rien à configurer côté LV1 : **ni MyRemote, ni adresse IP,
 ### Fenêtre compagnon (mode réduit, toujours au premier plan)
 Bouton **« Float »** dans la barre du haut du navigateur : lance la fenêtre flottante sans quitter le navigateur ni chercher aucun fichier (depuis la 1.5.0, c'est littéralement le même exécutable qui se relance lui-même avec un drapeau interne `--float` — plus un second `.exe` à gérer). **À réserver au cas où le navigateur et le serveur tournent sur la même machine** (PC qui héberge aussi la LV1) : ce bouton lance le processus sur la machine qui exécute `x32_gain_recall.py`, pas sur l'appareil où la page est affichée — cliqué depuis une tablette connectée au serveur via le réseau local, il ouvre la fenêtre sur le PC, pas sur la tablette (qui ne peut de toute façon pas exécuter de script Python ni d'exe Windows).
 
-`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `XM32_Gain_Recall_LV1.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut à gauche, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille, banque affichée et **fond** sont mémorisés dans `x32_float_config.json` (non versionné) pour le prochain lancement. Bouton **◐** (barre de titre) : fond **Anthracite** (par défaut, bien distinct du noir de la LV1), Noir, Or ou Bleu nuit.
+`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `XM32_Gain_Recall_LV1.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être posée **sur** la LV1, dans l'espace entre la rangée A/B et la rangée Ø : glisser le point vert pour la placer, le coin en bas à droite pour caler largeur et hauteur sur les 16 tranches (réglage mémorisé par écran). Depuis la 2.2.0, plus de barre en haut : une **languette à gauche** des voies, avec le point vert (poignée), la flèche de repli et le menu **⋯** (banque, largeur, Scènes, Routing, console, verrou, fond Anthracite / Noir / Or / Bleu nuit, version, fermer).
+
+**Intégrée à la LV1** (2.2.0) : devant la LV1 mais derrière les autres applis ; cachée quand la LV1 est réduite ou affiche un autre onglet que Mixer 1 / Mixer 2 ; suit la couche affichée (Ch 1-16 …, Custom, Talk Back sur Masters ; configurations 16 à 80 canaux), le mode (dépliée en SndChk / Setup, repliée ailleurs) et l'entrée A/B de chaque canal ; une colonne sans préampli X32 est transparente (on voit et on clique la LV1 en dessous).
 
 **Vue LV1 / vue X32** (menu des banques, depuis la 2.1.0) :
 - **LV1 Ch 1-16, 17-32…** : une colonne par **canal LV1**, dans l'ordre des tranches de la LV1. Posé sur la LV1, chaque potard tombe au-dessus de son canal. Un canal **stéréo** montre ses deux préamplis dans sa colonne (deux petits potards, deux petits 48V, « L 8/9 = EXP 8/9 ») ; les deux gains restent indépendants sur la X32. Un canal qui ne reçoit rien de la X32 garde une colonne vide. Les colonnes suivent les repatchs en direct.
@@ -49,7 +51,7 @@ Bouton **« Float »** dans la barre du haut du navigateur : lance la fenêtre f
 
 Le navigateur a les mêmes banques (panneau *Banques d'entrées*).
 
-**Fenêtre repliée** (flèche ▾) : il ne reste que le point de connexion et la flèche. Le point vert sert de poignée pour déplacer la fenêtre.
+**Fenêtre repliée** (flèche ◂) : il ne reste que le point de connexion et la flèche, à gauche du canal 1. Le point vert sert de poignée pour déplacer la fenêtre.
 
 Depuis la 1.7.0, la **barre de connexion** (IP, Connecter, Scanner, Démo) est **en haut**, et la barre de titre (repli/zoom, banque, Scènes, Routing, verrou) juste en dessous — ordre inversé par rapport aux versions précédentes, à la demande. Les deux barres ont leur propre zone de glisser-déposer dédiée (pointillés ⋯), toujours large, pour déplacer la fenêtre au doigt même repliée (quand elle n'est plus qu'un simple bandeau de titre). Boutons de repli (▾/▸) et de taille (−/+) regroupés à **gauche** de la barre de titre, agrandis pour le doigt, depuis la 1.5.0. Boutons globalement plus contrastés (couleurs par rôle, contours visibles) depuis la 1.7.0 — précision : tkinter ne fait pas de vrais bords arrondis sur un bouton natif, l'effet est simulé par un contour, pas un arrondi réel.
 
