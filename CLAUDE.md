@@ -14,13 +14,16 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.1.0 publiée (2026-10-12)
+## État actuel : v2.2.0 publiée (2026-10-12)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.1.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR thaleosguest/x32-gain-recall#4 (v2.1.0) fusionnée dans `main` ; avant : #1, #2 (v2.0.0), #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.2.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.2.0 (branche `dev-2.2`) fusionnée dans `main` ; avant : #4 (v2.1.0), #1, #2 (v2.0.0), #3.
 2.1.0 = nom « X/M32 Gain Recall for eMotion LV1 », logo, X-WSG, vue LV1, float qui suit couches et
-modes de la LV1, calage par écran, float lié à la LV1 (détails dans les sections plus bas).
-Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
+modes de la LV1, calage par écran, float lié à la LV1.
+2.2.0 = float intégré à la LV1 : languette à gauche (plus de barre), caché hors Mixer 1/2 (onglet lu à
+l'écran), Mixer 2, colonnes sans préampli transparentes, flip A/B, Talk Back, couches des 4
+configurations (16/32/64/80), mono/stéréo harmonisés (détails dans les sections plus bas).
+Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push` ambigu, vu en 2.1.0).
 
 
 - **Plug and play (v2.0.0)** : patch, couleurs ET noms des canaux LV1 sont lus dans la
