@@ -14,11 +14,13 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel (v1.9.0 — PR thaleosguest/x32-gain-recall#2, pas encore fusionnée)
+## État actuel (v2.0.0 — PR thaleosguest/x32-gain-recall#2, pas encore fusionnée)
 
-- La pastille de couleur par voie du float lit les couleurs via l'API HTTP du
-  module Companion Waves LV1 (`in<N>_color`). Companion tourne en continu sur le
-  PC pendant les prestations.
+- **Plug and play (v2.0.0)** : patch, couleurs ET noms des canaux LV1 sont lus dans la
+  base de la LV1 — **Companion n'est plus nécessaire** (facultatif : `--companion [URL]`,
+  prioritaire s'il est demandé). Objectif de Joseph : télécharger l'exe, le lancer, c'est tout.
+- Couleurs/noms fournis par l'appli principale via `/api/state` (`lv1_channels`), affichés
+  dans le float (pastille + « L 15 = EXP 15 » + nom) ET le navigateur (bandeau du haut).
 - **Architecture décidée : une seule appli.** Tout ce qui touche la LV1 est dans le
   package `lv1/`, importé par `x32_gain_recall.py` (même `.exe`) :
   - `lv1/patchmap.py` : table EXP → canal LV1, relue à chaud sur un thread,
@@ -46,6 +48,18 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
   (fichier + `-wal`), comme `session_patch.open_copy()`.
 - Secours : table manuelle `lv1_patch_map.json` (prioritaire), `--lv1-session`
   (autre `.emo` ou dossier `History`), `--lv1-sans-session`.
+
+## Nom et couleur des canaux dans la base LV1 (établi le 2026-10-12, LV1 V17)
+
+- Nom : `snapshot_chainer.name` (`snapshot_id = -1` = état courant), `chainer_id = object.id`
+  (`object.obj_type = 0`, `obj_index` = canal 0-based). Nom par défaut « Channel N » → affiché « In N ».
+- Couleur : `snapshot_chainer_params.param_value` pour `param_id = 592` (`snapshot_id = -1`) =
+  **numéro dans la palette fixe de 32 couleurs** (`lv1/channelinfo.py`). Pas de ligne = n° 13
+  (teal `#0FA2AB`, couleur par défaut). Palette relevée en donnant les 32 couleurs aux canaux
+  In 33-64 et en lisant Companion ; vérifiée identique à Companion sur 64/64 canaux.
+- Companion n'expose que In 1-64 ; la base donne aussi In 65-80.
+- Méthode qui marche pour trouver un réglage : photo de toutes les tables de la base (sur copie),
+  Joseph change UN réglage dans la LV1, nouvelle photo, diff.
 
 ## Schéma `routes` d'un `.emo` / `CurrentLV1.dat` (établi sur données réelles)
 
