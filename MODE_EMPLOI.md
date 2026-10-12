@@ -48,6 +48,8 @@ scènes de gains (une par groupe ou par date, par exemple).
      devant la LV1 : cliquez-la pour l'ouvrir. Sur ce PC, pas de code à taper ;
    - une **fenêtre noire** de journal : **ne la fermez pas**, c'est l'appli. La fermer ferme aussi le
      float et l'onglet du navigateur.
+
+   Une fois le float ouvert, **la LV1 repasse au premier plan** toute seule (si elle est lancée).
 2. La première fois, dans la page : cliquez **Scanner** : la X32 apparaît dans la liste. Choisissez-la puis **Connecter**.
    - Rien trouvé ? Tapez l'IP de la console (sur la X32 : *Setup → Network*) puis **Connecter**.
 3. Les potards de la page prennent les gains de la console. C'est connecté.

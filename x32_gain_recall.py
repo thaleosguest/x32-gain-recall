@@ -1287,7 +1287,7 @@ def scan_network(timeout=1.5, port=X32_PORT):
 FLOAT_PROC = None  # float lance par cette appli (un seul a la fois)
 
 
-def launch_float_window():
+def launch_float_window(extra=()):
     """Lance la fenetre flottante en tant que processus separe, SUR CETTE MACHINE.
 
     Depuis la 1.5.0, plus de second .exe a gerer : la fenetre flottante est integree au meme
@@ -1311,6 +1311,7 @@ def launch_float_window():
         cmd = [sys.executable, "--float", "--port", str(WEB_PORT)]
     else:
         cmd = [sys.executable, os.path.abspath(__file__), "--float", "--port", str(WEB_PORT)]
+    cmd += list(extra)
     if ALLOW_ANY_HOST and LAN_CODE:
         # Quiconque clique ce bouton est deja authentifie dans le navigateur (sinon la page de
         # connexion s'affiche avant meme de voir ce bouton) : on lui offre une session toute prete
@@ -1328,6 +1329,23 @@ def launch_float_window():
     return True, ""
 
 
+def _windows(match):
+    """Windows : fenetres principales visibles dont le titre verifie match(titre)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found = []
+
+    def cb(hwnd, _):
+        buf = ctypes.create_unicode_buffer(512)
+        if (user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, 4)  # 4 = GW_OWNER
+                and user32.GetWindowTextW(hwnd, buf, 512) and match(buf.value)):
+            found.append(hwnd)
+        return True
+    user32.EnumWindows(ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(cb), 0)
+    return found
+
+
 def _push_browser_back(timeout=15.0):
     """Windows : le navigateur s'ouvre au premier plan, devant la LV1. Des que sa fenetre affiche la page (titre
     = APP_NAME, apres le chargement), on la reduit : la LV1 et le float restent devant. Reduite trop tot, elle
@@ -1336,21 +1354,10 @@ def _push_browser_back(timeout=15.0):
         return
     try:
         import ctypes
-        from ctypes import wintypes
         user32 = ctypes.windll.user32
-        proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
         def page_windows():
-            found = []
-
-            def cb(hwnd, _):
-                buf = ctypes.create_unicode_buffer(512)
-                if (user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd)
-                        and user32.GetWindowTextW(hwnd, buf, 512) and APP_NAME in buf.value):
-                    found.append(hwnd)
-                return True
-            user32.EnumWindows(proc(cb), 0)
-            return found
+            return [h for h in _windows(lambda t: APP_NAME in t) if not user32.IsIconic(h)]
 
         end, seen = time.monotonic() + timeout, False
         while time.monotonic() < end:
@@ -1367,13 +1374,16 @@ def _push_browser_back(timeout=15.0):
 
 
 def _startup_windows(url, browser, float_win):
-    """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours."""
+    """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours, puis la LV1
+    au premier plan."""
     time.sleep(0.6)
     if browser:
         webbrowser.open(url)
         _push_browser_back()
     if float_win:
-        ok, err = launch_float_window()
+        # --lv1-front : le float, au premier plan en s'ouvrant, y passe la LV1 (Windows le refuse a cette
+        # appli-ci, en arriere-plan a ce moment-la : verifie)
+        ok, err = launch_float_window(["--lv1-front"])
         if not ok:
             print(err)
 

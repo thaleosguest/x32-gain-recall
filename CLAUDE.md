@@ -240,6 +240,12 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   tôt), puis float (`launch_float_window`, un seul à la fois : `FLOAT_PROC`). Reconnexion à `last_ip`
   (settings). Pas de code d'accès pour 127.0.0.1/::1 SI le Host est dans `ALLOWED_HOSTS` (anti
   DNS-rebinding). Serveur fermé : le float quitte (port refusé ~4 s), l'onglet fait `window.close()`.
+- **LV1 au premier plan au démarrage** : c'est le float (`--lv1-front`, option cachée passée par
+  `_startup_windows`) qui fait `SetForegroundWindow(LV1)`, car il a le premier plan en s'ouvrant. Essayé
+  depuis le serveur (même avec `AttachThreadInput`) : refusé par Windows (serveur en arrière-plan).
+  Test réaliste = lancer via `explorer.exe fichier.bat` (sinon le processus hérite des droits de Claude).
+- Arrêter un serveur de test par sa ligne de commande (`*8091*`) tue aussi le shell dont la commande
+  contient ce texte : filtrer sur `x32_gain_recall.py --web-port`.
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
 

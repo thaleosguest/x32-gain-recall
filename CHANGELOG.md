@@ -4,7 +4,7 @@ Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à parti
 
 ## [Non publié]
 - **Au lancement, le float s'ouvre tout seul** et l'appli **se reconnecte à la dernière console** (mémorisée à chaque *Connecter*, dans `x32_gain_recall_settings.json`) ; si la console n'est pas encore là, elle se connecte dès qu'elle répond. `--no-float` pour ne pas ouvrir le float. Un seul float à la fois : le bouton *Float* ne rouvre pas un float déjà ouvert.
-- **Le navigateur s'ouvre réduit** dans la barre des tâches (la page est ouverte, mais ne passe plus devant la LV1).
+- **Le navigateur s'ouvre réduit** dans la barre des tâches (la page est ouverte, mais ne passe plus devant la LV1), et **la LV1 repasse au premier plan** une fois le float ouvert (c'est le float qui l'y met : Windows le refuse à l'appli principale, en arrière-plan à ce moment-là).
 - **Plus de code d'accès sur le PC de l'appli** : seuls les tablettes et téléphones le tapent (vérifié aussi sur le nom d'hôte de la requête, contre une page web piégée qui viserait 127.0.0.1).
 - **Fermer la fenêtre noire de l'appli ferme aussi le reste** : le float se ferme tout seul (environ 4 s après, dès que plus rien ne répond sur le port de l'appli) ; l'onglet du navigateur de ce PC se ferme aussi. Sur une tablette, ou si le navigateur refuse de fermer l'onglet, la page affiche « Appli arrêtée » et se recharge toute seule quand l'appli est relancée. Un float lancé avant l'appli continue de l'attendre ; un float `--direct` n'est pas concerné.
 

@@ -1080,6 +1080,8 @@ class FloatApp:
         apply_theme(self.root)
         self.root.after(1000, self._theme_pass)
         self.root.after(300, self._follow_lv1)
+        if getattr(args, "lv1_front", False):
+            self.root.after(500, self._lv1_front)
         self._poll()
 
     # -- construction de l'UI -------------------------------------------
@@ -1897,6 +1899,22 @@ class FloatApp:
         lm = self.lv1_map
         return lm.get(str(exp), lm.get(exp))
 
+    def _lv1_front(self, tries=15):
+        """Lancement automatique : passer la LV1 au premier plan. Le float le peut tant qu'il a lui-meme le
+        premier plan (il l'a en s'ouvrant), l'appli principale non. Plusieurs essais : sa fenetre peut ne
+        recevoir le premier plan qu'un peu apres."""
+        ctypes, u32 = _user32()
+        hwnd = find_lv1_window()
+        if not (u32 and hwnd):
+            return
+        if u32.GetForegroundWindow() == hwnd:
+            return
+        if u32.IsIconic(hwnd):
+            u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+        if tries > 1:
+            self.root.after(200, lambda: self._lv1_front(tries - 1))
+
     def quit(self):
         self._save_cfg()
         self.backend.close()
@@ -1951,6 +1969,7 @@ def main():
     ap.add_argument("--session-token", default=None,
                      help=argparse.SUPPRESS)  # usage interne : passe par le bouton "Float" du navigateur
                      # pour eviter de retaper le code d'acces --lan ; non documente pour la saisie manuelle
+    ap.add_argument("--lv1-front", action="store_true", help=argparse.SUPPRESS)  # lancement auto : LV1 devant
     ap.add_argument("--direct", action="store_true",
                      help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
     ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")
