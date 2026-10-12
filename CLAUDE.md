@@ -71,6 +71,11 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
   global (un repli ne l'emporte jamais sur une route X32RACK d'un autre canal).
 - Souhait explicite de Joseph : une entrée X32 qui n'arrive (plus) sur aucun canal LV1
   doit rester **sans couleur** — jamais deviner.
+- **Décision de Joseph (2026-10-12)** : un EXP qui alimente plusieurs canaux LV1 (ex. EXP 5
+  sur In 5 et sur In 6 stéréo « Bass ») prend le canal **au plus petit numéro**. Ne pas changer
+  (options écartées : afficher les deux noms, ou priorité au canal stéréo).
+- Le navigateur doit redessiner aussi quand seul le côté LV1 change : la page compare
+  `exp_map`/`lv1_map`/`lv1_channels`, pas seulement `rev` (qui ne suit que la X32).
 
 ## Reste à faire / à vérifier
 
