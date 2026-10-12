@@ -14,10 +14,14 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.2.0 publiée (2026-10-12)
+## État actuel : v2.3.0 publiée (2026-10-13)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.2.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.2.0 (branche `dev-2.2`) fusionnée dans `main` ; avant : #4 (v2.1.0), #1, #2 (v2.0.0), #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.3.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.3.0 (branche `dev-2.3`) fusionnée dans `main` ; avant : #5 (v2.2.0), #4 (v2.1.0), #1, #2 (v2.0.0), #3.
+2.3.0 = plug and play : mode d'emploi (`MODE_EMPLOI.md`), float ouvert et calé tout seul, 1re connexion
+automatique + reconnexion, navigateur réduit, LV1 au premier plan, pas de code sur le PC, icône près de
+l'horloge (exe sans console), une seule instance, Lancer avec Windows, float caché LV1 fermée, tranche
+sélectionnée en mode Edit, avis de mise à jour (détails : section « Démarrage, plug and play »).
 2.1.0 = nom « X/M32 Gain Recall for eMotion LV1 », logo, X-WSG, vue LV1, float qui suit couches et
 modes de la LV1, calage par écran, float lié à la LV1.
 2.2.0 = float intégré à la LV1 : languette à gauche (plus de barre), caché hors Mixer 1/2 (onglet lu à
@@ -233,7 +237,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   fenêtre PowerShell.
 - argparse : un `%` dans un `help=` doit être écrit `%%` (sinon l'appli plante au démarrage).
 
-## Démarrage (dev-2.3)
+## Démarrage, plug and play (2.3.0)
 
 - Au lancement : navigateur ouvert puis **réduit** (`_push_browser_back` : toute fenêtre dont le titre
   contient `APP_NAME`, après 0,8 s, surveillée 4 s — Brave remet au premier plan une fenêtre réduite trop
