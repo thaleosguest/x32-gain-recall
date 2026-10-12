@@ -4,7 +4,11 @@ Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à parti
 
 ## [2.2.0]
 - **Float sans barre du haut** : une **languette à gauche** des voies (point de connexion = poignée pour déplacer, flèche de repli, menu **⋯** : banque, largeur, console, verrou, fond, version, fermer), posée sur la colonne « Insert / Input Select » de la LV1. **Replié**, il ne reste que cette languette, **à gauche du canal 1** : les plugins du premier canal restent visibles. Un calage d'avant la 2.2.0 est converti pour garder les voies au même endroit.
-- **Scènes et Routing** : petite fenêtre flottante **en bas à gauche de la LV1**, affichée avec les voies (donc en SndChk / Setup) ; les panneaux s'ouvrent juste au-dessus.
+- **Scènes et Routing** dans le menu **⋯** de la languette ; le panneau s'ouvre juste sous le float (au-dessus s'il manque de place).
+- **Colonne sans préampli X32** (canal sans source, groupe, matrice… dans une couche Custom) : **totalement transparente et traversable à la souris** — on voit et on clique la LV1 en dessous (couleur rendue transparente par Windows, `-transparentcolor`).
+- Vue LV1 : **plus de nom de canal** (la LV1 l'affiche déjà juste en dessous) ; repère « L 15 = EXP 15 » toujours sur **une ligne**, raccourci si la colonne est étroite (« L15=EXP15 », « L15 · 15 »…) : les potards restent alignés d'une colonne à l'autre.
+- **Potards dimensionnés sur la place réelle** (mesurée sur les widgets) : le **48V reste visible** même quand le float est bas.
+- **Plus fin au doigt** : glisser 10 px par pas de 0,5 dB (au lieu de 5), et on peut attraper le potard par toute sa colonne (diode, fond), pas seulement le petit rond.
 - **Float caché hors des onglets Mixer 1 / Mixer 2** (All, Channel, Show, Patch, Setup) et réaffiché en y revenant. La LV1 n'écrit pas l'onglet affiché dans sa base : il est **lu à l'écran** (une ligne de pixels en haut de sa fenêtre, environ 3 fois par seconde : 7 boutons de même largeur, l'actif en bleu), sans coordonnées fixes.
 - **Mixer 2** suivi comme Mixer 1 (couches, Custom, mode SndChk / Setup…) : sa vue est la surface 3 de la base. Le float suit la vue de l'onglet affiché. `/api/state` : `lv1_layers` (`mixer1`, `mixer2`).
 

@@ -84,8 +84,11 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
   pendant les clics). Lu à l'écran (`lv1_tab()` : ligne à 14/1080 de la zone client ; 7 boutons de
   ~4,7 % de largeur, gris (231,231,231), actif bleu (56,201,255)) ; validé sur captures plein écran et
   en direct (LV1 fenêtrée 1728x970), ~15 ms. Lu seulement quand la LV1 est la fenêtre active.
-- **Disposition 2.2.0** : languette `TAB_W` à gauche (plus de barre en haut), dock Scènes/Routing +
-  panneau = Toplevels placés en bas à gauche de la LV1 (`_place_dock`), même z-order que le float.
+- **Disposition 2.2.0** : languette `TAB_W` à gauche (plus de barre en haut) ; Scènes/Routing dans le
+  menu ⋯ (dock en bas à gauche essayé puis retiré à la demande de Joseph), panneau = Toplevel sous le
+  float, même z-order. Colonne sans préampli = trou (`HOLE` + `-transparentcolor` : invisible ET
+  traversable au clic). Vue LV1 sans nom de canal, repère sur une ligne (sinon potards désalignés).
+  Potard = place restante mesurée (`winfo_reqheight`) : 48V toujours visible. Glisser 0,05 dB/px.
   Calage d'avant (`layout` absent) converti : x − TAB_W, y + OLD_TITLE_H.
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.

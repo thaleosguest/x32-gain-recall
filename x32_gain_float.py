@@ -90,8 +90,9 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.8.0"
-GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
+FLOAT_VERSION = "2.8.5"
+GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
+                          # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
 # Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
 # PAS a cote de __file__, qui dans l'exe PyInstaller pointe vers son dossier temporaire _MEI..., efface a
@@ -112,6 +113,10 @@ MIXER_TABS = ("Mixer 1", "Mixer 2")
 TAB_W = 22          # largeur de la languette à gauche des voies (2.2.0 : remplace la barre du haut)
 OLD_TITLE_H = 34    # hauteur de l'ancienne barre du haut (pour convertir un calage d'avant la 2.2.0)
 LAYOUT_VERSION = 2
+# Couleur rendue TRANSPARENTE et traversable à la souris par Windows (-transparentcolor) : une colonne
+# sans préampli X32 (canal sans source, groupe, matrice...) disparaît complètement, on voit et on clique
+# la LV1 en dessous (2.2.0, demande de Joseph). Couleur jamais utilisée ailleurs.
+HOLE = "#010203"
 LV1_BANKS = [("LV1 Ch 1-16", 1), ("LV1 Ch 17-32", 17), ("LV1 Ch 33-48", 33), ("LV1 Ch 49-64", 49),
              ("LV1 Ch 65-80", 65)]
 
@@ -676,8 +681,12 @@ class Unit(tk.Frame):
         self.knob = tk.Canvas(self, width=34, height=34, bg=PANEL, highlightthickness=0,
                                cursor="sb_v_double_arrow")
         self.knob.pack(pady=2)
-        self.knob.bind("<ButtonPress-1>", self._drag_start)
-        self.knob.bind("<B1-Motion>", self._drag_move)
+        # zone de prise au doigt (2.2.0) : le potard, mais aussi sa diode et le fond de la colonne autour,
+        # les potards étant devenus petits quand le float est bas
+        for w in (self.knob, self.led, self):
+            w.bind("<ButtonPress-1>", self._drag_start)
+            w.bind("<B1-Motion>", self._drag_move)
+            w.configure(cursor="sb_v_double_arrow")
 
         self._val_font = tkfont.Font(family="Consolas", size=7 if compact else 10, weight="bold")
         self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=self._val_font, cursor="xterm")
@@ -697,10 +706,16 @@ class Unit(tk.Frame):
         """avail_h : hauteur disponible pour le préampli (2.1.0 : le float se règle aussi en hauteur) ; le
         potard grandit jusqu'à ce que la largeur OU la hauteur l'arrête."""
         self.width = width
+        # hauteur prise par tout sauf le potard, mesurée sur les vrais widgets (diode, valeur, 48V et leurs
+        # marges) : le potard prend le reste, pour que le 48V reste visible même quand le float est bas
+        # (demande de Joseph, 2.2.0 : avant, une estimation fixe coupait le 48V des voies mono)
+        fixed = (self.led.winfo_reqheight() + 7 + 4 + self.val.winfo_reqheight() + 6
+                 + self.ph.winfo_reqheight() + 4 + 2)
+        room = (avail_h or 999) - fixed
         if self.compact:
-            ksz = max(18, min(width - 6, (avail_h or 999) - 62))
+            ksz = max(14, min(width - 6, room))
         else:
-            ksz = max(34, min(width - 12, (avail_h or 999) - 72))
+            ksz = max(16, min(width - 12, room))
         self.knob.config(width=ksz, height=ksz)
         self.led.config(width=max(8, width - 10))
         self._draw_knob()
@@ -821,6 +836,14 @@ class Strip(tk.Frame):
         self.width = width
         self.height = height or width + STRIP_EXTRA_H
         self.pack_propagate(False)
+        self.units = []
+        self._tag_one = None
+        self._name_full = None
+        self.empty = not self.idxs
+        if self.empty:
+            # aucun préampli X32 dans cette colonne : trou transparent (voir HOLE), rien d'autre
+            self.config(bg=HOLE, highlightthickness=0)
+            return
 
         # Pastille de couleur : couleur du canal LV1 (lue dans la base de la LV1, ou Companion), grise
         # (PANEL) tant qu'aucune couleur n'est connue - jamais une couleur inventee.
@@ -831,36 +854,40 @@ class Strip(tk.Frame):
         # « L 15 = EXP 15 » (sur deux lignes si la voie est trop etroite), puis le nom du canal LV1 en plus
         # gros - mise en page demandee par Joseph (2.6.0). Stereo (vue LV1) : « L 8/9 = EXP 8/9 ».
         self._tag_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
-        self._tag_one = None
         self.chlabel = tk.Label(self, text="", bg=PANEL, fg=MUT, font=self._tag_font, justify="center")
         self.chlabel.pack(pady=(3, 0))
         self._name_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
         self.namelbl = tk.Label(self, text="", bg=PANEL, fg=TXT, font=self._name_font)
-        self.namelbl.pack(fill="x", padx=1)
-        self._name_full = None
+        # vue LV1 (le float suit les couches) : pas de nom, la LV1 l'affiche déjà juste en dessous ; la
+        # place va au potard (2.2.0, demande de Joseph). Vue X32 : nom du canal LV1 comme avant.
+        self.show_name = ch is None
+        if self.show_name:
+            self.namelbl.pack(fill="x", padx=1)
 
         body = tk.Frame(self, bg=PANEL)
         body.pack(fill="both", expand=True)
-        self.units = []
         uw = self._unit_width()
         for i in self.idxs:
             u = Unit(body, owner, i, uw, compact=len(self.idxs) > 1)
             u.resize(uw, self._avail_h())
             u.pack(side="left", expand=True)      # centré verticalement si la colonne est plus haute
             self.units.append(u)
-        if not self.idxs:
-            tk.Label(body, text="—", bg=PANEL, fg=LINE2, font=("Segoe UI", 9)).pack(expand=True)
 
     def _unit_width(self):
         return (self.width - 2) // max(1, len(self.idxs))
 
     def _avail_h(self):
-        return self.height - 42          # moins pastille + repère + nom
+        """Hauteur laissée aux préamplis : colonne moins pastille, repère, nom (mesurés) et bordures."""
+        head = (self.swatch.winfo_reqheight() + self.chlabel.winfo_reqheight() + 3
+                + (self.namelbl.winfo_reqheight() if self.show_name else 0))
+        return self.height - head - 2
 
     def resize(self, width, height=None):
         self.width = width
         self.height = height or width + STRIP_EXTRA_H
         self.config(width=width, height=self.height)
+        if self.empty:
+            return
         for u in self.units:
             u.resize(self._unit_width(), self._avail_h())
         if self._tag_one is not None:
@@ -870,20 +897,31 @@ class Strip(tk.Frame):
         self.set_name(name)
 
     def set_tag(self, one):
-        """one : repère sur une ligne (« L 15 = EXP 15 ») ; passe sur deux lignes, coupé au « = », si la
-        colonne est trop étroite."""
-        if one == self._tag_one:
+        """one : repère « L 15 = EXP 15 », raccourci (« L15=EXP15 », « L15 · 15 », « EXP 15 », « 15 ») si
+        la colonne est trop étroite."""
+        if self.empty or one == self._tag_one:
             return
         self._tag_one = one
+        # toujours sur UNE ligne (2.2.0) : sur deux lignes, les potards de cette colonne descendaient et
+        # n'étaient plus alignés avec les autres ; on raccourcit plutôt le repère si la colonne est étroite
         text = one
-        if " = " in one and self._tag_font.measure(one) > self.width - 4:
-            text = one.replace(" = ", "\n", 1)
-        self.chlabel.config(text=text)
+        if " = " in one:
+            src, exp = one.split(" = ", 1)
+            nums = exp.replace("EXP ", "")
+            for cand in (one, "%s=%s" % (src.replace(" ", ""), exp.replace(" ", "")),
+                         "%s · %s" % (src.replace(" ", ""), nums), exp, nums):
+                text = cand
+                if self._tag_font.measure(cand) <= self.width - 4:
+                    break
+        if self.chlabel.cget("text") != text:
+            self.chlabel.config(text=text)
+            for u in self.units:
+                u.resize(self._unit_width(), self._avail_h())
 
     def set_name(self, name):
         """name : nom du canal LV1 (« FireRoom », « In 15 »...), ou "" si aucun. Raccourci avec « … »."""
         name = name or ""
-        if name == self._name_full:
+        if self.empty or name == self._name_full:
             return
         self._name_full = name
         avail = max(10, self.width - 4)
@@ -896,6 +934,8 @@ class Strip(tk.Frame):
 
     def set_color(self, hex_color):
         """hex_color : couleur "#RRGGBB" du canal LV1, ou None si inconnue - jamais une couleur inventee."""
+        if self.empty:
+            return
         bg = hex_color or tc(PANEL)
         if self.swatch.cget("bg") != bg:
             self.swatch.config(bg=bg)
@@ -996,6 +1036,10 @@ class FloatApp:
         except tk.TclError:
             pass
         self.root.configure(bg=BG)
+        try:
+            self.root.attributes("-transparentcolor", HOLE)
+        except tk.TclError:
+            pass
         x = cfg.get("x", 200); y = cfg.get("y", 200)
         x, y = self._apply_screen_profile(x, y)
         self.root.geometry("+%d+%d" % (x, y))
@@ -1080,6 +1124,8 @@ class FloatApp:
         m.add_command(label="Plus large  (+)", command=lambda: self._resize_strips(2))
         m.add_command(label="Plus étroit  (−)", command=lambda: self._resize_strips(-2))
         m.add_separator()
+        m.add_command(label="Scènes…", command=lambda: self._toggle_panel("scenes"))
+        m.add_command(label="Routing…", command=lambda: self._toggle_panel("routing"))
         m.add_checkbutton(label="Console (IP, connexion)", variable=self.console_var,
                           command=lambda: self._toggle_console(self.console_var.get()))
         m.add_checkbutton(label="Verrouiller l'édition", variable=self.lock_var, command=self._toggle_lock)
@@ -1097,49 +1143,30 @@ class FloatApp:
         m.tk_popup(b.winfo_rootx() + b.winfo_width(), b.winfo_rooty())
 
     def _build_dock(self):
-        """Scènes / Routing (2.2.0, demande de Joseph) : petite fenêtre flottante en bas à gauche de la
-        LV1, affichée avec les voies (SndChk / Setup) ; les panneaux s'ouvrent juste au-dessus."""
-        def win():
-            w = tk.Toplevel(self.root, bg=BG)
-            w.overrideredirect(True)
-            try:
-                w.attributes("-alpha", 0.97)
-            except tk.TclError:
-                pass
-            w.withdraw()
-            return w
-        self.dock = win()
-        self.btn_scenes = tk.Button(self.dock, text="Scènes", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
-                                     activebackground="#2a2c2e", relief="flat", padx=12, pady=6,
-                                     highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
-                                     command=lambda: self._toggle_panel("scenes"))
-        self.btn_scenes.pack(side="left", padx=(3, 2), pady=3)
-        self.btn_routing = tk.Button(self.dock, text="Routing", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
-                                      activebackground="#2a2c2e", relief="flat", padx=12, pady=6,
-                                      highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
-                                      command=lambda: self._toggle_panel("routing"))
-        self.btn_routing.pack(side="left", padx=(2, 3), pady=3)
-        self.panel_win = win()
+        """Panneau Scènes / Routing (ouvert depuis le menu ⋯) : fenêtre à part, sous le float (2.2.0)."""
+        self.panel_win = tk.Toplevel(self.root, bg=BG)
+        self.panel_win.overrideredirect(True)
+        try:
+            self.panel_win.attributes("-alpha", 0.97)
+        except tk.TclError:
+            pass
+        self.panel_win.withdraw()
         self.panel = tk.Frame(self.panel_win, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
         self.panel.pack(fill="both", expand=True)
 
     def _place_dock(self):
-        """Dock en bas à gauche de la LV1 (à défaut : sous le float) ; panneau ouvert juste au-dessus."""
-        rect = client_rect(self._lv1_hwnd) if self._lv1_hwnd else None
-        self.dock.update_idletasks()
-        dw, dh = self.dock.winfo_reqwidth(), self.dock.winfo_reqheight()
-        if rect:
-            x, y = rect[0] + 12, rect[1] + rect[3] - dh - 12
-        else:
-            x, y = self.root.winfo_x(), self.root.winfo_y() + self.root.winfo_height() + 4
-        if (self.dock.winfo_x(), self.dock.winfo_y()) != (x, y):
-            self.dock.geometry("+%d+%d" % (x, y))
-        if self.panel_mode:
-            self.panel_win.update_idletasks()
-            ph = self.panel_win.winfo_reqheight()
-            py = max(0, y - ph - 6)
-            if (self.panel_win.winfo_x(), self.panel_win.winfo_y()) != (x, py):
-                self.panel_win.geometry("+%d+%d" % (x, py))
+        """Panneau ouvert : juste sous le float, ou au-dessus s'il n'y a pas la place en bas."""
+        if not self.panel_mode:
+            return
+        r = self.root
+        self.panel_win.update_idletasks()
+        ph = self.panel_win.winfo_reqheight()
+        x = r.winfo_x() + TAB_W
+        y = r.winfo_y() + r.winfo_height() + 4
+        if y + ph > r.winfo_screenheight():
+            y = max(0, r.winfo_y() - ph - 4)
+        if (self.panel_win.winfo_x(), self.panel_win.winfo_y()) != (x, y):
+            self.panel_win.geometry("+%d+%d" % (x, y))
 
     def _build_connectbar(self):
         """Barre de connexion, EN HAUT depuis la 1.7.0 (a la demande explicite : avant, elle etait sous
@@ -1382,7 +1409,7 @@ class FloatApp:
             self._sync_dock()
         if shown:
             self._sync_dock()
-            wins = [w for w in (self.root, self.dock, self.panel_win) if w.state() != "withdrawn"]
+            wins = [w for w in (self.root, self.panel_win) if w.state() != "withdrawn"]
             hwnds = [h for h in (float_hwnd(w) for w in wins) if h]
             if front:
                 if self._z_state != "top":
@@ -1443,21 +1470,15 @@ class FloatApp:
         self.root.update_idletasks()
 
     def _sync_dock(self):
-        """Dock Scènes/Routing (et son panneau) visibles avec les voies, cachés sinon."""
+        """Panneau Scènes/Routing ouvert : visible avec les voies, caché sinon."""
         show = self._shown and not self.collapsed
-        if show:
+        if show and self.panel_mode:
             self._place_dock()
-            if self.dock.state() == "withdrawn":
-                self.dock.deiconify()
-                self._z_state = None
-            if self.panel_mode and self.panel_win.state() == "withdrawn":
+            if self.panel_win.state() == "withdrawn":
                 self.panel_win.deiconify()
                 self._z_state = None
-        else:
-            if self.dock.state() != "withdrawn":
-                self.dock.withdraw()
-            if self.panel_win.state() != "withdrawn":
-                self.panel_win.withdraw()
+        elif self.panel_win.state() != "withdrawn":
+            self.panel_win.withdraw()
 
     def _toggle_console(self, show=None, auto=False):
         """Barre de connexion (IP, Connecter, Scanner, Démo) SOUS les voies : ne décale jamais les voies."""
@@ -1476,16 +1497,10 @@ class FloatApp:
         if self.panel_mode == mode or mode is None:
             self.panel_win.withdraw()
             self.panel_mode = None
-            self.btn_scenes.config(bg=tc("#1c1e20"), fg=TXT)
-            self.btn_routing.config(bg=tc("#1c1e20"), fg=TXT)
             return
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
-        self.btn_scenes.config(bg=(TEAL if mode == "scenes" else tc("#1c1e20")),
-                                fg=("#032" if mode == "scenes" else TXT))
-        self.btn_routing.config(bg=(TEAL if mode == "routing" else tc("#1c1e20")),
-                                 fg=("#032" if mode == "routing" else TXT))
         if mode == "scenes":
             self._fill_scenes_panel()
         else:
