@@ -112,10 +112,15 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
 - `src_cluster_type = 10` → devices du Rack A/B SoundGrid ; `src_cluster_type_index`
   = `assign` du device (table `device`, nom via `device_name` par mac + gender) ;
   `src_channel_index` = voie 0-based
-- `status` : **pas** l'existence de la route, mais l'**entrée sélectionnée** : 1 sur les routes de l'entrée
-  A ou B choisie, 0 (ou 4) sur l'autre ; réécrit aussitôt à chaque bascule A/B et à FlipAB (enregistreur,
-  2026-10-12). Depuis la 2.2.0, `pick_sources(follow_ab=True)` ne garde que l'entrée sélectionnée
-  (demande de Joseph : suivre le flip A/B ; canal sur B/TracksLive = pas de préampli X32).
+- `status` : ni l'existence de la route, ni l'entrée sélectionnée. **Piège (2026-10-12)** : lu une 1re
+  fois comme « 1 = entrée sélectionnée » -> float inversé ; en fait 1 sur l'entrée NON sélectionnée
+  (0 ou 4 sinon). Ne pas s'en servir.
+- **Entrée A/B sélectionnée** = `snapshot_chainer_params` param_id **0** (snapshot -1, chainer = object
+  du canal) : 1.0 = B, pas de ligne = A ; réécrit aussitôt (bascule A/B, FlipAB). Vérifié dans les
+  deux sens avec captures. `load_input_select()` ; depuis la 2.2.0 `pick_sources(follow_ab=True)` ne
+  garde que l'entrée sélectionnée (demande de Joseph ; canal sur B/TracksLive = pas de préampli X32).
+- Leçon : un essai « avant/après » ne suffit pas à trancher un sens (on ne connaît pas l'état de
+  départ) : toujours demander l'état visible à l'écran à un instant donné et le comparer à la base.
 - **Largeur mono/stéréo** : `chainer.num_inputs` (1 ou 2) de l'objet canal
   (`chainer.obj_id = object.id`, `object.obj_type = 0`, `object.obj_index` = canal 0-based).
   Trouvé en comparant la base avant/après un passage mono → stéréo. **Indispensable** :

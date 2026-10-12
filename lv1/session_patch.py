@@ -142,6 +142,25 @@ def load_channel_widths(con):
         return {}
 
 
+PARAM_INPUT_SELECT = 0     # snapshot_chainer_params.param_id : entrée A/B sélectionnée du canal
+
+
+def load_input_select(con):
+    """{canal 1-based: "A" | "B"} : entrée sélectionnée de chaque canal (bouton A/B de la LV1, et FlipAB).
+    Établi le 2026-10-12 avec l'enregistreur + captures d'écran : param_id 0 de snapshot_chainer_params
+    (état courant, snapshot_id -1) vaut 1.0 quand le canal est sur B ; pas de ligne (ou 0) = A.
+    ATTENTION : routes.status n'est PAS « entrée sélectionnée » (lu à l'envers dans un 1er essai : il vaut
+    1 sur l'entrée NON sélectionnée, 0 ou 4 sinon) - ne pas s'en servir pour ça."""
+    try:
+        rows = con.execute("""
+            SELECT o.obj_index + 1, p.param_value FROM snapshot_chainer_params p JOIN object o ON o.id = p.chainer_id
+            WHERE o.obj_type = 0 AND p.snapshot_id = -1 AND p.param_id = ?
+        """, (PARAM_INPUT_SELECT,)).fetchall()
+    except sqlite3.Error:
+        return {}
+    return {ch: ("B" if (v or 0) >= 0.5 else "A") for ch, v in rows}
+
+
 def extract_routes(db_path):
     """Voir read_session() ; ne renvoie que les routes."""
     return read_session(db_path)[0]
@@ -161,6 +180,7 @@ def read_session(db_path):
         device_labels = load_device_labels(con)
         widths = load_channel_widths(con)
         info = read_channel_info(con)
+        selected = load_input_select(con)
         layer = read_layers(con)
         cur.execute("""
             SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
@@ -190,7 +210,8 @@ def read_session(db_path):
             "device": label, "model": model,
             "sources": [], "active": False})
         g["sources"].append(src_idx + 1)
-        g["active"] = g["active"] or status == 1
+        # entrée sélectionnée (A par défaut), voir load_input_select() - pas routes.status
+        g["active"] = g["input"] == selected.get(ch_idx + 1, "A")
 
     channels = {}
     for (ch, section, assign), g in sorted(groups.items()):
@@ -216,8 +237,8 @@ def extract_patch(db_path, devices=DEFAULT_DEVICES):
 def pick_sources(routes, devices=DEFAULT_DEVICES, follow_ab=True):
     """Comme extract_patch(), à partir de routes déjà lues (read_session).
     follow_ab (2.2.0, demande de Joseph) : seule l'entrée SÉLECTIONNÉE (A ou B) de chaque canal compte.
-    Établi le 2026-10-12 avec l'enregistreur : chaque bascule A/B d'un canal (et FlipAB, pour tous les
-    canaux) réécrit routes.status : 1 sur les routes de l'entrée sélectionnée, 0 (ou 4) sur l'autre.
+    Entrée sélectionnée : paramètre 0 du canal (load_input_select), réécrit aussitôt par la LV1 à chaque
+    bascule A/B et à FlipAB (enregistreur, 2026-10-12).
     Canal sur B (TracksLive, virtual soundcheck) : aucun préampli X32 ne l'alimente -> absent."""
     out = {}
     for ch, groups in routes.items():
