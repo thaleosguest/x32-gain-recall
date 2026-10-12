@@ -69,6 +69,14 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   « Mixer 1 », 3 = OVV2) ; propriété 12 `eProp_LayersMode` (0 = Factory), 14 `eProp_LayersPage`
   (Factory : 0-3 = Ch 1-16..49-64, 4 = Grp/Fx). Libellés dans `surface_type` / `surface_property_type`.
   Écrit aussitôt, sans sauvegarde. `lv1/layers.py` ; le float suit en vue LV1 (pas le navigateur).
+  Mode = `ovv_track_mapping_type` : 0 Factory (≤ 64 canaux), 1 CustomL (pages 0-7 = `ovv_layer`
+  surface_type 2 par id, tranches dans `ovv_layer_track`), 4 InptChn (config 80 canaux : pages 0-4 =
+  Ch 1-16..65-80), 5 BussChn. `config_info` (track_type 0) = nombre de canaux d'entrée configuré.
+- Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
+  `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
+- **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →
+  accès refusé (5) / paramètre invalide (87). Le float se place sous la fenêtre visible juste au-dessus
+  de la LV1 (ou HWND_TOP), toutes les 250 ms (`_follow_lv1`, `place_above`).
 - Méthode qui marche pour trouver un réglage : photo de toutes les tables de la base (sur copie),
   Joseph change UN réglage dans la LV1, nouvelle photo, diff.
 
