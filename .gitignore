@@ -5,6 +5,7 @@ x32_routings.json
 x32_routings.json.tmp
 x32_lan_config.json
 x32_float_config.json
+lv1_patch_map.json
 *.corrompu-*
 
 # Build

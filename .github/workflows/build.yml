@@ -37,6 +37,9 @@ jobs:
         run: |
           ./dist/X32_Gain_Recall.exe --version
           ./dist/X32_Gain_Recall.exe --float --version
+          # --help construit tout le parseur d'options : attrape une aide mal formee (ex. un % non echappe)
+          ./dist/X32_Gain_Recall.exe --help
+          ./dist/X32_Gain_Recall.exe --float --help
 
       - name: Sommes de controle SHA-256
         shell: pwsh

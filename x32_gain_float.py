@@ -35,15 +35,12 @@ REPLIER / DEPLIER : bouton ▾/▸ dans la barre de titre, replie toute la fenê
 titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'identique (banque, taille,
 position mémorisées).
 
-COULEURS DE CANAUX (depuis la 2.5.0) : une fine pastille en haut de chaque voie affiche la couleur du
-canal LV1 correspondant (le "In N" dont le numéro EXP est déjà lu en direct sur la console, voir
-set_exp()), lue EN DIRECT via l'API HTTP de Bitfocus Companion (module communautaire non officiel
-companion-module-waves-lv1, protocole natif LV1 rétro-ingénié — pas une spec Waves officielle). Suppose
-Companion déjà lancé en continu à côté (`--companion http://IP:PORT`, défaut 127.0.0.1:8000 — le port
-HTTP par défaut de Companion v5.0) ; interrogé sur un thread séparé, pas la boucle de gains à 200ms, pour
-ne pas bloquer l'interface sur 16 requêtes HTTP à chaque cycle. `--no-colors` désactive complètement
-cette fonction. Grise/neutre si Companion est injoignable, si le canal n'est pas patché, ou si la lecture
-a échoué — jamais une couleur inventée.
+COULEURS ET NOMS DE CANAUX : une fine pastille en haut de chaque voie prend la couleur du canal LV1 qui
+reçoit ce préampli, et son nom s'affiche sous la ligne « L 15 = EXP 15 ». Numéro EXP lu en direct sur la
+console (set_exp()), canal LV1 d'après le patch LV1 (lv1/patchmap.py), couleur et nom lus dans la base de
+la LV1 (lv1/channelinfo.py) — Companion seulement en option (--companion). Tout est fourni par l'appli
+principale via /api/state (lv1_channels) ; en --direct, DirectBackend installe les mêmes sources. Grise si
+la voie n'arrive sur aucun canal LV1 ou si la couleur est inconnue — jamais une couleur inventée.
 
 A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette session) :
   - Pas d'alignement pixel-perfect automatique avec la fenetre LV1 reelle (impossible a deviner sans
@@ -74,24 +71,31 @@ import http.cookiejar
 import json
 import math
 import os
-import re
 import sys
 import threading
 import time
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox
 import urllib.error
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import x32_gain_recall  # noqa: E402  (pour installer la table LV1 en --direct, voir DirectBackend)
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
     PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
 )
+from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
+from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.5.0"
+FLOAT_VERSION = "2.6.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
-CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
+STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
+# Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
+# PAS a cote de __file__, qui dans l'exe PyInstaller pointe vers son dossier temporaire _MEI..., efface a
+# chaque fermeture (position/taille/banque du float etaient oubliees a chaque lancement de l'exe).
+CFG_PATH = os.path.join(x32_gain_recall.app_data_dir(), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
 BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A 17-32", 48),
@@ -99,21 +103,72 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
 
 BG, PANEL, LINE, LINE2 = "#08090a", "#111213", "#2c2f33", "#3a3e43"
 TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939a", "#e9edf0", "#3ddc84", "#f2b63b"
-BLUE = "#31b6f7"   # meme bleu "action primaire" que le navigateur (.pill.on), pour une identite visuelle coherente
+BLUE = "#31b6f7"
+
+# Fonds au choix (depuis la 2.6.0, demande de Joseph : le noir d'origine se confondait avec le fond de la
+# LV1). Le code construit toute la fenetre avec les gris fonces du theme d'origine ("Noir") ; un theme
+# est une correspondance de ces gris vers ses propres teintes, appliquee a tous les widgets par
+# apply_theme() (et via tc() pour les couleurs posees en cours de route : 48V, boutons actifs...).
+_CANON = ("#08090a", "#111213", "#0d0e0f", "#1c1e20", "#2a2c2e", "#15171a", "#25282b", "#33383c", "#2c2f33", "#3a3e43")
+_THEME_TONES = {
+    "Anthracite": ("#2b2e33", "#383c42", "#24272b", "#4a4e56", "#5a5f68", "#30343a", "#454a51", "#555a62", "#4d5259", "#5d636b"),
+    "Noir":       _CANON,
+    "Or":         ("#4d3d0e", "#614d13", "#433509", "#7a601a", "#8c6f1f", "#564410", "#705816", "#82671c", "#8f7222", "#a17f27"),
+    "Bleu nuit":  ("#0b1424", "#132036", "#09111f", "#1f2e4a", "#2a3c5c", "#101a2c", "#223250", "#2e4064", "#2a3b5a", "#37496e"),
+}
+THEMES = tuple(_THEME_TONES)               # ordre du menu
+DEFAULT_THEME = "Anthracite"
+_REV = {c.lower(): _CANON[i] for tones in _THEME_TONES.values() for i, c in enumerate(tones)}
+_theme_map = {}                            # canonique -> couleur du theme courant
 
 
-def short_label(idx):
-    """Repere court de la voie, meme convention que le navigateur (fonction label() en JS) : '5', 'A1', 'B3'."""
+def set_theme_map(name):
+    global _theme_map
+    tones = _THEME_TONES.get(name, _THEME_TONES[DEFAULT_THEME])
+    _theme_map = {c: tones[i] for i, c in enumerate(_CANON)}
+
+
+def tc(color):
+    """Couleur du theme courant pour une teinte du theme d'origine (les autres couleurs sont inchangees)."""
+    return _theme_map.get(color.lower(), color) if isinstance(color, str) else color
+
+
+def apply_theme(widget):
+    """Repeint recursivement widget et ses enfants : toute teinte connue d'UN des themes est remplacee par
+    son equivalent dans le theme courant (on peut donc passer de n'importe quel theme a n'importe quel autre)."""
+    for opt in ("bg", "activebackground", "highlightbackground", "highlightcolor", "selectcolor", "fg"):
+        try:
+            v = str(widget.cget(opt))
+        except (tk.TclError, ValueError):
+            continue
+        canon = _REV.get(v.lower())
+        if canon:
+            new = _theme_map.get(canon, canon)
+            if new.lower() != v.lower():
+                try:
+                    widget.configure({opt: new})
+                except tk.TclError:
+                    pass
+    for child in widget.winfo_children():
+        apply_theme(child)
+
+
+set_theme_map(DEFAULT_THEME)   # meme bleu "action primaire" que le navigateur (.pill.on), pour une identite visuelle coherente
+
+
+def strip_tag(idx):
+    """Repere de voie avec la source : 'L 15' (Local 15), 'A 1' / 'B 3' (AES50-A/B), comme demande
+    pour la ligne « L 15 = EXP 15 » du float."""
     if idx < 32:
-        return str(idx + 1)
+        return "L %d" % (idx + 1)
     if idx < 80:
-        return "A%d" % (idx - 31)
-    return "B%d" % (idx - 79)
+        return "A %d" % (idx - 31)
+    return "B %d" % (idx - 79)
 
 
 def load_cfg():
     try:
-        with open(CFG_PATH, "r", encoding="utf-8") as f:
+        with open(CFG_PATH, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError):
         return {}
@@ -268,7 +323,7 @@ class ServerBackend:
 #  Backend 2 : connexion OSC directe (--direct), sans l'appli principale
 # --------------------------------------------------------------------------
 class DirectBackend:
-    def __init__(self):
+    def __init__(self, companion_url=None, color_poll=1.0):
         self.client = X32Client()
         self.sim = None
         self.needs_login = False
@@ -277,8 +332,21 @@ class DirectBackend:
         # Memes fichiers JSON que l'appli principale (scenes de gains, profils de routing) : on les relit a
         # chaque appel plutot qu'une seule fois au demarrage, au cas ou l'appli principale (ou le navigateur)
         # les modifie entre-temps.
+        x32_gain_recall.migrate_legacy_files()   # float lance seul (--direct) : meme recopie qu'au demarrage de l'appli
         self._data_path = pick_data_path()
         self._routing_path = os.path.join(os.path.dirname(os.path.abspath(self._data_path)), "x32_routings.json")
+        # Table EXP -> canal LV1 : en mode serveur c'est l'appli principale qui la tient (champ lv1_map de
+        # /api/state) ; ici, sans elle, on lit nous-memes les memes sources par defaut (session LV1 en
+        # direct + table manuelle du dossier des scenes). X32Client.snapshot() la lit dans x32_gain_recall.LV1.
+        if x32_gain_recall.LV1 is None:
+            x32_gain_recall.LV1 = PatchMap(
+                manual_path=os.path.join(x32_gain_recall.app_data_dir(), MANUAL_FILENAME),
+                session_path=LIVE_DB).start()
+        # Couleur + nom des canaux LV1 (Companion) : meme interrogateur que l'appli principale, lu par
+        # X32Client.snapshot() dans x32_gain_recall.LV1_COMPANION (champ lv1_channels).
+        if companion_url and x32_gain_recall.LV1_COMPANION is None:
+            x32_gain_recall.LV1_COMPANION = CompanionPoller(
+                companion_url, lambda: x32_gain_recall.lv1_channels_in_use(self.client), color_poll).start()
 
     def login(self, code):
         return True
@@ -384,7 +452,7 @@ class Strip(tk.Frame):
     """Une voie : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V."""
 
     def __init__(self, master, owner, idx, width):
-        super().__init__(master, bg=PANEL, width=width, height=width + 98,
+        super().__init__(master, bg=PANEL, width=width, height=width + STRIP_EXTRA_H,
                           highlightthickness=1, highlightbackground="#000000")
         self.owner = owner
         self.idx = idx
@@ -397,7 +465,7 @@ class Strip(tk.Frame):
         # l'API HTTP de Bitfocus Companion (module communautaire companion-module-waves-lv1), a partir
         # du meme numero EXP deja lu en direct sur la console (pas de 2e correspondance a deviner).
         # Grise/neutre (PANEL) tant qu'aucune couleur n'est connue - jamais une couleur inventee : voir
-        # FloatApp._color_poll_loop() et set_color() plus bas.
+        # lv1/companion.py et set_color() plus bas.
         self.swatch = tk.Frame(self, bg=PANEL, height=5, highlightthickness=0)
         self.swatch.pack(fill="x", side="top")
         self.swatch.pack_propagate(False)
@@ -407,10 +475,20 @@ class Strip(tk.Frame):
         # potard est quel preampli. Le numero EXP (2e ligne) est rempli par set_exp(), a partir
         # d'une lecture EN DIRECT du patch de la console (jamais une supposition) - vide tant que
         # non connecte ou non lu.
-        self._tag = short_label(idx)
-        self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=TXT,
-                                 font=("Segoe UI", 8, "bold"), justify="center")
+        # Depuis la 2.6.0 : « L 15 = EXP 15 » sur une ligne (sur deux si la voie est trop etroite), puis
+        # le nom du canal LV1 en plus gros - mise en page demandee par Joseph.
+        self._tag = strip_tag(idx)
+        self._tag_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
+        self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=MUT,
+                                 font=self._tag_font, justify="center")
         self.chlabel.pack(pady=(3, 0))
+
+        # Nom du canal LV1 qui recoit ce preampli (depuis la 2.6.0) : variable Companion in<N>_name du
+        # canal donne par la table de patch LV1 (meme canal que la couleur). Voir set_name().
+        self._name_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
+        self.namelbl = tk.Label(self, text="", bg=PANEL, fg=TXT, font=self._name_font)
+        self.namelbl.pack(fill="x", padx=1)
+        self._name_full = ""
 
         self.led = tk.Canvas(self, width=width - 10, height=7, bg=PANEL, highlightthickness=0)
         self.led.pack(pady=(4, 3))
@@ -443,7 +521,7 @@ class Strip(tk.Frame):
         c.delete("all")
         w = int(c["width"]); h = int(c["height"])
         cx, cy, r = w / 2, h / 2, min(w, h) / 2 - 3
-        c.create_oval(cx - r, cy - r, cx + r, cy + r, outline=LINE2, width=2)
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, outline=tc(LINE2), width=2)
         if self.db is None:
             c.create_text(cx, cy, text="?", fill=MUT, font=("Segoe UI", 9))
             return
@@ -464,7 +542,7 @@ class Strip(tk.Frame):
         if on:
             self.ph.config(bg="#1668e6", fg="#ffffff")
         else:
-            self.ph.config(bg="#25282b", fg="#aeb6bd")
+            self.ph.config(bg=tc("#25282b"), fg="#aeb6bd")
 
     def set_led(self, lvl_db, clip_threshold):
         color = "#333333"
@@ -481,16 +559,34 @@ class Strip(tk.Frame):
         """exp_num : numero Carte/EXP (int) lu EN DIRECT sur la console pour cette voie, ou None/0 si
         non connu (non connecte, lecture pas encore faite, ou ce canal n'est pas patche vers la
         carte) - jamais une supposition, voir X32Client.refresh_exp_map()."""
-        text = self._tag + ("\nEXP %d" % exp_num if exp_num else "")
+        text = self._tag
+        if exp_num:
+            one = "%s = EXP %d" % (self._tag, exp_num)
+            text = one if self._tag_font.measure(one) <= self.width - 4 else "%s\nEXP %d" % (self._tag, exp_num)
         if self.chlabel.cget("text") != text:
             self.chlabel.config(text=text)
 
+    def set_name(self, name):
+        """name : nom du canal LV1 correspondant (« FireRoom », « In 15 »...), ou "" si cette voie
+        n'arrive sur aucun canal LV1. Raccourci avec « … » pour tenir dans la largeur de la voie."""
+        name = name or ""
+        if name == self._name_full:
+            return
+        self._name_full = name
+        avail = max(10, self.width - 4)
+        text = name
+        if self._name_font.measure(text) > avail:
+            while text and self._name_font.measure(text + "…") > avail:
+                text = text[:-1]
+            text += "…"
+        self.namelbl.config(text=text)
+
     def set_color(self, hex_color):
         """hex_color : couleur "#RRGGBB" du canal LV1 correspondant, lue EN DIRECT via Companion
-        (FloatApp._color_poll_loop), ou None si inconnue (Companion desactive/injoignable, canal non
+        (lv1/companion.py, via lv1_channels), ou None si inconnue (Companion desactive/injoignable, canal non
         patche, ou pas encore interroge) - jamais une couleur inventee, voir la pastille en haut de la
         voie dans __init__."""
-        bg = hex_color or PANEL
+        bg = hex_color or tc(PANEL)
         if self.swatch.cget("bg") != bg:
             self.swatch.config(bg=bg)
 
@@ -556,17 +652,27 @@ class FloatApp:
         self.collapsed = False
         self.panel_mode = None
         self.active_scene_id = None   # id de la derniere scene chargee/renommee/ecrasee - pour la surligner dans le panneau
+        self.theme = cfg.get("theme") if cfg.get("theme") in THEMES else DEFAULT_THEME
+        set_theme_map(self.theme)
 
         # Couleurs de canaux LV1 (depuis la 2.5.0), lues via l'API HTTP de Bitfocus Companion. exp_map
         # (numero EXP par preampli) est mis a jour par le thread principal a chaque _poll() ; le thread
         # de couleurs ci-dessous le relit en lecture seule - pas de verrou necessaire, reaffectation de
         # dict/reference atomique en CPython (GIL), jamais de mutation partagee en place.
+        # Depuis la 2.6.0, la couleur est cherchee pour le CANAL LV1 qui recoit cet EXP (lv1_map, table
+        # EXP -> canal tenue par lv1/patchmap.py), et non plus pour "In <numero EXP>" : la LV1 indexe ses
+        # couleurs par canal, et EXP N n'alimente pas forcement In N (ex. In 19 <- EXP 21 + 22).
         self.exp_map = {}
-        self.channel_colors = {}         # {numero EXP (int): "#RRGGBB"}
-        self.companion_url = None if args.no_colors else args.companion.rstrip("/")
+        self.lv1_map = {}                # {numero EXP: canal LV1} (cles str en mode serveur, int en --direct)
+        # Couleur et nom des canaux LV1 : lus dans la base de la LV1 par l'appli principale (lv1/channelinfo.py)
+        # et partages avec le navigateur via /api/state (lv1_channels) ; Companion seulement si --companion.
+        # En --direct, DirectBackend installe les memes sources. Plus d'interrogation propre au float.
+        companion_url = None if args.no_colors else args.companion
+        if args.direct and args.no_colors:
+            x32_gain_recall.LV1_NO_COLORS = True
 
         if args.direct:
-            self.backend = DirectBackend()
+            self.backend = DirectBackend(companion_url, args.color_poll)
         else:
             self.backend = ServerBackend(args.port, session_token=args.session_token)
 
@@ -608,9 +714,8 @@ class FloatApp:
         if args.direct:
             self.ip_var.set(args.ip or "127.0.0.1")
 
-        if self.companion_url:
-            threading.Thread(target=self._color_poll_loop, daemon=True).start()
-
+        apply_theme(self.root)
+        self.root.after(1000, self._theme_pass)
         self._poll()
 
     # -- construction de l'UI -------------------------------------------
@@ -669,6 +774,13 @@ class FloatApp:
         tk.Button(bar, text="✕", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10), activebackground=WARN,
                   relief="flat", padx=7, pady=5, highlightthickness=1, highlightbackground=LINE2,
                   cursor="hand2", command=self.quit).pack(side="right", padx=4, pady=2)
+        # Choix du fond (Anthracite par defaut, Noir = celui d'origine, Or, Bleu nuit), memorise
+        self.theme_var = tk.StringVar(value=self.theme)
+        self.btn_theme = tk.Button(bar, text="◐", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 10),
+                                    activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
+                                    highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                    command=self._theme_menu)
+        self.btn_theme.pack(side="right", padx=4, pady=2)
 
         # Poignee de glisser : prend tout l'espace restant entre les boutons de gauche et de droite.
         # Memes bindings que la barre elle-meme, mais garantie d'etre toujours presente et large, meme
@@ -735,6 +847,7 @@ class FloatApp:
             s = Strip(self.strips_frame, self, start + k, self.strip_w)
             s.pack(side="left")
             self.strips.append(s)
+        apply_theme(self.strips_frame)
         self.bank_var.set(BANKS[self.bank][0])
 
     def _build_resize_grip(self):
@@ -763,7 +876,7 @@ class FloatApp:
         self.strip_w = max(28, min(90, self.strip_w + delta))
         for s in self.strips:
             s.width = self.strip_w
-            s.config(width=self.strip_w, height=self.strip_w + 98)
+            s.config(width=self.strip_w, height=self.strip_w + STRIP_EXTRA_H)
             ksz = max(34, self.strip_w - 12)
             s.knob.config(width=ksz, height=ksz)
             s.led.config(width=self.strip_w - 10)
@@ -776,10 +889,40 @@ class FloatApp:
                 self._build_strips()
                 return
 
+    def _theme_menu(self):
+        m = tk.Menu(self.root, tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032",
+                    selectcolor=TXT)
+        m.add_command(label="Fond de la fenêtre", state="disabled")
+        for name in THEMES:
+            m.add_radiobutton(label=name + ("  (défaut)" if name == DEFAULT_THEME else ""), value=name,
+                              variable=self.theme_var, command=lambda n=name: self._set_theme(n))
+        apply_theme(m)
+        b = self.btn_theme
+        m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def _set_theme(self, name):
+        self.theme = name
+        self.theme_var.set(name)
+        set_theme_map(name)
+        apply_theme(self.root)
+        for s in self.strips:
+            s._draw_knob()
+        self._save_cfg()
+
+    def _theme_pass(self):
+        """Passe reguliere (1 s) : rattrape les widgets crees en cours de route avec les teintes d'origine
+        (lignes du panneau Scenes reconstruites apres une sauvegarde, etc.)."""
+        apply_theme(self.root)
+        self.root.after(1000, self._theme_pass)
+
+    def _save_cfg(self):
+        save_cfg({"bank": self.bank, "strip_w": self.strip_w, "theme": self.theme,
+                  "x": self.root.winfo_x(), "y": self.root.winfo_y()})
+
     def _toggle_lock(self):
         self.locked = not self.locked
         self.btn_lock.config(text="🔒" if self.locked else "🔓",
-                              bg=(WARN if self.locked else "#1c1e20"),
+                              bg=(WARN if self.locked else tc("#1c1e20")),
                               fg=("#fff" if self.locked else MUT))
 
     def _toggle_collapse(self):
@@ -806,21 +949,22 @@ class FloatApp:
         if self.panel_mode == mode or mode is None:
             self.panel.pack_forget()
             self.panel_mode = None
-            self.btn_scenes.config(bg="#1c1e20", fg=TXT)
-            self.btn_routing.config(bg="#1c1e20", fg=TXT)
+            self.btn_scenes.config(bg=tc("#1c1e20"), fg=TXT)
+            self.btn_routing.config(bg=tc("#1c1e20"), fg=TXT)
             return
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
-        self.btn_scenes.config(bg=(TEAL if mode == "scenes" else "#1c1e20"),
+        self.btn_scenes.config(bg=(TEAL if mode == "scenes" else tc("#1c1e20")),
                                 fg=("#032" if mode == "scenes" else TXT))
-        self.btn_routing.config(bg=(TEAL if mode == "routing" else "#1c1e20"),
+        self.btn_routing.config(bg=(TEAL if mode == "routing" else tc("#1c1e20")),
                                  fg=("#032" if mode == "routing" else TXT))
         if mode == "scenes":
             self._fill_scenes_panel()
         else:
             self._fill_routing_panel()
         self.panel.pack(side="top", fill="x", after=self.strips_frame)
+        apply_theme(self.panel)
         self.root.update_idletasks()
 
     def _panel_row(self, text, sub, on_click):
@@ -1088,7 +1232,10 @@ class FloatApp:
             self.status_lbl.config(text="", fg=MUT)
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
-        self.exp_map = em   # relu par _color_poll_loop() (thread separe) - voir __init__
+        lm = snap.get("lv1_map") or {}
+        lc = snap.get("lv1_channels") or {}
+        self.exp_map = em
+        self.lv1_map = lm
         for s in self.strips:
             s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
             s.set_phantom(snap["phantom"][s.idx] if snap.get("phantom") else None)
@@ -1096,7 +1243,10 @@ class FloatApp:
             # cle string (vient du JSON, mode serveur) ou int (dict Python direct, mode --direct)
             exp = em.get(str(s.idx), em.get(s.idx))
             s.set_exp(exp)
-            s.set_color(self.channel_colors.get(exp) if exp else None)
+            ch = self._lv1_channel(exp)
+            info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}
+            s.set_color(info.get("color"))
+            s.set_name(info.get("label") or ("In %d" % ch if ch else ""))
         self.root.after(200, self._poll)
 
     def _do_login_then_poll(self):
@@ -1104,43 +1254,17 @@ class FloatApp:
         self._login_prompt()
         self._poll()
 
-    # -- couleurs de canaux LV1 (Companion), thread separe --------------------
-    def _color_poll_loop(self):
-        """Interroge l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la
-        couleur de chaque canal LV1 actuellement patche vers un preampli (numero EXP connu). Tourne
-        dans un thread separe, PAS dans la boucle _poll() a 200ms : 16 requetes HTTP synchrones
-        supplementaires a chaque cycle bloqueraient l'UI (glisser les potards). Les resultats sont
-        publies dans self.channel_colors par reaffectation complete du dict (atomique en CPython),
-        relue par le thread principal dans _poll() - pas de verrou necessaire pour ce pattern."""
-        interval = max(0.3, self.args.color_poll)
-        while True:
-            exps = sorted(set(v for v in self.exp_map.values() if v))
-            colors = dict(self.channel_colors)   # on garde les dernieres valeurs connues par defaut
-            for n in exps:
-                c = self._fetch_channel_color(n)
-                if c is not None:
-                    colors[n] = c
-            # retire les canaux qui ne sont plus patches (sinon une pastille resterait collee a un
-            # ancien numero EXP apres un changement de routing)
-            colors = {n: c for n, c in colors.items() if n in exps}
-            self.channel_colors = colors
-            time.sleep(interval)
-
-    def _fetch_channel_color(self, exp_num):
-        """GET http://.../api/variable/LV1/in<N>_color/value - renvoie "#RRGGBB" ou None (jamais une
-        couleur inventee : Companion injoignable, variable absente, ou reponse mal formee comptent
-        tous comme "inconnue", pas comme une couleur par defaut)."""
-        try:
-            url = "%s/api/variable/LV1/in%d_color/value" % (self.companion_url, exp_num)
-            with urllib.request.urlopen(url, timeout=0.6) as r:
-                txt = r.read().decode("utf-8", "replace").strip()
-        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+    # -- canal LV1 d'une voie -------------------------------------------------
+    def _lv1_channel(self, exp):
+        """Canal LV1 alimente par ce numero EXP d'apres la table lv1_map, ou None si la table ne le dit pas
+        (pastille neutre plutot qu'une couleur d'un autre canal)."""
+        if not exp:
             return None
-        return txt if re.fullmatch(r"#[0-9A-Fa-f]{6}", txt) else None
+        lm = self.lv1_map
+        return lm.get(str(exp), lm.get(exp))
 
     def quit(self):
-        save_cfg({"bank": self.bank, "strip_w": self.strip_w,
-                   "x": self.root.winfo_x(), "y": self.root.winfo_y()})
+        self._save_cfg()
         self.backend.close()
         self.root.destroy()
 
@@ -1204,10 +1328,10 @@ def main():
     ap.add_argument("--sensitivity", type=float, default=GAIN_DB_PER_PX,
                      help="sensibilité du glisser sur le potard, en dB par pixel (défaut %.2f : plus petit = "
                           "glisser plus doux/précis, plus grand = glisser plus rapide/nerveux)" % GAIN_DB_PER_PX)
-    ap.add_argument("--companion", default="http://127.0.0.1:8000",
-                     help="URL de base de l'API HTTP de Bitfocus Companion (module communautaire "
-                          "companion-module-waves-lv1), pour afficher la couleur LV1 de chaque voie "
-                          "(défaut http://127.0.0.1:8000, port HTTP par défaut de Companion v5.0)")
+    ap.add_argument("--companion", nargs="?", const=COMPANION_URL, default=None, metavar="URL",
+                     help="avec --direct, FACULTATIF : interroge aussi Bitfocus Companion pour la couleur et "
+                          "le nom LV1 (sinon lus directement dans la LV1). En mode normal, c'est l'appli "
+                          "principale qui s'en charge (son option --companion).")
     ap.add_argument("--no-colors", action="store_true",
                      help="désactive la lecture des couleurs de canaux LV1 via Companion (activée par défaut)")
     ap.add_argument("--color-poll", type=float, default=1.0,
