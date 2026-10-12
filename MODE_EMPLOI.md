@@ -42,11 +42,17 @@ scènes de gains (une par groupe ou par date, par exemple).
 
 ## 2. Connecter la X32
 
-1. La page de l'appli s'ouvre dans le navigateur (une fenêtre noire de journal s'ouvre aussi :
-   **ne la fermez pas**, c'est l'appli ; la fermer ferme aussi le float et l'onglet du navigateur).
-2. Cliquez **Scanner** : la X32 apparaît dans la liste. Choisissez-la puis **Connecter**.
+1. Au lancement, trois fenêtres s'ouvrent :
+   - le **float**, la petite fenêtre des potards (voir plus bas) ;
+   - la **page de l'appli** dans le navigateur, **réduite dans la barre des tâches** pour ne pas passer
+     devant la LV1 : cliquez-la pour l'ouvrir. Sur ce PC, pas de code à taper ;
+   - une **fenêtre noire** de journal : **ne la fermez pas**, c'est l'appli. La fermer ferme aussi le
+     float et l'onglet du navigateur.
+2. La première fois, dans la page : cliquez **Scanner** : la X32 apparaît dans la liste. Choisissez-la puis **Connecter**.
    - Rien trouvé ? Tapez l'IP de la console (sur la X32 : *Setup → Network*) puis **Connecter**.
 3. Les potards de la page prennent les gains de la console. C'est connecté.
+4. Les fois suivantes, l'appli **se reconnecte toute seule** à la dernière console. Si elle n'est pas
+   encore allumée, l'appli attend et se connecte dès qu'elle répond (point orange, puis vert).
 
 Pas de console sous la main ? **Démo** lance une X32 simulée pour essayer.
 
@@ -62,7 +68,8 @@ Lancez la LV1 avec votre session. En haut de chaque voie de la page, vous devez 
 
 ## 4. Le float, la fenêtre posée sur la LV1
 
-C'est l'outil de tous les jours. Bouton **Float** en haut de la page du navigateur.
+C'est l'outil de tous les jours. Il s'ouvre **tout seul au lancement**. Fermé par erreur ? Bouton
+**Float** en haut de la page du navigateur.
 
 ### Le caler une fois pour toutes
 1. Dans la LV1, affichez **Mixer 1**, mode **SndChk** (ou Setup) : le float s'y affiche, déplié.
@@ -120,7 +127,8 @@ session, comme d'habitude.
 ## 6. Depuis une tablette ou un téléphone (facultatif)
 
 1. Tablette sur le **même réseau** que le PC.
-2. Sur la page du PC, bouton **🔑 Code** en haut à droite : il affiche l'adresse à ouvrir
+2. Le code n'est demandé **qu'aux tablettes et téléphones** (pas sur le PC de l'appli). Sur la page
+   du PC, bouton **🔑 Code** en haut à droite : il affiche l'adresse à ouvrir
    (`http://192.168.x.x:8032/`) et un **code à 4 chiffres**.
 3. Ouvrez l'adresse sur la tablette, tapez le code. Il est retenu 30 jours.
 
@@ -131,10 +139,10 @@ Connexion non chiffrée : réseau de confiance seulement, pas le Wi-Fi public d'
 ## Avant chaque prestation
 
 1. Lancer la LV1 et sa session.
-2. Double-clic sur `XM32_Gain_Recall_LV1.exe` → **Connecter** (l'IP de la dernière console est déjà remplie).
-3. **Float** → il retrouve sa place.
-4. Rappeler la scène de gains du groupe, si vous en avez une.
-5. **⋯ → Verrouiller l'édition** une fois les balances faites.
+2. Double-clic sur `XM32_Gain_Recall_LV1.exe` : le float s'ouvre à sa place et se connecte tout seul
+   à la dernière console.
+3. Rappeler la scène de gains du groupe, si vous en avez une.
+4. **⋯ → Verrouiller l'édition** une fois les balances faites.
 
 ## Quand ça ne marche pas
 

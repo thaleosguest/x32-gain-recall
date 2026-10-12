@@ -1284,6 +1284,9 @@ def scan_network(timeout=1.5, port=X32_PORT):
     return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
 
 
+FLOAT_PROC = None  # float lance par cette appli (un seul a la fois)
+
+
 def launch_float_window():
     """Lance la fenetre flottante en tant que processus separe, SUR CETTE MACHINE.
 
@@ -1299,6 +1302,9 @@ def launch_float_window():
     facon. Ce bouton n'a donc d'utilite que pour qui clique depuis le navigateur de CETTE
     machine (cas typique : PC qui heberge aussi la LV1).
     """
+    global FLOAT_PROC
+    if FLOAT_PROC is not None and FLOAT_PROC.poll() is None:
+        return True, ""  # deja ouvert (au demarrage ou par un clic precedent) : pas de deuxieme float
     frozen = getattr(sys, "frozen", False)
     here = os.path.dirname(os.path.abspath(sys.executable if frozen else __file__))
     if frozen:
@@ -1316,10 +1322,60 @@ def launch_float_window():
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        subprocess.Popen(cmd, **kwargs)
+        FLOAT_PROC = subprocess.Popen(cmd, **kwargs)
     except OSError as e:
         return False, "Lancement impossible : %s" % e
     return True, ""
+
+
+def _push_browser_back(timeout=15.0):
+    """Windows : le navigateur s'ouvre au premier plan, devant la LV1. Des que sa fenetre affiche la page (titre
+    = APP_NAME, apres le chargement), on la reduit : la LV1 et le float restent devant. Reduite trop tot, elle
+    revient toute seule (vu avec Brave) : on surveille encore 4 s et on reduit toute fenetre de la page."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+        user32 = ctypes.windll.user32
+        proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def page_windows():
+            found = []
+
+            def cb(hwnd, _):
+                buf = ctypes.create_unicode_buffer(512)
+                if (user32.IsWindowVisible(hwnd) and not user32.IsIconic(hwnd)
+                        and user32.GetWindowTextW(hwnd, buf, 512) and APP_NAME in buf.value):
+                    found.append(hwnd)
+                return True
+            user32.EnumWindows(proc(cb), 0)
+            return found
+
+        end, seen = time.monotonic() + timeout, False
+        while time.monotonic() < end:
+            wins = page_windows()
+            if wins and not seen:
+                seen, end = True, time.monotonic() + 4.8
+                time.sleep(0.8)
+                wins = page_windows()
+            for hwnd in wins:
+                user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE (n'exige pas d'etre au premier plan)
+            time.sleep(0.1)
+    except Exception:
+        pass
+
+
+def _startup_windows(url, browser, float_win):
+    """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours."""
+    time.sleep(0.6)
+    if browser:
+        webbrowser.open(url)
+        _push_browser_back()
+    if float_win:
+        ok, err = launch_float_window()
+        if not ok:
+            print(err)
 
 
 def start_sim():
@@ -1355,6 +1411,10 @@ class Handler(BaseHTTPRequestHandler):
     def _auth_ok(self):
         if not ALLOW_ANY_HOST or not LAN_CODE:
             # pas de --lan (deja protege par 127.0.0.1), ou --lan-sans-mdp assume explicitement
+            return True
+        if self.client_address[0] in ("127.0.0.1", "::1") and self.headers.get("Host", "") in ALLOWED_HOSTS:
+            # le PC de l'appli lui-meme : pas de code (seuls tablettes / telephones le tapent). Host verifie :
+            # une page web piegee qui viserait 127.0.0.1 par DNS-rebinding arrive avec SON nom d'hote.
             return True
         tok = self._session_token()
         return tok is not None and tok in SESSIONS
@@ -1552,6 +1612,8 @@ class Handler(BaseHTTPRequestHandler):
             CLIENT.demo = ip == "127.0.0.1"
             if ok:
                 threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
+                if not CLIENT.demo:
+                    remember_console(ip)
             return self._json({"ok": ok, "error": CLIENT.error})
         if p == "/api/demo":
             ok, err = start_sim()
@@ -2551,6 +2613,17 @@ def save_settings(s):
     os.replace(tmp, path)
 
 
+def remember_console(ip):
+    """Derniere console demandee, reconnectee au prochain lancement (x32_gain_recall_settings.json)."""
+    s = load_settings()
+    if s.get("last_ip") != ip:
+        s["last_ip"] = ip
+        try:
+            save_settings(s)
+        except OSError:
+            pass
+
+
 def scenes_dir():
     """Dossier des scenes : celui choisi dans l'interface s'il existe encore, sinon le dossier appli."""
     d = load_settings().get("scenes_dir")
@@ -2660,6 +2733,7 @@ def main():
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
+    ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
     ap.add_argument("--data", help="chemin du fichier de scenes (defaut : dossier choisi dans l'interface, sinon %%APPDATA%%/X32 Gain Recall)")
     ap.add_argument(
         "--local-only",
@@ -2772,6 +2846,10 @@ def main():
         CLIENT.demo = True
     elif a.ip:
         CLIENT.connect(a.ip)
+    elif load_settings().get("last_ip"):
+        # derniere console : connect() ne bloque pas et retente tout seul, la console peut arriver plus tard
+        CLIENT.connect(load_settings()["last_ip"])
+        threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
 
     print("%s v%s  -  by %s  -  interface : %s" % (APP_NAME, APP_VERSION, APP_AUTHOR, url))
     if a.lan:
@@ -2805,8 +2883,7 @@ def main():
     for err in st["errors"].values():
         print("  ! %s" % err)
     print("Ctrl+C pour quitter.")
-    if not a.no_browser:
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    threading.Thread(target=_startup_windows, args=(url, not a.no_browser, not a.no_float), daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

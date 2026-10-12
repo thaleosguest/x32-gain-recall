@@ -233,6 +233,16 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   fenêtre PowerShell.
 - argparse : un `%` dans un `help=` doit être écrit `%%` (sinon l'appli plante au démarrage).
 
+## Démarrage (dev-2.3)
+
+- Au lancement : navigateur ouvert puis **réduit** (`_push_browser_back` : toute fenêtre dont le titre
+  contient `APP_NAME`, après 0,8 s, surveillée 4 s — Brave remet au premier plan une fenêtre réduite trop
+  tôt), puis float (`launch_float_window`, un seul à la fois : `FLOAT_PROC`). Reconnexion à `last_ip`
+  (settings). Pas de code d'accès pour 127.0.0.1/::1 SI le Host est dans `ALLOWED_HOSTS` (anti
+  DNS-rebinding). Serveur fermé : le float quitte (port refusé ~4 s), l'onglet fait `window.close()`.
+- Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
+  `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
+
 ## Reste à faire / idées
 
 - Rien de bloquant. À revérifier après une mise à jour de la LV1 : écriture en direct de
