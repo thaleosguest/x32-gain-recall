@@ -90,7 +90,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.7.1"
+FLOAT_VERSION = "2.7.2"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
 # Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
@@ -103,6 +103,8 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
          ("AES50-A 33-48", 64), ("AES50-B 1-16", 80), ("AES50-B 17-32", 96), ("AES50-B 33-48", 112)]
 # Vue LV1 (float 2.7.0, appli 2.1.0) : une colonne par canal LV1, alignée sur les tranches de la LV1 (couches
 # « Ch 1-16 », « Ch 17-32 »... de la LV1) ; (nom, premier canal)
+# Modes de la LV1 (panneau « Modes ») où le float se déplie tout seul ; replié dans les autres
+AUTO_OPEN_MODES = ("SndChk", "Setup")
 LV1_BANKS = [("LV1 Ch 1-16", 1), ("LV1 Ch 17-32", 17), ("LV1 Ch 33-48", 33), ("LV1 Ch 49-64", 49),
              ("LV1 Ch 65-80", 65)]
 
@@ -841,6 +843,7 @@ class FloatApp:
         self.lv1_sources = {}          # {canal LV1: [EXP voie G, EXP voie D]} (vue LV1)
         self._layout = None            # [(canal, [préamplis])] affichés en vue LV1 (reconstruit s'il change)
         self._lv1_layer_seen = None    # dernière couche LV1 vue (le float suit ses changements)
+        self._lv1_preset_seen = None   # dernier mode LV1 vu (Home, SndChk...) : repli / dépli automatique
         self.lv1_custom = None         # couche Custom suivie : 16 canaux LV1 (None = tranche sans entrée)
         self.lv1_custom_name = ""
         # Largeur d'une colonne en pixels, à virgule (2.1.0) : les 16 colonnes se calent au pixel près sur
@@ -1667,6 +1670,15 @@ class FloatApp:
                     self.lv1_custom = list(chans)[:16] + [None] * (16 - len(chans))
                     self.lv1_custom_name = "LV1 Custom %d" % (lay.get("page", 0) + 1)
                 self._build_strips()
+        # Mode de la LV1 (panneau « Modes ») : float déplié en SndChk / Setup, replié dans les autres modes
+        # (demande de Joseph). Seulement quand le mode CHANGE : un dépli / repli à la main tient jusqu'au
+        # prochain changement de mode dans la LV1.
+        preset = lay.get("preset_name")
+        if preset and preset != self._lv1_preset_seen:
+            self._lv1_preset_seen = preset
+            want_open = preset in AUTO_OPEN_MODES
+            if want_open == self.collapsed:
+                self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
         for s in self.strips:

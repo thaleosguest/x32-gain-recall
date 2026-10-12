@@ -58,6 +58,28 @@ def read_layer(con, surface=SURFACE_MIXER1):
             channels = list(range(page * STRIPS + 1, page * STRIPS + STRIPS + 1))
         elif mode == MODE_CUSTOM:
             channels = _custom_channels(con, surface, page)
+        preset = _mode_preset(con, surface, mode, page)
     except sqlite3.Error:
         return None
-    return {"mode": mode, "page": page, "bank": bank, "channels": channels}
+    return {"mode": mode, "page": page, "bank": bank, "channels": channels,
+            "preset": preset[0] if preset else None, "preset_name": preset[1] if preset else None}
+
+
+def _mode_preset(con, surface, mode, page):
+    """(id, nom) du mode affiché dans le panneau « Modes » de la LV1 (Home, Setup, SndChk, Edit, Fx,
+    Monitor, Status, Dugan) pour la page courante, ou None.
+    Établi le 2026-10-12 avec l'enregistreur : chaque clic dans « Modes » réécrit
+    `ovv_page_data.selected_mode_preset_id` (-> `ovv_modes_presets`) ; 8 lignes par mode de couche
+    (`ovv_track_mode` de la surface), une par page, dans l'ordre des id. En couche Custom le mode est
+    propre à chaque page ; en couches d'entrée, un clic change les 8 pages d'un coup."""
+    tm = con.execute("SELECT id FROM ovv_track_mode WHERE surface_type = ? AND track_mapping_type = ?",
+                     (surface, mode)).fetchone()
+    if not tm:
+        return None
+    rows = [r[0] for r in con.execute(
+        "SELECT selected_mode_preset_id FROM ovv_page_data WHERE track_mode_id = ? ORDER BY id", (tm[0],))]
+    if not rows:
+        return None
+    pid = rows[page] if 0 <= page < len(rows) else rows[0]
+    name = con.execute("SELECT preset_name FROM ovv_modes_presets WHERE id = ?", (pid,)).fetchone()
+    return pid, (name[0] if name else None)

@@ -72,6 +72,10 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
   Mode = `ovv_track_mapping_type` : 0 Factory (≤ 64 canaux), 1 CustomL (pages 0-7 = `ovv_layer`
   surface_type 2 par id, tranches dans `ovv_layer_track`), 4 InptChn (config 80 canaux : pages 0-4 =
   Ch 1-16..65-80), 5 BussChn. `config_info` (track_type 0) = nombre de canaux d'entrée configuré.
+- **Mode affiché (panneau « Modes »)** : `ovv_page_data.selected_mode_preset_id` (-> `ovv_modes_presets` :
+  1 Home, 2 Setup, 3 SndChk, 4 Edit, 5 Fx, 6 Monitor, 7 Status, 8 Dugan) ; 8 lignes par
+  `ovv_track_mode` (surface + mode de couche), une par page, ordre des id. Custom : par page ; couches
+  d'entrée : les 8 pages changent ensemble. Float : déplié en SndChk/Setup, replié sinon (`AUTO_OPEN_MODES`).
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
 - **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →
