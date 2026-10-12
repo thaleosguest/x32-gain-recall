@@ -91,7 +91,7 @@ par résolution d'écran. **⋯ → Caler sur la LV1 (auto)** le remet en place 
   en 16, 32, 64 ou 80 canaux.
 - **Se déplie** en mode **SndChk** ou **Setup**, **se replie** dans les autres modes
   (il ne reste que le point vert et la flèche).
-- **Disparaît** quand la LV1 est réduite ou affiche un autre onglet que Mixer 1 / Mixer 2.
+- **Disparaît** quand la LV1 est fermée, réduite, ou affiche un autre onglet que Mixer 1 / Mixer 2.
 - Reste **devant la LV1 mais derrière les autres applis** (il ne vous gêne pas dans le navigateur).
 - **Suit l'entrée A/B** de chaque canal : un canal basculé sur B (TracksLive, virtual soundcheck)
   n'a pas de préampli X32 à afficher.
@@ -175,7 +175,7 @@ l'appli continue, l'icône aussi.)
 | *Scanner* ne trouve rien | Autoriser l'appli dans le pare-feu (réseaux privés), vérifier le câble réseau de la X32, ou taper son IP |
 | Voies toutes grises, sans nom LV1 | La LV1 tourne-t-elle sur **ce** PC ? La X32 arrive-t-elle par une carte DN32-WSG / X-WSG ? Regarder le journal `x32_gain_recall.log` dans le dossier de l'appli (voir plus bas) |
 | Une seule voie grise | Ce préampli n'est patché sur aucun canal LV1, ou le canal est sur l'entrée **B** |
-| Le float a disparu | Normal hors Mixer 1 / Mixer 2, ou LV1 réduite. Revenez sur Mixer 1 |
+| Le float a disparu | Normal hors Mixer 1 / Mixer 2, LV1 réduite ou fermée : il revient avec la LV1, sur Mixer 1 |
 | Le float est replié | Normal hors SndChk / Setup. Cliquez la flèche pour le déplier |
 | Colonnes décalées par rapport aux tranches | **⋯ → Caler sur la LV1 (auto)** |
 | Un correctif « ne change rien » | Un ancien exe est peut-être encore ouvert : icône près de l'horloge → *Quitter* (et vérifiez qu'il n'en reste pas une 2e), relancez |

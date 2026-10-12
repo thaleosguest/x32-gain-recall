@@ -1093,8 +1093,9 @@ class FloatApp:
         self._tab_tick = 0
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
-        # lancé à l'ouverture de session (Lancer avec Windows) : caché tant que la LV1 n'a pas été vue, au lieu
-        # de s'afficher seul sur le bureau
+        # caché tant qu'il n'y a pas de LV1 : dès qu'elle a été vue une fois (LV1 fermée -> le float disparaît
+        # au lieu de rester seul au milieu de l'écran, demande de Joseph), ou d'emblée au lancement à
+        # l'ouverture de session (Lancer avec Windows). Lancé sans LV1 à la main : visible, comme avant.
         self._wait_lv1 = bool(getattr(args, "wait_lv1", False))
         self.autostart = None          # case « Lancer avec Windows » (état lu dans /api/state)
         self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
@@ -1585,9 +1586,9 @@ class FloatApp:
                 # pas de « dernier connu » ici : une tranche désélectionnée (ou hors couche) vide le cadre
                 self._sel_col = lv1_selected_column(lv1)
         if lv1:
-            self._wait_lv1 = False
+            self._wait_lv1 = True          # LV1 vue : désormais, plus de LV1 = float caché
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
-        if self._wait_lv1:
+        if self._wait_lv1 and not lv1:
             shown = False
         if shown != self._shown:
             self._shown = shown
