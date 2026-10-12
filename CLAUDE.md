@@ -14,10 +14,13 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.0.0 publiée (2026-10-12)
+## État actuel : v2.1.0 publiée (2026-10-12)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.0.0 (exe + `.sha256`).
-PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2 (v2.0.0) fusionnées dans `main`.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.1.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR thaleosguest/x32-gain-recall#4 (v2.1.0) fusionnée dans `main` ; avant : #1, #2 (v2.0.0), #3.
+2.1.0 = nom « X/M32 Gain Recall for eMotion LV1 », logo, X-WSG, vue LV1, float qui suit couches et
+modes de la LV1, calage par écran, float lié à la LV1 (détails dans les sections plus bas).
+Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
 
 
 - **Plug and play (v2.0.0)** : patch, couleurs ET noms des canaux LV1 sont lus dans la
@@ -202,6 +205,8 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
 - Rien de bloquant. À revérifier après une mise à jour de la LV1 : écriture en direct de
   `CurrentLV1.dat`, paramètre couleur 592 et palette.
 - Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
+- À revérifier aussi après une mise à jour LV1 : couches / modes (`lv1/layers.py`).
+- Non traité : deux cartes X32 dans le même rack (deux consoles) ; vue « Mixer 2 » (surface 3) non suivie.
 
 ## Environnement cible
 
