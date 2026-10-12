@@ -30,30 +30,30 @@ jobs:
         run: python -m pip install --upgrade pip pyinstaller
 
       - name: "Compiler (un seul exe : appli principale + fenetre flottante integree via --float)"
-        run: python -m PyInstaller --onefile --hidden-import tkinter --name X32_Gain_Recall x32_gain_recall.py
+        run: python -m PyInstaller --onefile --hidden-import tkinter --icon assets/icon.ico --name XM32_Gain_Recall_LV1 x32_gain_recall.py
 
       - name: Test de fumee (l'exe demarre, mode normal et mode --float)
         shell: pwsh
         run: |
-          ./dist/X32_Gain_Recall.exe --version
-          ./dist/X32_Gain_Recall.exe --float --version
+          ./dist/XM32_Gain_Recall_LV1.exe --version
+          ./dist/XM32_Gain_Recall_LV1.exe --float --version
           # --help construit tout le parseur d'options : attrape une aide mal formee (ex. un % non echappe)
-          ./dist/X32_Gain_Recall.exe --help
-          ./dist/X32_Gain_Recall.exe --float --help
+          ./dist/XM32_Gain_Recall_LV1.exe --help
+          ./dist/XM32_Gain_Recall_LV1.exe --float --help
 
       - name: Sommes de controle SHA-256
         shell: pwsh
-        run: (Get-FileHash dist/X32_Gain_Recall.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii dist/X32_Gain_Recall.exe.sha256
+        run: (Get-FileHash dist/XM32_Gain_Recall_LV1.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii dist/XM32_Gain_Recall_LV1.exe.sha256
 
       - uses: actions/upload-artifact@v4
         with:
-          name: X32_Gain_Recall-windows
-          path: dist/X32_Gain_Recall.exe*
+          name: XM32_Gain_Recall_LV1-windows
+          path: dist/XM32_Gain_Recall_LV1.exe*
 
       - name: Publier la release (tags v* uniquement)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/X32_Gain_Recall.exe
-            dist/X32_Gain_Recall.exe.sha256
+            dist/XM32_Gain_Recall_LV1.exe
+            dist/XM32_Gain_Recall_LV1.exe.sha256

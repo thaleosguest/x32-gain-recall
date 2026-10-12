@@ -56,11 +56,14 @@ import tempfile
 import time
 
 from .channelinfo import read_channel_info
+from .layers import read_layer
 
-# La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG"), pas
-# seulement par son nom ("X32RACK" ici, mais chacun peut renommer son appareil) : indispensable pour que
-# l'appli marche telle quelle chez quelqu'un d'autre.
-DEFAULT_DEVICES = ("DN32-WSG", "X32RACK")
+# La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG", vu sur
+# une vraie base ; "X-WSG", la carte Waves pour X32, ajoutée sur la foi de son nom commercial, pas encore
+# vue dans une base), pas seulement par son nom ("X32RACK" ici, mais chacun peut renommer son appareil) :
+# indispensable pour que l'appli marche telle quelle chez quelqu'un d'autre. Recherche par sous-chaîne :
+# "X-WSG-1", "X-WSG-2"... (plusieurs cartes dans le rack) sont reconnues aussi.
+DEFAULT_DEVICES = ("DN32-WSG", "X-WSG", "X32RACK")
 INPUT_NAMES = {0: "A", 1: "B"}
 
 # Base de travail EN DIRECT de la LV1 (même schéma qu'un .emo, en mode WAL). Vérifié en live le
@@ -145,8 +148,9 @@ def extract_routes(db_path):
 
 
 def read_session(db_path):
-    """(routes, infos) lus sur UNE copie de la session :
+    """(routes, infos, couche) lus sur UNE copie de la session :
     infos = {canal: {"name", "color"}} (lv1/channelinfo.py) ;
+    couche = couche affichée sur la LV1 (lv1/layers.py), ou None ;
     routes = {canal LV1 (1-based): [{"input": "A"/"B", "device": libellé, "sources": [voie 1-based, ...],
     "active": bool}, ...]} — toutes les routes vers les canaux, entrées A et B, quel que soit le status
     ("active" = au moins une voie en status 1). Les voies au-delà de la largeur du canal (voie droite
@@ -157,6 +161,7 @@ def read_session(db_path):
         device_labels = load_device_labels(con)
         widths = load_channel_widths(con)
         info = read_channel_info(con)
+        layer = read_layer(con)
         cur.execute("""
             SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
                    src_cluster_type_index, src_channel_index, status
@@ -190,7 +195,7 @@ def read_session(db_path):
     channels = {}
     for (ch, section, assign), g in sorted(groups.items()):
         channels.setdefault(ch, []).append(g)
-    return channels, info
+    return channels, info, layer
 
 
 def _matches(spec, group):

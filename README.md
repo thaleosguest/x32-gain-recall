@@ -1,8 +1,12 @@
-# X32 Gain Recall
+<img src="assets/logo.svg" width="96" alt="Logo">
+
+# X/M32 Gain Recall for eMotion LV1
+
+*by Joseph Savigny*
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **2.0.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **2.1.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -16,7 +20,7 @@ Version courante : **2.0.0** (voir [CHANGELOG](CHANGELOG.md)).
 - Interface web **responsive** (depuis la 1.7.0) : sous ~980px de large, la colonne latérale (banques/scènes) passe sous les voies au lieu d'à côté, et la barre du haut passe à la ligne. Les voies elles-mêmes gardent leur défilement horizontal (seize potards côte à côte reste le principe, même sur petit écran).
 
 ## Démarrage rapide (PC de la LV1)
-1. Télécharger **`X32_Gain_Recall.exe`** (onglet *Releases*) et le lancer. Aucune installation, pas de Python, **pas de Companion** à configurer.
+1. Télécharger **`XM32_Gain_Recall_LV1.exe`** (onglet *Releases*) et le lancer. Aucune installation, pas de Python, **pas de Companion** à configurer.
 2. Au premier lancement, Windows peut afficher :
    - **SmartScreen** (« Windows a protégé votre ordinateur ») : l'exe n'est pas signé → *Informations complémentaires* → *Exécuter quand même*. Pour vérifier le fichier, comparer son empreinte avec le `.sha256` de la release.
    - **Pare-feu** : autoriser l'accès sur les réseaux **privés**, nécessaire pour piloter depuis une tablette et pour le bouton *Scanner*.
@@ -26,18 +30,26 @@ Version courante : **2.0.0** (voir [CHANGELOG](CHANGELOG.md)).
 ### Le donner à quelqu'un d'autre
 L'exe suffit, sans rien à configurer côté LV1 : **ni MyRemote, ni adresse IP, ni port, ni Companion**. L'appli lit le fichier que la LV1 tient à jour sur son propre PC (`C:\Users\Public\Waves Audio\eMotion\Sessions\CurrentLV1.dat`, même emplacement sur toute installation). Conditions :
 - l'appli tourne sur **le même PC que la LV1** (sinon : gains, scènes et routing X32 marchent, mais sans couleurs ni noms LV1) ;
-- la X32/M32 arrive dans la LV1 par sa **carte SoundGrid DN32-WSG**, reconnue par son modèle, quel que soit le nom donné à l'appareil ;
+- la X32/M32 arrive dans la LV1 par sa **carte SoundGrid DN32-WSG ou X-WSG**, reconnue par son modèle, quel que soit le nom donné à l'appareil ;
 - testé sur **LV1 V17** : une autre version pourrait ranger ses données autrement, auquel cas l'état est signalé au lancement et la table manuelle `lv1_patch_map.json` sert de secours.
 
 ## Utilisation
 **Avec Python** : `python x32_gain_recall.py` (ou double-clic sur `Lancer_X32_Gain_Recall.bat`), puis entrer l'IP de la X32 (Setup → Network) et *Connecter*, ou *Scanner* pour la trouver automatiquement sur le réseau local. Option `--sim` : X32 simulée, sans console.
 
-**Exécutable Windows** : **un seul fichier**, `X32_Gain_Recall.exe`, dans l'onglet *Releases* du dépôt (généré automatiquement par GitHub Actions à chaque tag `vX.Y.Z`) — depuis la 1.5.0, il n'y a plus de second exe à télécharger ni à ranger au même endroit : la fenêtre flottante est intégrée au même fichier. Non signé : Windows SmartScreen / antivirus peuvent le signaler ; comparer avec le fichier `.sha256` fourni. **Installation : télécharger ce seul fichier, double-clic dessus — rien d'autre.**
+**Exécutable Windows** : **un seul fichier**, `XM32_Gain_Recall_LV1.exe`, dans l'onglet *Releases* du dépôt (généré automatiquement par GitHub Actions à chaque tag `vX.Y.Z`) — depuis la 1.5.0, il n'y a plus de second exe à télécharger ni à ranger au même endroit : la fenêtre flottante est intégrée au même fichier. Non signé : Windows SmartScreen / antivirus peuvent le signaler ; comparer avec le fichier `.sha256` fourni. **Installation : télécharger ce seul fichier, double-clic dessus — rien d'autre.**
 
 ### Fenêtre compagnon (mode réduit, toujours au premier plan)
 Bouton **« Float »** dans la barre du haut du navigateur : lance la fenêtre flottante sans quitter le navigateur ni chercher aucun fichier (depuis la 1.5.0, c'est littéralement le même exécutable qui se relance lui-même avec un drapeau interne `--float` — plus un second `.exe` à gérer). **À réserver au cas où le navigateur et le serveur tournent sur la même machine** (PC qui héberge aussi la LV1) : ce bouton lance le processus sur la machine qui exécute `x32_gain_recall.py`, pas sur l'appareil où la page est affichée — cliqué depuis une tablette connectée au serveur via le réseau local, il ouvre la fenêtre sur le PC, pas sur la tablette (qui ne peut de toute façon pas exécuter de script Python ni d'exe Windows).
 
-`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `X32_Gain_Recall.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut à gauche, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille, banque affichée et **fond** sont mémorisés dans `x32_float_config.json` (non versionné) pour le prochain lancement. Bouton **◐** (barre de titre) : fond **Anthracite** (par défaut, bien distinct du noir de la LV1), Noir, Or ou Bleu nuit.
+`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `XM32_Gain_Recall_LV1.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être glissée et redimensionnée (boutons −/+ en haut à gauche, ou glisser le coin en bas à droite) dans l'espace vide de l'interface Waves eMotion LV1, entre la rangée A/B et la rangée Ø. Position, taille, banque affichée et **fond** sont mémorisés dans `x32_float_config.json` (non versionné) pour le prochain lancement. Bouton **◐** (barre de titre) : fond **Anthracite** (par défaut, bien distinct du noir de la LV1), Noir, Or ou Bleu nuit.
+
+**Vue LV1 / vue X32** (menu des banques, depuis la 2.1.0) :
+- **LV1 Ch 1-16, 17-32…** : une colonne par **canal LV1**, dans l'ordre des tranches de la LV1. Posé sur la LV1, chaque potard tombe au-dessus de son canal. Un canal **stéréo** montre ses deux préamplis dans sa colonne (deux petits potards, deux petits 48V, « L 8/9 = EXP 8/9 ») ; les deux gains restent indépendants sur la X32. Un canal qui ne reçoit rien de la X32 garde une colonne vide. Les colonnes suivent les repatchs en direct.
+- **Local 1-16, A 1-16…** : une colonne par **préampli X32**, comme avant (utile pour un préampli qui n'arrive sur aucun canal LV1).
+
+Le navigateur a les mêmes banques (panneau *Banques d'entrées*).
+
+**Fenêtre repliée** (flèche ▾) : il ne reste que le point de connexion et la flèche. Le point vert sert de poignée pour déplacer la fenêtre.
 
 Depuis la 1.7.0, la **barre de connexion** (IP, Connecter, Scanner, Démo) est **en haut**, et la barre de titre (repli/zoom, banque, Scènes, Routing, verrou) juste en dessous — ordre inversé par rapport aux versions précédentes, à la demande. Les deux barres ont leur propre zone de glisser-déposer dédiée (pointillés ⋯), toujours large, pour déplacer la fenêtre au doigt même repliée (quand elle n'est plus qu'un simple bandeau de titre). Boutons de repli (▾/▸) et de taille (−/+) regroupés à **gauche** de la barre de titre, agrandis pour le doigt, depuis la 1.5.0. Boutons globalement plus contrastés (couleurs par rôle, contours visibles) depuis la 1.7.0 — précision : tkinter ne fait pas de vrais bords arrondis sur un bouton natif, l'effet est simulé par un contour, pas un arrondi réel.
 
@@ -62,7 +74,7 @@ python x32_gain_float.py --direct --sim
 
 **Rien à configurer quand la LV1 tourne sur le même PC** : la LV1 écrit son patch en continu, **sans sauvegarde**, dans sa base de travail `C:\Users\Public\Waves Audio\eMotion\Sessions\CurrentLV1.dat` (même format SQLite qu'une session `.emo`). Un repatch y apparaît environ **1 seconde** plus tard (mesuré sur LV1 V17), et l'appli la relit à chaque écriture : la table suit les repatchs toute seule. L'appli lit toujours une **copie** de ce fichier, jamais l'original, pour ne rien verrouiller ni créer dans les dossiers de la LV1.
 
-Seules les routes depuis la **carte DN32-WSG** de la X32 comptent (reconnue par son modèle, ou par le nom « X32RACK » ; sa voie N = EXP N), en entrée A ou B, quelle que soit celle qui est sélectionnée. La **voie droite d'un canal mono** est ignorée : repasser un canal stéréo en mono ne supprime pas sa vieille route dans la base de la LV1 (la largeur est lue dans la table `chainer`). Un EXP qui n'arrive sur aucun canal reste **sans couleur**. TracksLive n'est pas pris par défaut, car il ne rejoue pas forcément les voies X32 avec les mêmes numéros ; `--lv1-device X32RACK,TracksLive:B` l'ajoute en repli, sans jamais l'emporter sur une route X32RACK.
+Seules les routes depuis la **carte DN32-WSG ou X-WSG** de la X32 comptent (reconnue par son modèle, ou par le nom « X32RACK » ; sa voie N = EXP N), en entrée A ou B, quelle que soit celle qui est sélectionnée. La **voie droite d'un canal mono** est ignorée : repasser un canal stéréo en mono ne supprime pas sa vieille route dans la base de la LV1 (la largeur est lue dans la table `chainer`). Un EXP qui n'arrive sur aucun canal reste **sans couleur**. TracksLive n'est pas pris par défaut, car il ne rejoue pas forcément les voies X32 avec les mêmes numéros ; `--lv1-device X32RACK,TracksLive:B` l'ajoute en repli, sans jamais l'emporter sur une route X32RACK.
 
 Autres sources, si besoin :
 - **Table manuelle** `lv1_patch_map.json` à côté des scènes (non versionné ; partir de [`lv1_patch_map.example.json`](lv1_patch_map.example.json)), au format `{"19": [21, 22], "1": [1]}` — canal LV1 → numéro(s) EXP. Relue à chaud, **prioritaire** canal par canal : pour forcer un canal. Autre emplacement : `--lv1-map CHEMIN`.
@@ -114,3 +126,6 @@ Développé d'après la documentation OSC non officielle de la X32 et testé uni
 Projet indépendant, non affilié à Behringer / Music Tribe ni à Waves. « X32 », « M32 », « LV1 » et « eMotion » appartiennent à leurs propriétaires. Protocole : [UNOFFICIAL X32/M32 OSC REMOTE PROTOCOL](https://tostibroeders.nl/wp-content/uploads/2020/02/X32-OSC.pdf) (P.-G. Maillot).
 
 Licence : à définir par l'auteur.
+
+---
+Outil indépendant, non affilié à Behringer, Midas ni Waves. X32, M32, eMotion LV1 et SoundGrid sont des marques de leurs propriétaires respectifs.

@@ -55,8 +55,8 @@ A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette s
     tactile, choix arbitraire de ma part faute de pouvoir tester sur un vrai ecran tactile d'ici :
     ajustable avec --sensitivity si ce n'est pas le bon compromis pour vous.
 
-DEPUIS LA 1.5.0 : plus besoin de gerer deux .exe separes. X32_Gain_Recall.exe integre desormais ce
-fichier : le bouton "Float" du navigateur (ou `X32_Gain_Recall.exe --float`) relance le meme
+DEPUIS LA 1.5.0 : plus besoin de gerer deux .exe separes. XM32_Gain_Recall_LV1.exe integre desormais ce
+fichier : le bouton "Float" du navigateur (ou `XM32_Gain_Recall_LV1.exe --float`) relance le meme
 executable avec ce drapeau interne, qui delegue a main() ci-dessous. Ce fichier reste aussi utilisable
 seul (en Python source, cote pratique pour qui ne veut pas du tout de l'exe principal).
 
@@ -84,12 +84,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import x32_gain_recall  # noqa: E402  (pour installer la table LV1 en --direct, voir DirectBackend)
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
-    PresetStore, RoutingStore, pick_data_path, LAN_COOKIE,
+    PresetStore, RoutingStore, pick_data_path, LAN_COOKIE, APP_SHORT, APP_AUTHOR, APP_VERSION,
 )
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
+from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.6.0"
+FLOAT_VERSION = "2.7.2"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
 # Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
@@ -100,6 +101,12 @@ CFG_PATH = os.path.join(x32_gain_recall.app_data_dir(), "x32_float_config.json")
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
 BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A 17-32", 48),
          ("AES50-A 33-48", 64), ("AES50-B 1-16", 80), ("AES50-B 17-32", 96), ("AES50-B 33-48", 112)]
+# Vue LV1 (float 2.7.0, appli 2.1.0) : une colonne par canal LV1, alignée sur les tranches de la LV1 (couches
+# « Ch 1-16 », « Ch 17-32 »... de la LV1) ; (nom, premier canal)
+# Modes de la LV1 (panneau « Modes ») où le float se déplie tout seul ; replié dans les autres
+AUTO_OPEN_MODES = ("SndChk", "Setup")
+LV1_BANKS = [("LV1 Ch 1-16", 1), ("LV1 Ch 17-32", 17), ("LV1 Ch 33-48", 33), ("LV1 Ch 49-64", 49),
+             ("LV1 Ch 65-80", 65)]
 
 BG, PANEL, LINE, LINE2 = "#08090a", "#111213", "#2c2f33", "#3a3e43"
 TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939a", "#e9edf0", "#3ddc84", "#f2b63b"
@@ -164,6 +171,124 @@ def strip_tag(idx):
     if idx < 80:
         return "A %d" % (idx - 31)
     return "B %d" % (idx - 79)
+
+
+def monitor_rect(x, y):
+    """(gauche, haut, largeur, hauteur) de l'écran qui contient le point (x, y) (Windows, multi-écrans) ;
+    à défaut l'écran principal vu par Tk (None : appelant)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+        u32 = ctypes.windll.user32
+        u32.MonitorFromPoint.restype = wintypes.HMONITOR
+        u32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        u32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+        h = u32.MonitorFromPoint(wintypes.POINT(int(x), int(y)), 2)   # 2 = MONITOR_DEFAULTTONEAREST
+        mi = MONITORINFO()
+        mi.cbSize = ctypes.sizeof(MONITORINFO)
+        if h and u32.GetMonitorInfoW(h, ctypes.byref(mi)):
+            r = mi.rcMonitor
+            return r.left, r.top, r.right - r.left, r.bottom - r.top
+    except (AttributeError, OSError, ValueError):
+        pass
+    return None
+
+
+def _user32():
+    try:
+        import ctypes
+        return ctypes, ctypes.windll.user32
+    except (AttributeError, OSError, ImportError):
+        return None, None
+
+
+def find_lv1_window():
+    """HWND de la fenêtre principale de la LV1 (titre « eMotion LV1 … », visible), ou None."""
+    ctypes, u32 = _user32()
+    if not u32:
+        return None
+    from ctypes import wintypes
+    found = []
+    proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(hwnd, _l):
+        if u32.IsWindowVisible(hwnd) and not u32.GetWindow(hwnd, 4):     # 4 = GW_OWNER : fenêtre principale
+            n = u32.GetWindowTextLengthW(hwnd)
+            if n:
+                buf = ctypes.create_unicode_buffer(n + 1)
+                u32.GetWindowTextW(hwnd, buf, n + 1)
+                if buf.value.startswith("eMotion LV1"):
+                    found.append(hwnd)
+        return True
+    u32.EnumWindows(proto(cb), 0)
+    return found[0] if found else None
+
+
+def float_hwnd(root):
+    """HWND de la fenêtre Tk (cadre de premier niveau)."""
+    try:
+        root.update_idletasks()
+        return int(root.wm_frame(), 16)
+    except (tk.TclError, ValueError):
+        return None
+
+
+def window_alive(hwnd):
+    _c, u32 = _user32()
+    return bool(u32 and u32.IsWindow(hwnd) and u32.IsWindowVisible(hwnd))
+
+
+def window_iconic(hwnd):
+    _c, u32 = _user32()
+    return bool(u32 and u32.IsIconic(hwnd))
+
+
+def _wintypes(u32, ctypes):
+    u32.GetForegroundWindow.restype = ctypes.c_void_p
+    u32.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                                 ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    u32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+
+def foreground_window():
+    ctypes, u32 = _user32()
+    if not u32:
+        return None
+    _wintypes(u32, ctypes)
+    return u32.GetForegroundWindow()
+
+
+def window_pid(hwnd):
+    ctypes, u32 = _user32()
+    if not u32 or not hwnd:
+        return None
+    _wintypes(u32, ctypes)
+    pid = ctypes.c_ulong()
+    u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+_SWP = 0x0001 | 0x0002 | 0x0010 | 0x0200       # NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
+
+
+def set_topmost(me, on):
+    ctypes, u32 = _user32()
+    if u32:
+        _wintypes(u32, ctypes)
+        u32.SetWindowPos(me, -1 if on else -2, 0, 0, 0, 0, _SWP)     # HWND_TOPMOST / HWND_NOTOPMOST
+
+
+def place_below(me, other):
+    """Range `me` juste sous la fenêtre `other` (l'appli active). Si Windows refuse (appli en
+    administrateur), le float reste où HWND_NOTOPMOST l'a mis."""
+    ctypes, u32 = _user32()
+    if u32 and other:
+        _wintypes(u32, ctypes)
+        u32.SetWindowPos(me, other, 0, 0, 0, 0, _SWP)
 
 
 def load_cfg():
@@ -448,72 +573,56 @@ class DirectBackend:
             self.sim.stop = True
 
 
-class Strip(tk.Frame):
-    """Une voie : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V."""
+class Unit(tk.Frame):
+    """Un préampli : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V.
+    compact=True : demi-largeur, pour les deux préamplis d'un canal LV1 stéréo réunis dans une colonne
+    (vue LV1, float 2.7.0). Les deux gains restent indépendants sur la X32 : ils ne sont réunis que
+    graphiquement."""
 
-    def __init__(self, master, owner, idx, width):
-        super().__init__(master, bg=PANEL, width=width, height=width + STRIP_EXTRA_H,
-                          highlightthickness=1, highlightbackground="#000000")
+    def __init__(self, master, owner, idx, width, compact=False):
+        super().__init__(master, bg=PANEL)
         self.owner = owner
         self.idx = idx
-        self.width = width
+        self.compact = compact
         self.db = None
         self.phantom_state = None
-        self.pack_propagate(False)
 
-        # Pastille de couleur (depuis la 2.5.0) : couleur du canal LV1 correspondant, lue EN DIRECT via
-        # l'API HTTP de Bitfocus Companion (module communautaire companion-module-waves-lv1), a partir
-        # du meme numero EXP deja lu en direct sur la console (pas de 2e correspondance a deviner).
-        # Grise/neutre (PANEL) tant qu'aucune couleur n'est connue - jamais une couleur inventee : voir
-        # lv1/companion.py et set_color() plus bas.
-        self.swatch = tk.Frame(self, bg=PANEL, height=5, highlightthickness=0)
-        self.swatch.pack(fill="x", side="top")
-        self.swatch.pack_propagate(False)
-
-        # Repere de voie + correspondance EXP (LV1) : absent avant la 1.5.1, repere seulement par
-        # position dans la rangee - on demandait de compter les colonnes a la main pour savoir quel
-        # potard est quel preampli. Le numero EXP (2e ligne) est rempli par set_exp(), a partir
-        # d'une lecture EN DIRECT du patch de la console (jamais une supposition) - vide tant que
-        # non connecte ou non lu.
-        # Depuis la 2.6.0 : « L 15 = EXP 15 » sur une ligne (sur deux si la voie est trop etroite), puis
-        # le nom du canal LV1 en plus gros - mise en page demandee par Joseph.
-        self._tag = strip_tag(idx)
-        self._tag_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
-        self.chlabel = tk.Label(self, text=self._tag, bg=PANEL, fg=MUT,
-                                 font=self._tag_font, justify="center")
-        self.chlabel.pack(pady=(3, 0))
-
-        # Nom du canal LV1 qui recoit ce preampli (depuis la 2.6.0) : variable Companion in<N>_name du
-        # canal donne par la table de patch LV1 (meme canal que la couleur). Voir set_name().
-        self._name_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
-        self.namelbl = tk.Label(self, text="", bg=PANEL, fg=TXT, font=self._name_font)
-        self.namelbl.pack(fill="x", padx=1)
-        self._name_full = ""
-
-        self.led = tk.Canvas(self, width=width - 10, height=7, bg=PANEL, highlightthickness=0)
+        self.led = tk.Canvas(self, width=max(8, width - 10), height=7, bg=PANEL, highlightthickness=0)
         self.led.pack(pady=(4, 3))
         self._led_id = self.led.create_oval(2, 0, 9, 7, fill="#333333", outline="")
 
-        ksz = max(34, width - 12)
-        self.knob = tk.Canvas(self, width=ksz, height=ksz, bg=PANEL, highlightthickness=0,
+        self.knob = tk.Canvas(self, width=34, height=34, bg=PANEL, highlightthickness=0,
                                cursor="sb_v_double_arrow")
         self.knob.pack(pady=2)
         self.knob.bind("<ButtonPress-1>", self._drag_start)
         self.knob.bind("<B1-Motion>", self._drag_move)
-        self._draw_knob()
 
-        self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=("Consolas", 10, "bold"),
-                             cursor="xterm")
-        self.val.pack(fill="x", padx=4, pady=(3, 3))
+        self._val_font = tkfont.Font(family="Consolas", size=7 if compact else 10, weight="bold")
+        self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=self._val_font, cursor="xterm")
+        self.val.pack(fill="x", padx=1 if compact else 4, pady=(3, 3))
         self.val.bind("<Button-1>", self._edit_value)
 
         self.ph = tk.Button(self, text="48V", bg="#25282b", fg="#aeb6bd", bd=0, relief="flat",
-                             font=("Segoe UI", 8, "bold"), activebackground="#33383c",
+                             font=("Segoe UI", 7 if compact else 8, "bold"), activebackground="#33383c",
                              command=self._phantom_click, state="disabled")
-        self.ph.pack(fill="x", padx=4, pady=(0, 4))
+        self.ph.pack(fill="x", padx=1 if compact else 4, pady=(0, 4))
 
         self._drag_y0 = None
         self._drag_db0 = None
+        self.resize(width)
+
+    def resize(self, width, avail_h=None):
+        """avail_h : hauteur disponible pour le préampli (2.1.0 : le float se règle aussi en hauteur) ; le
+        potard grandit jusqu'à ce que la largeur OU la hauteur l'arrête."""
+        self.width = width
+        if self.compact:
+            ksz = max(18, min(width - 6, (avail_h or 999) - 62))
+        else:
+            ksz = max(34, min(width - 12, (avail_h or 999) - 72))
+        self.knob.config(width=ksz, height=ksz)
+        self.led.config(width=max(8, width - 10))
+        self._draw_knob()
+        self._show_val()
 
     # -- rendu --------------------------------------------------------
     def _draw_knob(self):
@@ -523,18 +632,31 @@ class Strip(tk.Frame):
         cx, cy, r = w / 2, h / 2, min(w, h) / 2 - 3
         c.create_oval(cx - r, cy - r, cx + r, cy + r, outline=tc(LINE2), width=2)
         if self.db is None:
-            c.create_text(cx, cy, text="?", fill=MUT, font=("Segoe UI", 9))
+            c.create_text(cx, cy, text="?", fill=MUT, font=("Segoe UI", 8 if self.compact else 9))
             return
         frac = max(0.0, min(1.0, (self.db - GAIN_MIN) / (GAIN_MAX - GAIN_MIN)))
         theta = math.radians(-135 + frac * 270)   # -135deg..+135deg, 0deg = tout en haut
         dx, dy = math.sin(theta), -math.cos(theta)
-        c.create_line(cx, cy, cx + dx * r * 0.82, cy + dy * r * 0.82, fill=CYAN, width=3, capstyle="round")
+        c.create_line(cx, cy, cx + dx * r * 0.82, cy + dy * r * 0.82, fill=CYAN,
+                      width=2 if self.compact else 3, capstyle="round")
         c.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=CYAN, outline="")
 
+    def _show_val(self):
+        if self.db is None:
+            text = "—"
+        else:
+            text = "%.1f" % self.db
+            if self._val_font.measure(text) > self.width - 2:   # demi-colonne étroite : sans décimale
+                text = "%.0f" % self.db
+        if self.val.cget("text") != text:
+            self.val.config(text=text)
+
     def set_gain(self, db):
+        if db == self.db:
+            return
         self.db = db
         self._draw_knob()
-        self.val.config(text=("%.1f" % db) if db is not None else "—")
+        self._show_val()
 
     def set_phantom(self, on):
         self.phantom_state = on
@@ -555,41 +677,6 @@ class Strip(tk.Frame):
                 color = OK
         self.led.itemconfig(self._led_id, fill=color)
 
-    def set_exp(self, exp_num):
-        """exp_num : numero Carte/EXP (int) lu EN DIRECT sur la console pour cette voie, ou None/0 si
-        non connu (non connecte, lecture pas encore faite, ou ce canal n'est pas patche vers la
-        carte) - jamais une supposition, voir X32Client.refresh_exp_map()."""
-        text = self._tag
-        if exp_num:
-            one = "%s = EXP %d" % (self._tag, exp_num)
-            text = one if self._tag_font.measure(one) <= self.width - 4 else "%s\nEXP %d" % (self._tag, exp_num)
-        if self.chlabel.cget("text") != text:
-            self.chlabel.config(text=text)
-
-    def set_name(self, name):
-        """name : nom du canal LV1 correspondant (« FireRoom », « In 15 »...), ou "" si cette voie
-        n'arrive sur aucun canal LV1. Raccourci avec « … » pour tenir dans la largeur de la voie."""
-        name = name or ""
-        if name == self._name_full:
-            return
-        self._name_full = name
-        avail = max(10, self.width - 4)
-        text = name
-        if self._name_font.measure(text) > avail:
-            while text and self._name_font.measure(text + "…") > avail:
-                text = text[:-1]
-            text += "…"
-        self.namelbl.config(text=text)
-
-    def set_color(self, hex_color):
-        """hex_color : couleur "#RRGGBB" du canal LV1 correspondant, lue EN DIRECT via Companion
-        (lv1/companion.py, via lv1_channels), ou None si inconnue (Companion desactive/injoignable, canal non
-        patche, ou pas encore interroge) - jamais une couleur inventee, voir la pastille en haut de la
-        voie dans __init__."""
-        bg = hex_color or tc(PANEL)
-        if self.swatch.cget("bg") != bg:
-            self.swatch.config(bg=bg)
-
     # -- interaction ----------------------------------------------------
     def _drag_start(self, e):
         self._drag_y0 = e.y_root
@@ -601,12 +688,11 @@ class Strip(tk.Frame):
         delta_px = self._drag_y0 - e.y_root     # glisser vers le haut = augmente le gain
         new_db = quantize(self._drag_db0 + delta_px * self.owner.sensitivity)
         if new_db != self.db:
-            self.db = new_db
-            self._draw_knob()
+            self.set_gain(new_db)
             self.owner.send_gain(self.idx, new_db)
 
     def _edit_value(self, _e=None):
-        """Clic sur la valeur en dB : saisie directe au clavier plutôt que de glisser (voie %s)."""
+        """Clic sur la valeur en dB : saisie directe au clavier plutôt que de glisser."""
         if self.owner.locked:
             return
         cur = ("%.1f" % self.db) if self.db is not None else "0.0"
@@ -619,9 +705,7 @@ class Strip(tk.Frame):
         except ValueError:
             messagebox.showerror("Gain", "« %s » n'est pas un nombre valide." % r, parent=self.owner.root)
             return
-        self.db = db
-        self._draw_knob()
-        self.val.config(text="%.1f" % db)
+        self.set_gain(db)
         self.owner.send_gain(self.idx, db)
 
     def _phantom_click(self):
@@ -639,12 +723,140 @@ class Strip(tk.Frame):
                 self.owner.send_phantom(self.idx, True)
 
 
+class Strip(tk.Frame):
+    """Une colonne : pastille de couleur du canal LV1, repère « L 15 = EXP 15 », nom du canal LV1, puis
+    un préampli (Unit) — ou deux côte à côte en demi-largeur pour un canal LV1 stéréo (vue LV1), ou aucun
+    pour un canal LV1 qui ne reçoit rien de la X32 (la colonne reste là pour garder l'alignement sur les
+    tranches de la LV1).
+    Vue X32 : idxs = [préampli], ch = None. Vue LV1 : idxs = préamplis du canal ch (voie G puis D)."""
+
+    def __init__(self, master, owner, idxs, width, ch=None, height=None):
+        super().__init__(master, bg=PANEL, width=width, height=height or width + STRIP_EXTRA_H,
+                          highlightthickness=1, highlightbackground="#000000")
+        self.owner = owner
+        self.idxs = list(idxs)
+        self.ch = ch
+        self.width = width
+        self.height = height or width + STRIP_EXTRA_H
+        self.pack_propagate(False)
+
+        # Pastille de couleur : couleur du canal LV1 (lue dans la base de la LV1, ou Companion), grise
+        # (PANEL) tant qu'aucune couleur n'est connue - jamais une couleur inventee.
+        self.swatch = tk.Frame(self, bg=PANEL, height=5, highlightthickness=0)
+        self.swatch.pack(fill="x", side="top")
+        self.swatch.pack_propagate(False)
+
+        # « L 15 = EXP 15 » (sur deux lignes si la voie est trop etroite), puis le nom du canal LV1 en plus
+        # gros - mise en page demandee par Joseph (2.6.0). Stereo (vue LV1) : « L 8/9 = EXP 8/9 ».
+        self._tag_font = tkfont.Font(family="Segoe UI", size=7, weight="bold")
+        self._tag_one = None
+        self.chlabel = tk.Label(self, text="", bg=PANEL, fg=MUT, font=self._tag_font, justify="center")
+        self.chlabel.pack(pady=(3, 0))
+        self._name_font = tkfont.Font(family="Segoe UI", size=9, weight="bold")
+        self.namelbl = tk.Label(self, text="", bg=PANEL, fg=TXT, font=self._name_font)
+        self.namelbl.pack(fill="x", padx=1)
+        self._name_full = None
+
+        body = tk.Frame(self, bg=PANEL)
+        body.pack(fill="both", expand=True)
+        self.units = []
+        uw = self._unit_width()
+        for i in self.idxs:
+            u = Unit(body, owner, i, uw, compact=len(self.idxs) > 1)
+            u.resize(uw, self._avail_h())
+            u.pack(side="left", expand=True)      # centré verticalement si la colonne est plus haute
+            self.units.append(u)
+        if not self.idxs:
+            tk.Label(body, text="—", bg=PANEL, fg=LINE2, font=("Segoe UI", 9)).pack(expand=True)
+
+    def _unit_width(self):
+        return (self.width - 2) // max(1, len(self.idxs))
+
+    def _avail_h(self):
+        return self.height - 42          # moins pastille + repère + nom
+
+    def resize(self, width, height=None):
+        self.width = width
+        self.height = height or width + STRIP_EXTRA_H
+        self.config(width=width, height=self.height)
+        for u in self.units:
+            u.resize(self._unit_width(), self._avail_h())
+        if self._tag_one is not None:
+            one, self._tag_one = self._tag_one, None
+            self.set_tag(one)
+        name, self._name_full = self._name_full, None
+        self.set_name(name)
+
+    def set_tag(self, one):
+        """one : repère sur une ligne (« L 15 = EXP 15 ») ; passe sur deux lignes, coupé au « = », si la
+        colonne est trop étroite."""
+        if one == self._tag_one:
+            return
+        self._tag_one = one
+        text = one
+        if " = " in one and self._tag_font.measure(one) > self.width - 4:
+            text = one.replace(" = ", "\n", 1)
+        self.chlabel.config(text=text)
+
+    def set_name(self, name):
+        """name : nom du canal LV1 (« FireRoom », « In 15 »...), ou "" si aucun. Raccourci avec « … »."""
+        name = name or ""
+        if name == self._name_full:
+            return
+        self._name_full = name
+        avail = max(10, self.width - 4)
+        text = name
+        if self._name_font.measure(text) > avail:
+            while text and self._name_font.measure(text + "…") > avail:
+                text = text[:-1]
+            text += "…"
+        self.namelbl.config(text=text)
+
+    def set_color(self, hex_color):
+        """hex_color : couleur "#RRGGBB" du canal LV1, ou None si inconnue - jamais une couleur inventee."""
+        bg = hex_color or tc(PANEL)
+        if self.swatch.cget("bg") != bg:
+            self.swatch.config(bg=bg)
+
+
+def join_tags(idxs):
+    """« L 8/9 » pour deux préamplis de la même source, sinon « L 8 + A 3 »."""
+    tags = [strip_tag(i) for i in idxs]
+    if len(tags) == 2 and tags[0].split()[0] == tags[1].split()[0]:
+        return "%s/%s" % (tags[0], tags[1].split()[1])
+    return " + ".join(tags)
+
+
 class FloatApp:
     def __init__(self, args):
         self.args = args
         cfg = load_cfg()
         self.bank = cfg.get("bank", 0)
-        self.strip_w = cfg.get("strip_w", 46)
+        # Vue LV1 (une colonne par canal LV1, stéréo regroupé) ou X32 (une colonne par préampli). Nouvelle
+        # installation : vue LV1 ; config d'avant le float 2.7.0 : on garde la vue X32 qu'elle connaissait.
+        self.view = cfg.get("view") or ("x32" if cfg else "lv1")
+        self.lv1_bank = cfg.get("lv1_bank", 0)
+        if not 0 <= self.bank < len(BANKS):
+            self.bank = 0
+        if not 0 <= self.lv1_bank < len(LV1_BANKS):
+            self.lv1_bank = 0
+        self.lv1_sources = {}          # {canal LV1: [EXP voie G, EXP voie D]} (vue LV1)
+        self._layout = None            # [(canal, [préamplis])] affichés en vue LV1 (reconstruit s'il change)
+        self._lv1_layer_seen = None    # dernière couche LV1 vue (le float suit ses changements)
+        self._lv1_preset_seen = None   # dernier mode LV1 vu (Home, SndChk...) : repli / dépli automatique
+        self.lv1_custom = None         # couche Custom suivie : 16 canaux LV1 (None = tranche sans entrée)
+        self.lv1_custom_name = ""
+        # Largeur d'une colonne en pixels, à virgule (2.1.0) : les 16 colonnes se calent au pixel près sur
+        # les 16 tranches de la LV1 (la largeur totale est répartie, certaines colonnes ont 1 px de plus).
+        # Position + largeur mémorisées PAR ÉCRAN (résolution) : chaque écran garde son calage, et un
+        # écran jamais vu part du dernier calage mis à l'échelle (la LV1 plein écran suit la taille de
+        # l'écran). Voir _apply_screen_profile() / _save_cfg().
+        self.cfg = cfg
+        self.strip_w = float(cfg.get("strip_w", 46))
+        # hauteur des colonnes (2.1.0, réglable avec le coin bas-droit) ; défaut : largeur + STRIP_EXTRA_H
+        self.strip_h = int(cfg.get("strip_h") or round(self.strip_w) + STRIP_EXTRA_H)
+        self.console_open = False      # barre de connexion (IP, Connecter...) : sous les voies, à la demande
+        self._console_auto = None      # True si ouverte automatiquement (pas connecté) : refermée à la connexion
         self.locked = False
         self.clip_db = args.clip_db
         self.sensitivity = args.sensitivity
@@ -677,8 +889,21 @@ class FloatApp:
             self.backend = ServerBackend(args.port, session_token=args.session_token)
 
         self.root = tk.Tk()
-        self.root.title("X32 Gain Float")
+        self.root.title(APP_SHORT + " — Float")
+        try:  # logo dans la barre des tâches / Alt+Tab (au lieu de la plume de Tk)
+            self._icons = [tk.PhotoImage(data=d) for d in ICON_PNG_B64]
+            self.root.iconphoto(True, *self._icons)
+        except tk.TclError:
+            pass
         self.root.overrideredirect(True)
+        # Liée à la LV1 (2.1.0, demande de Joseph) : toujours juste devant la fenêtre de la LV1, derrière les
+        # autres applis, cachée quand la LV1 est réduite. Sans LV1 : toujours au premier plan comme avant.
+        # Voir _follow_lv1().
+        self._lv1_hwnd = None
+        self._lv1_pid = None
+        self._lv1_seek = 0.0
+        self._hidden_with_lv1 = False
+        self._z_state = None           # "top" (premier plan) ou HWND de l'appli active sous laquelle on est
         self.root.attributes("-topmost", True)
         try:
             self.root.attributes("-alpha", 0.97)
@@ -686,17 +911,16 @@ class FloatApp:
             pass
         self.root.configure(bg=BG)
         x = cfg.get("x", 200); y = cfg.get("y", 200)
+        x, y = self._apply_screen_profile(x, y)
         self.root.geometry("+%d+%d" % (x, y))
 
-        # Depuis la 1.7.0 : la barre de connexion (IP/Connecter/Scanner/Démo) est EN HAUT, la barre de
-        # titre (repli/zoom/banque/Scènes/Routing) juste en dessous - a la demande explicite de
-        # l'utilisateur (ordre inverse de la 1.5.0/1.6.0). L'ordre d'empilement tkinter suit l'ordre des
-        # appels a pack(side="top"), donc l'inversion se fait simplement en appelant les deux methodes
-        # dans l'autre sens ; aucune des deux ne depend de l'autre.
-        self.connectbar = self._build_connectbar()
+        # 2.1.0 (demande de Joseph) : UNE seule barre en haut. La barre de connexion (IP/Connecter/Scanner/
+        # Démo) n'est plus empilée au-dessus : elle s'ouvre SOUS les voies (bouton « Console », ou toute
+        # seule tant que la console n'est pas connectée), pour ne jamais décaler les voies calées sur la LV1.
         self.titlebar = self._build_titlebar()
         self.strips_frame = tk.Frame(self.root, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
+        self.connectbar = self._build_connectbar()
         self.strips = []
         self._build_strips()
         self.panel = tk.Frame(self.root, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
@@ -708,7 +932,7 @@ class FloatApp:
         if args.direct and args.sim:
             r = self.backend.demo()
             if not r.get("ok"):
-                messagebox.showerror("X32 Gain Float", r.get("error", "Simulateur impossible"))
+                messagebox.showerror(APP_SHORT, r.get("error", "Simulateur impossible"))
         elif args.direct and args.ip:
             self.backend.connect(args.ip)
         if args.direct:
@@ -716,6 +940,7 @@ class FloatApp:
 
         apply_theme(self.root)
         self.root.after(1000, self._theme_pass)
+        self.root.after(300, self._follow_lv1)
         self._poll()
 
     # -- construction de l'UI -------------------------------------------
@@ -731,9 +956,14 @@ class FloatApp:
         bar.bind("<ButtonPress-1>", self._win_drag_start)
         bar.bind("<B1-Motion>", self._win_drag_move)
 
-        self.led_conn = tk.Canvas(bar, width=9, height=9, bg="#0d0e0f", highlightthickness=0)
-        self.led_conn.pack(side="left", padx=(6, 4), pady=6)
-        self._conn_id = self.led_conn.create_oval(1, 1, 8, 8, fill="#555555", outline="")
+        # Point de connexion : sert aussi de poignée pour déplacer la fenêtre (float 2.7.0, demande de Joseph) -
+        # c'est tout ce qui reste visible avec la flèche une fois la fenêtre repliée. Zone de prise
+        # agrandie autour du point pour le doigt.
+        self.led_conn = tk.Canvas(bar, width=17, height=17, bg="#0d0e0f", highlightthickness=0, cursor="fleur")
+        self.led_conn.pack(side="left", padx=(3, 0), pady=2)
+        self._conn_id = self.led_conn.create_oval(4, 4, 13, 13, fill="#555555", outline="")
+        self.led_conn.bind("<ButtonPress-1>", self._win_drag_start)
+        self.led_conn.bind("<B1-Motion>", self._win_drag_move)
 
         self.btn_collapse = tk.Button(bar, text="▾", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
                                        activebackground="#1c1e20", padx=7, pady=4, command=self._toggle_collapse)
@@ -745,11 +975,14 @@ class FloatApp:
                   activebackground="#1c1e20", padx=7, pady=4,
                   command=lambda: self._resize_strips(2)).pack(side="left", padx=(1, 8), pady=2)
 
-        self.bank_var = tk.StringVar(value=BANKS[self.bank][0])
-        self.bank_menu = tk.OptionMenu(bar, self.bank_var, *[b[0] for b in BANKS], command=self._select_bank)
+        # Banques : vue LV1 (canaux de la LV1) puis vue X32 (préamplis), dans le même menu
+        self.bank_var = tk.StringVar(value=self._bank_name())
+        self.bank_menu = tk.OptionMenu(bar, self.bank_var, *[b[0] for b in LV1_BANKS + BANKS],
+                                       command=self._select_bank)
         self.bank_menu.config(bg="#0d0e0f", fg=TXT, bd=0, highlightthickness=0, font=("Segoe UI", 9, "bold"),
                                activebackground="#1c1e20", relief="flat")
         self.bank_menu["menu"].config(bg="#15171a", fg=TXT)
+        self.bank_menu["menu"].insert_separator(len(LV1_BANKS))
         self.bank_menu.pack(side="left", padx=2)
 
         # Boutons Scenes/Routing plus "explicites" (demande utilisateur) : contour visible au repos,
@@ -765,6 +998,11 @@ class FloatApp:
                                       highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
                                       command=lambda: self._toggle_panel("routing"))
         self.btn_routing.pack(side="left", padx=2)
+        self.btn_console = tk.Button(bar, text="Console", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                                      activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
+                                      highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                      command=lambda: self._toggle_console())
+        self.btn_console.pack(side="left", padx=2)
 
         self.btn_lock = tk.Button(bar, text="🔓", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10),
                                    activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
@@ -803,8 +1041,7 @@ class FloatApp:
         le tactile. Note honnete : tkinter ne sait pas dessiner de bords vraiment arrondis sur un bouton
         natif (pas d'equivalent CSS border-radius) ; l'effet "bouton" est simule par un contour
         (highlightthickness) + du remplissage, pas par un veritable arrondi."""
-        bar = tk.Frame(self.root, bg="#111213")
-        bar.pack(side="top", fill="x")
+        bar = tk.Frame(self.root, bg="#111213")   # pas empilée ici : voir _toggle_console()
         bar.bind("<ButtonPress-1>", self._win_drag_start)
         bar.bind("<B1-Motion>", self._win_drag_move)
 
@@ -838,24 +1075,56 @@ class FloatApp:
         handle.bind("<B1-Motion>", self._win_drag_move)
         return bar
 
+    def _bank_name(self):
+        if self.view == "lv1" and self.lv1_custom is not None:
+            return self.lv1_custom_name
+        return LV1_BANKS[self.lv1_bank][0] if self.view == "lv1" else BANKS[self.bank][0]
+
+    def _lv1_layout(self):
+        """Vue LV1 : [(canal, [préamplis X32 qui l'alimentent, voie G puis D])] pour les 16 canaux de la
+        banque. Préampli retrouvé par son numéro EXP, lu en direct sur la X32 (exp_map) : un EXP que la LV1
+        reçoit mais qu'aucun préampli n'alimente en ce moment n'a pas de potard (jamais deviné)."""
+        exp_to_idx = {}
+        for k, e in (self.exp_map or {}).items():
+            if e:
+                exp_to_idx[int(e)] = int(k)
+        if self.lv1_custom is not None:
+            chans = self.lv1_custom
+        else:
+            start = LV1_BANKS[self.lv1_bank][1]
+            chans = list(range(start, start + 16))
+        out = []
+        for ch in chans:
+            exps = self.lv1_sources.get(ch, []) if ch else []
+            out.append((ch or 0, [exp_to_idx[e] for e in exps if e in exp_to_idx]))
+        return out
+
     def _build_strips(self):
         for w in self.strips_frame.winfo_children():
             w.destroy()
         self.strips = []
-        start = BANKS[self.bank][1]
-        for k in range(16):
-            s = Strip(self.strips_frame, self, start + k, self.strip_w)
+        if self.view == "lv1":
+            self._layout = self._lv1_layout()
+            cols = [(idxs, ch) for ch, idxs in self._layout]
+        else:
+            self._layout = None
+            start = BANKS[self.bank][1]
+            cols = [([start + k], None) for k in range(16)]
+        widths, height = self._col_widths(len(cols))
+        for (idxs, ch), w in zip(cols, widths):
+            s = Strip(self.strips_frame, self, idxs, w, ch=ch, height=height)
             s.pack(side="left")
             self.strips.append(s)
         apply_theme(self.strips_frame)
-        self.bank_var.set(BANKS[self.bank][0])
+        self.bank_var.set(self._bank_name())
 
     def _build_resize_grip(self):
         grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0, cursor="bottom_right_corner")
+        self.grip = grip
         grip.place(relx=1.0, rely=1.0, anchor="se")
         grip.create_line(1, 9, 9, 1, fill=MUT)
         grip.create_line(4, 9, 9, 4, fill=MUT)
-        grip.bind("<ButtonPress-1>", lambda e: setattr(self, "_grip_x0", e.x_root))
+        grip.bind("<ButtonPress-1>", lambda e: setattr(self, "_grip0", (e.x_root, e.y_root, self.strip_w, self.strip_h)))
         grip.bind("<B1-Motion>", self._grip_drag)
 
     # -- fenetre : deplacement / redimensionnement -----------------------
@@ -865,29 +1134,87 @@ class FloatApp:
 
     def _win_drag_move(self, e):
         self.root.geometry("+%d+%d" % (e.x_root - self._drag_ox, e.y_root - self._drag_oy))
+        self._save_soon()
+
+    def _save_soon(self):
+        """Enregistre position / taille 0,8 s après le dernier changement : rien n'est perdu si le float
+        est fermé autrement que par ✕ / Échap (appli principale fermée, session Windows...)."""
+        if getattr(self, "_save_job", None):
+            self.root.after_cancel(self._save_job)
+        self._save_job = self.root.after(800, self._save_cfg)
 
     def _grip_drag(self, e):
-        dx = e.x_root - getattr(self, "_grip_x0", e.x_root)
-        self._grip_x0 = e.x_root
-        if abs(dx) >= 3:
-            self._resize_strips(1 if dx > 0 else -1)
+        """Coin bas-droit : la largeur TOTALE suit la souris au pixel près (répartie sur les 16 colonnes),
+        pour caler le bord droit du float sur le bord droit de la 16e tranche de la LV1."""
+        x0, y0, w0, h0 = getattr(self, "_grip0", (e.x_root, e.y_root, self.strip_w, self.strip_h))
+        n = max(1, len(self.strips))
+        self._set_strip_w(w0 + (e.x_root - x0) / n, h0 + (e.y_root - y0))
+
+    def _col_widths(self, n):
+        """Largeurs entières des n colonnes pour une largeur moyenne self.strip_w (somme = round(n * w)),
+        et la hauteur commune."""
+        w = self.strip_w
+        widths = [int(round((i + 1) * w)) - int(round(i * w)) for i in range(n)]
+        return widths, self.strip_h
+
+    def _set_strip_w(self, w, h=None):
+        w = max(28.0, min(140.0, w))
+        h = self.strip_h if h is None else int(max(110, min(700, h)))
+        if abs(w - self.strip_w) < 0.01 and h == self.strip_h:
+            return
+        self.strip_w, self.strip_h = w, h
+        widths, height = self._col_widths(len(self.strips))
+        for s, cw in zip(self.strips, widths):
+            if s.width != cw or int(s.cget("height")) != height:
+                s.resize(cw, height)
+        self._save_soon()
 
     def _resize_strips(self, delta):
-        self.strip_w = max(28, min(90, self.strip_w + delta))
-        for s in self.strips:
-            s.width = self.strip_w
-            s.config(width=self.strip_w, height=self.strip_w + STRIP_EXTRA_H)
-            ksz = max(34, self.strip_w - 12)
-            s.knob.config(width=ksz, height=ksz)
-            s.led.config(width=self.strip_w - 10)
-            s._draw_knob()
+        """Boutons −/+ : un quart de pixel par colonne (4 px sur la largeur totale), pour le réglage fin."""
+        self._set_strip_w(self.strip_w + delta / 8.0)
+
+    # -- calage par écran -----------------------------------------------------
+    @staticmethod
+    def _screen_key(rect):
+        return "%dx%d" % (rect[2], rect[3])
+
+    def _apply_screen_profile(self, x, y):
+        """Position + largeur des colonnes pour l'écran où se trouve le float : celles mémorisées pour
+        cette résolution, sinon le dernier calage mis à l'échelle de cet écran, sinon (x, y) tels quels."""
+        rect = monitor_rect(x, y)
+        screens = self.cfg.get("screens") or {}
+        if not rect:
+            return x, y
+        prof = screens.get(self._screen_key(rect))
+        if prof:
+            self.strip_w = float(prof.get("strip_w", self.strip_w))
+            self.strip_h = int(prof.get("strip_h") or self.strip_h)
+            return rect[0] + prof["dx"], rect[1] + prof["dy"]
+        last = screens.get(self.cfg.get("last_screen") or "")
+        if last:
+            try:
+                w0, h0 = (int(v) for v in self.cfg["last_screen"].split("x"))
+            except ValueError:
+                return x, y
+            sx, sy = rect[2] / float(w0), rect[3] / float(h0)
+            self.strip_w = float(last.get("strip_w", self.strip_w)) * min(sx, sy)
+            self.strip_h = int(int(last.get("strip_h") or self.strip_h) * min(sx, sy))
+            return rect[0] + int(last["dx"] * sx), rect[1] + int(last["dy"] * sy)
+        return x, y
 
     def _select_bank(self, name):
-        for i, (n, _s) in enumerate(BANKS):
-            if n == name:
-                self.bank = i
-                self._build_strips()
-                return
+        for view, banks in (("lv1", LV1_BANKS), ("x32", BANKS)):
+            for i, (n, _s) in enumerate(banks):
+                if n == name:
+                    self.view = view
+                    self.lv1_custom = None
+                    if view == "lv1":
+                        self.lv1_bank = i
+                    else:
+                        self.bank = i
+                    self._build_strips()
+                    self._save_cfg()
+                    return
 
     def _theme_menu(self):
         m = tk.Menu(self.root, tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032",
@@ -896,6 +1223,9 @@ class FloatApp:
         for name in THEMES:
             m.add_radiobutton(label=name + ("  (défaut)" if name == DEFAULT_THEME else ""), value=name,
                               variable=self.theme_var, command=lambda n=name: self._set_theme(n))
+        m.add_separator()
+        m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
+                      state="disabled")
         apply_theme(m)
         b = self.btn_theme
         m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
@@ -906,8 +1236,48 @@ class FloatApp:
         set_theme_map(name)
         apply_theme(self.root)
         for s in self.strips:
-            s._draw_knob()
+            for u in s.units:
+                u._draw_knob()
         self._save_cfg()
+
+    def _follow_lv1(self):
+        """Toutes les 100 ms : float devant la LV1, derrière les autres applis (demande de Joseph).
+        - LV1 (ou le float) active : float « toujours au premier plan » -> elle ne peut plus passer devant
+          quand on clique dessus (changement de couche...) ;
+        - une autre appli active : le float quitte le premier plan et se range juste SOUS elle ;
+        - LV1 réduite : float caché. Sans LV1 : toujours au premier plan, comme avant.
+        (Se placer par rapport à la fenêtre de la LV1 elle-même est refusé par Windows : elle tourne en
+        administrateur.) Fenêtre de la LV1 recherchée toutes les 2 s (relancée, fermée...)."""
+        now = time.time()
+        if self._lv1_hwnd and not window_alive(self._lv1_hwnd):
+            self._lv1_hwnd = None
+        if not self._lv1_hwnd and now >= self._lv1_seek:
+            self._lv1_seek = now + 2.0
+            self._lv1_hwnd = find_lv1_window()
+            self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
+        lv1 = self._lv1_hwnd
+        me = float_hwnd(self.root)
+        if lv1 and window_iconic(lv1):
+            if not self._hidden_with_lv1:
+                self._hidden_with_lv1 = True
+                self.root.withdraw()
+        else:
+            if self._hidden_with_lv1:
+                self._hidden_with_lv1 = False
+                self.root.deiconify()
+                self._z_state = None       # Tk réapplique son « -topmost » au réaffichage : tout refaire
+            if me:
+                fg = foreground_window()
+                front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
+                if front:
+                    if self._z_state != "top":
+                        set_topmost(me, True)
+                        self._z_state = "top"
+                elif self._z_state != fg:
+                    set_topmost(me, False)
+                    place_below(me, fg)
+                    self._z_state = fg
+        self.root.after(100, self._follow_lv1)
 
     def _theme_pass(self):
         """Passe reguliere (1 s) : rattrape les widgets crees en cours de route avec les teintes d'origine
@@ -916,8 +1286,18 @@ class FloatApp:
         self.root.after(1000, self._theme_pass)
 
     def _save_cfg(self):
-        save_cfg({"bank": self.bank, "strip_w": self.strip_w, "theme": self.theme,
-                  "x": self.root.winfo_x(), "y": self.root.winfo_y()})
+        x, y = self.root.winfo_x(), self.root.winfo_y()
+        screens = dict(self.cfg.get("screens") or {})
+        last = self.cfg.get("last_screen")
+        rect = monitor_rect(x, y)
+        if rect:
+            last = self._screen_key(rect)
+            screens[last] = {"dx": x - rect[0], "dy": y - rect[1], "strip_w": round(self.strip_w, 3),
+                             "strip_h": self.strip_h}
+        self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
+                    "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
+                    "screens": screens, "last_screen": last}
+        save_cfg(self.cfg)
 
     def _toggle_lock(self):
         self.locked = not self.locked
@@ -926,24 +1306,52 @@ class FloatApp:
                               fg=("#fff" if self.locked else MUT))
 
     def _toggle_collapse(self):
-        """Replie la fenêtre en un simple bandeau (barre de titre seule) pour libérer de la place sur
-        l'écran de la LV1 quand on n'a pas besoin des gains — comme un volet qu'on referme."""
+        """Replie la fenêtre pour libérer l'écran de la LV1 quand on n'a pas besoin des gains. Depuis la
+        float 2.7.0 (demande de Joseph), repliée il ne reste QUE le point de connexion (qui sert de poignée pour
+        déplacer la fenêtre) et la flèche pour la rouvrir."""
         self.collapsed = not self.collapsed
+        bar = self.titlebar
         if self.collapsed:
             self._toggle_panel(None)
             self.connectbar.pack_forget()
             self.strips_frame.pack_forget()
+            # on retient l'ordre et les options d'empilement de la barre de titre pour la reconstruire
+            # telle quelle au dépli (pack() seul replacerait les widgets à la fin, dans le désordre)
+            self._title_pack = [(w, w.pack_info()) for w in bar.pack_slaves()]
+            for w, _info in self._title_pack:
+                if w not in (self.led_conn, self.btn_collapse):
+                    w.pack_forget()
+            self.grip.place_forget()
             self.btn_collapse.config(text="▸")
         else:
+            for w, _info in self._title_pack:
+                w.pack_forget()
+            for w, info in self._title_pack:
+                w.pack(**info)
+            self.grip.place(relx=1.0, rely=1.0, anchor="se")
             # BUG corrige (1.7.1) : pack_forget() puis pack() replace un widget a la FIN de la pile
             # d'empilement courante, pas a sa position d'origine - comme la barre de titre restait
             # packee pendant le repli, un simple pack(side="top") la repoussait en dessous d'elle a
             # chaque depli, inversant l'ordre voulu (connexion en haut) au bout d'un cycle repli/depli.
             # Fix : forcer explicitement la position avec before=.
-            self.connectbar.pack(side="top", fill="x", before=self.titlebar)
-            self.strips_frame.pack(side="top", fill="x")
+            self.strips_frame.pack(side="top", fill="x", after=self.titlebar)
+            if self.console_open:
+                self.connectbar.pack(side="top", fill="x", after=self.strips_frame)
             self.btn_collapse.config(text="▾")
         self.root.update_idletasks()
+
+    def _toggle_console(self, show=None, auto=False):
+        """Barre de connexion (IP, Connecter, Scanner, Démo) SOUS les voies : ne décale jamais les voies."""
+        show = (not self.console_open) if show is None else show
+        if show == self.console_open:
+            return
+        self.console_open = show
+        self._console_auto = auto if show else False   # refermée : plus jamais rouverte d'office
+        if show and not self.collapsed:
+            self.connectbar.pack(side="top", fill="x", after=self.strips_frame)
+        else:
+            self.connectbar.pack_forget()
+        self.btn_console.config(bg=(TEAL if show else tc("#1c1e20")), fg=("#032" if show else TXT))
 
     def _toggle_panel(self, mode):
         if self.panel_mode == mode or mode is None:
@@ -1060,7 +1468,7 @@ class FloatApp:
             self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n))
 
     def _panel_width(self):
-        return max(200, len(self.strips) * self.strip_w)
+        return int(max(200, len(self.strips) * self.strip_w))
 
     def _save_scene(self, name):
         if not name:
@@ -1230,20 +1638,74 @@ class FloatApp:
                 self.status_lbl.config(text="Non connecté à la console", fg=MUT)
         else:
             self.status_lbl.config(text="", fg=MUT)
+        # barre de connexion : ouverte d'office tant que la console n'est pas connectée (une fois), refermée
+        # toute seule dès la connexion si c'est elle qui s'était ouverte
+        if self._console_auto is None:
+            if snap.get("connected"):
+                self._console_auto = False
+            elif not snap.get("trying") and self.backend.reachable:
+                self._toggle_console(True, auto=True)
+        elif self._console_auto and snap.get("connected"):
+            self._toggle_console(False)
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
         lm = snap.get("lv1_map") or {}
         lc = snap.get("lv1_channels") or {}
         self.exp_map = em
         self.lv1_map = lm
+        # cles string (JSON, mode serveur) ou int (dict Python direct, mode --direct) : normalisees en int
+        self.lv1_sources = {int(k): [int(e) for e in v] for k, v in (snap.get("lv1_sources") or {}).items()}
+        # Suit la couche affichée sur la LV1 (Ch 1-16, 17-32... lue dans sa base, lv1/layers.py) : seulement
+        # quand elle CHANGE, pour qu'un choix fait à la main dans le float tienne jusqu'au prochain
+        # changement de couche dans la LV1. Grp/Fx, Custom... (bank None) : on ne bouge pas.
+        lay = snap.get("lv1_layer") or {}
+        key = (lay.get("mode"), lay.get("page"), tuple(lay.get("channels") or ()))
+        if key != self._lv1_layer_seen:
+            self._lv1_layer_seen = key
+            lb, chans = lay.get("bank"), lay.get("channels")
+            if self.view == "lv1" and chans:
+                if lb is not None and 0 <= lb < len(LV1_BANKS):
+                    self.lv1_bank, self.lv1_custom = lb, None
+                else:   # couche Custom : les 16 canaux qu'elle affiche, dans l'ordre de ses tranches
+                    self.lv1_custom = list(chans)[:16] + [None] * (16 - len(chans))
+                    self.lv1_custom_name = "LV1 Custom %d" % (lay.get("page", 0) + 1)
+                self._build_strips()
+        # Mode de la LV1 (panneau « Modes ») : float déplié en SndChk / Setup, replié dans les autres modes
+        # (demande de Joseph). Seulement quand le mode CHANGE : un dépli / repli à la main tient jusqu'au
+        # prochain changement de mode dans la LV1.
+        preset = lay.get("preset_name")
+        if preset and preset != self._lv1_preset_seen:
+            self._lv1_preset_seen = preset
+            want_open = preset in AUTO_OPEN_MODES
+            if want_open == self.collapsed:
+                self._toggle_collapse()
+        if self.view == "lv1" and self._lv1_layout() != self._layout:
+            self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
         for s in self.strips:
-            s.set_gain(snap["gains"][s.idx] if snap.get("gains") else None)
-            s.set_phantom(snap["phantom"][s.idx] if snap.get("phantom") else None)
-            s.set_led(m["v"][s.idx] if m.get("live") else None, self.clip_db)
-            # cle string (vient du JSON, mode serveur) ou int (dict Python direct, mode --direct)
-            exp = em.get(str(s.idx), em.get(s.idx))
-            s.set_exp(exp)
-            ch = self._lv1_channel(exp)
+            for u in s.units:
+                u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
+                u.set_phantom(snap["phantom"][u.idx] if snap.get("phantom") else None)
+                u.set_led(m["v"][u.idx] if m.get("live") else None, self.clip_db)
+            if s.ch == 0:
+                # vue LV1, tranche Custom qui n'est pas un canal d'entrée (groupe, FX...) : colonne vide
+                s.set_tag("")
+                s.set_color(None)
+                s.set_name("")
+                continue
+            if s.ch is not None:
+                # vue LV1 : la colonne EST le canal LV1 s.ch
+                ch = s.ch
+                exps = self.lv1_sources.get(ch, [])
+                tag = ""
+                if s.idxs:
+                    tag = "%s = EXP %s" % (join_tags(s.idxs), "/".join(str(e) for e in exps))
+                elif exps:
+                    tag = "EXP %s" % "/".join(str(e) for e in exps)
+            else:
+                exp = em.get(str(s.idxs[0]), em.get(s.idxs[0]))
+                tag = strip_tag(s.idxs[0]) + (" = EXP %d" % exp if exp else "")
+                ch = self._lv1_channel(exp)
+            s.set_tag(tag)
             info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}
             s.set_color(info.get("color"))
             s.set_name(info.get("label") or ("In %d" % ch if ch else ""))
@@ -1310,8 +1772,8 @@ class _SimpleAsk:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="X32 Gain Float — fenêtre compagnon toujours au premier plan")
-    ap.add_argument("--version", action="version", version="X32 Gain Float %s" % FLOAT_VERSION)
+    ap = argparse.ArgumentParser(description=APP_SHORT + " (Float) — fenêtre compagnon toujours au premier plan")
+    ap.add_argument("--version", action="version", version="%s Float %s - by %s" % (APP_SHORT, FLOAT_VERSION, APP_AUTHOR))
     ap.add_argument("--port", type=int, default=8032,
                      help="port local de x32_gain_recall.py déjà lancé (défaut 8032, mode serveur)")
     ap.add_argument("--session-token", default=None,
@@ -1343,7 +1805,7 @@ def main():
         app.run()
     except Exception as e:  # pas de console visible en .exe --windowed : on affiche l'erreur plutôt que de disparaître
         try:
-            messagebox.showerror("X32 Gain Float — erreur au démarrage", "%s: %s" % (type(e).__name__, e))
+            messagebox.showerror(APP_SHORT + " — erreur au démarrage", "%s: %s" % (type(e).__name__, e))
         except Exception:
             raise
         raise

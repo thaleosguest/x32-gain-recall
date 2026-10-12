@@ -23,7 +23,7 @@ DEUX SOURCES, combinées :
   2) Automatique : la session LV1 — par défaut la base en direct CurrentLV1.dat, sinon un .emo, ou un
      dossier (le dossier History avec "Auto Save Every X Minutes") dont on relit le .emo le plus récent.
      Pour chaque canal, on prend la source du premier device de `devices` qui l'alimente (défaut :
-     X32RACK seul — la carte DN32-WSG de la X32, dont la voie N est l'EXP N côté X32 ; voir
+     la carte DN32-WSG ou X-WSG de la X32 (ou le nom X32RACK), dont la voie N est l'EXP N côté X32 ; voir
      lv1/session_patch.py pour pourquoi TracksLive n'est pas pris par défaut). Quel que soit le status
      de la route, et en ignorant la voie droite des canaux mono.
   La table manuelle est prioritaire : un canal qu'elle décrit remplace ce que dit la session.
@@ -105,6 +105,8 @@ class PatchMap:
         self._info = {}                # {canal: {"name", "color"}} lus dans la session (lv1/channelinfo.py)
         self.errors = {}           # "manual" / "session" -> message
         self._exp_to_ch, self._conflicts = {}, []
+        self._merged = {}              # {canal: [exp, ...]} (voie G puis D), table manuelle comprise
+        self._layer = None             # couche affichée sur la LV1 (lv1/layers.py)
         self._lock = threading.Lock()
         self.refresh()
 
@@ -146,7 +148,7 @@ class PatchMap:
         if sig == self._session_sig:
             return False
         try:
-            routes, info = read_session(f)
+            routes, info, layer = read_session(f)
             chans = pick_sources(routes, self.devices)
         except (sqlite3.Error, OSError) as e:
             # souvent : copie prise pendant une écriture de la LV1 - on garde le résultat précédent et on
@@ -157,6 +159,7 @@ class PatchMap:
         self._session = {ch: list(info["sources"]) for ch, info in chans.items()}
         self._session_ranks = {ch: c.get("rank", 0) for ch, c in chans.items()}
         self._info = info
+        self._layer = layer
         self.session_read_at = time.time()
         if self._session:
             self.errors.pop("session", None)
@@ -177,6 +180,7 @@ class PatchMap:
                 ranks = {ch: self._session_ranks.get(ch, 0) for ch in self._session}
                 ranks.update({ch: -1 for ch in self._manual})
                 self._exp_to_ch, self._conflicts = build_exp_map(merged, ranks)
+                self._merged = merged
             return changed
 
     def start(self):
@@ -196,6 +200,22 @@ class PatchMap:
         """{numéro EXP: canal LV1} (copie)."""
         with self._lock:
             return dict(self._exp_to_ch)
+
+    def channel_sources(self):
+        """{canal LV1: [exp, ...]} (copie) : les EXP qui alimentent chaque canal, voie gauche puis droite
+        (2 pour un canal stéréo). Sert à la vue LV1 (une colonne par canal, paires stéréo regroupées).
+        Contrairement à exp_to_channel(), un même EXP peut figurer sur plusieurs canaux."""
+        with self._lock:
+            return {ch: list(v) for ch, v in self._merged.items()}
+
+    def layer(self):
+        """Couche affichée sur la LV1 (Mixer 1) : {"mode", "page", "bank"} (voir lv1/layers.py) ou None."""
+        return dict(self._layer) if self._layer else None
+
+    def channel_count(self):
+        """Nombre de canaux d'entrée connus de la LV1 (plus grand numéro vu dans la session ou la table)."""
+        with self._lock:
+            return max(list(self._info) + list(self._merged) + [0])
 
     def channel_info(self, channels=None):
         """{canal: {"color", "name", "label"}} d'après la session LV1 (sans Companion), pour les canaux
