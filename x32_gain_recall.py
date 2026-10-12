@@ -51,7 +51,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -446,6 +446,8 @@ class X32Client:
                 "lv1_count": LV1.channel_count() if LV1 else 0,
                 # couche affichee sur la LV1 (bank = 0 pour Ch 1-16...) : le float la suit en vue LV1
                 "lv1_layer": LV1.layer() if LV1 else None,
+                # couches des deux vues de la LV1 (le float suit celle de l'onglet affiche, Mixer 1 ou 2)
+                "lv1_layers": LV1.layers() if LV1 else {},
                 "lv1": LV1.status() if LV1 else None,
                 # couleur / nom / libelle a afficher par canal LV1, partages par le navigateur et le float
                 # (base LV1, + Companion si active) - voir lv1_channels_snapshot()

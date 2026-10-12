@@ -79,6 +79,14 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
   1 Home, 2 Setup, 3 SndChk, 4 Edit, 5 Fx, 6 Monitor, 7 Status, 8 Dugan) ; 8 lignes par
   `ovv_track_mode` (surface + mode de couche), une par page, ordre des id. Custom : par page ; couches
   d'entrée : les 8 pages changent ensemble. Float : déplié en SndChk/Setup, replié sinon (`AUTO_OPEN_MODES`).
+- **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
+- **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien
+  pendant les clics). Lu à l'écran (`lv1_tab()` : ligne à 14/1080 de la zone client ; 7 boutons de
+  ~4,7 % de largeur, gris (231,231,231), actif bleu (56,201,255)) ; validé sur captures plein écran et
+  en direct (LV1 fenêtrée 1728x970), ~15 ms. Lu seulement quand la LV1 est la fenêtre active.
+- **Disposition 2.2.0** : languette `TAB_W` à gauche (plus de barre en haut), dock Scènes/Routing +
+  panneau = Toplevels placés en bas à gauche de la LV1 (`_place_dock`), même z-order que le float.
+  Calage d'avant (`layout` absent) converti : x − TAB_W, y + OLD_TITLE_H.
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
 - **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →

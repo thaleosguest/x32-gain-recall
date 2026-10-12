@@ -90,7 +90,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.7.2"
+FLOAT_VERSION = "2.8.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
 # Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
@@ -105,6 +105,13 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
 # « Ch 1-16 », « Ch 17-32 »... de la LV1) ; (nom, premier canal)
 # Modes de la LV1 (panneau « Modes ») où le float se déplie tout seul ; replié dans les autres
 AUTO_OPEN_MODES = ("SndChk", "Setup")
+# Onglets du haut de la LV1, dans l'ordre (lus à l'écran, voir lv1_tab()) ; float visible sur les deux
+# premiers seulement (demande de Joseph : invisible sur All, Channel, Show, Patch, Setup)
+LV1_TABS = ("Mixer 1", "Mixer 2", "All", "Channel", "Show", "Patch", "Setup")
+MIXER_TABS = ("Mixer 1", "Mixer 2")
+TAB_W = 22          # largeur de la languette à gauche des voies (2.2.0 : remplace la barre du haut)
+OLD_TITLE_H = 34    # hauteur de l'ancienne barre du haut (pour convertir un calage d'avant la 2.2.0)
+LAYOUT_VERSION = 2
 LV1_BANKS = [("LV1 Ch 1-16", 1), ("LV1 Ch 17-32", 17), ("LV1 Ch 33-48", 33), ("LV1 Ch 49-64", 49),
              ("LV1 Ch 65-80", 65)]
 
@@ -245,6 +252,81 @@ def window_alive(hwnd):
 def window_iconic(hwnd):
     _c, u32 = _user32()
     return bool(u32 and u32.IsIconic(hwnd))
+
+
+def client_rect(hwnd):
+    """(gauche, haut, largeur, hauteur) de la zone client de `hwnd`, en coordonnées écran, ou None."""
+    ctypes, u32 = _user32()
+    if not u32 or not hwnd:
+        return None
+    from ctypes import wintypes
+    r = wintypes.RECT()
+    pt = wintypes.POINT(0, 0)
+    u32.GetClientRect.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    u32.ClientToScreen.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    if not u32.GetClientRect(hwnd, ctypes.byref(r)) or not u32.ClientToScreen(hwnd, ctypes.byref(pt)):
+        return None
+    return pt.x, pt.y, r.right - r.left, r.bottom - r.top
+
+
+def screen_row(x, y, w):
+    """Pixels (r, g, b) de la ligne d'écran [x, x+w) à la hauteur y (capture GDI d'une seule ligne)."""
+    ctypes, u32 = _user32()
+    if not u32 or w <= 0:
+        return []
+    g32 = ctypes.windll.gdi32
+    for fn in (u32.GetDC, g32.CreateCompatibleDC, g32.CreateCompatibleBitmap, g32.SelectObject):
+        fn.restype = ctypes.c_void_p
+    u32.GetDC.argtypes = [ctypes.c_void_p]
+    u32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    g32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+    g32.CreateCompatibleBitmap.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    g32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    g32.BitBlt.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                           ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    g32.GetDIBits.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+                              ctypes.c_void_p, ctypes.c_uint]
+    g32.DeleteObject.argtypes = [ctypes.c_void_p]
+    g32.DeleteDC.argtypes = [ctypes.c_void_p]
+    hdc = u32.GetDC(None)
+    mem = g32.CreateCompatibleDC(hdc)
+    bmp = g32.CreateCompatibleBitmap(hdc, w, 1)
+    old = g32.SelectObject(mem, bmp)
+    try:
+        g32.BitBlt(mem, 0, 0, w, 1, hdc, x, y, 0x00CC0020)               # SRCCOPY
+        bmi = (ctypes.c_uint32 * 10)(40, w, 0xFFFFFFFF, 1 | (32 << 16), 0, 0, 0, 0, 0, 0)  # 32 bits, haut en bas
+        buf = (ctypes.c_ubyte * (4 * w))()
+        g32.GetDIBits(mem, bmp, 0, 1, buf, bmi, 0)
+        return [(buf[4 * i + 2], buf[4 * i + 1], buf[4 * i]) for i in range(w)]
+    finally:
+        g32.SelectObject(mem, old)
+        g32.DeleteObject(bmp)
+        g32.DeleteDC(mem)
+        u32.ReleaseDC(None, hdc)
+
+
+def lv1_tab(hwnd):
+    """Onglet du haut affiché par la LV1 (« Mixer 1 », « Mixer 2 », « All »…), ou None si illisible.
+    La LV1 ne l'écrit pas dans sa base (vérifié le 2026-10-12) : on le LIT À L'ÉCRAN. Sur une ligne en
+    haut de la fenêtre (14 px sur 1080), les 7 onglets sont 7 boutons de même largeur (~4,7 % de la
+    fenêtre) : gris clair (231,231,231), et bleu (56,201,255) pour l'onglet actif. On cherche ces 7
+    boutons par leur largeur relative (pas de coordonnées fixes : marche à toute résolution)."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    row = screen_row(x, y + max(1, round(h * 14 / 1080.0)), w)
+    runs, cur, start = [], None, 0
+    for i, (r, g, b) in enumerate(row + [(0, 0, 0)]):
+        k = "C" if (b > 200 and g > 150 and r < 130) else ("W" if (r > 200 and g > 200 and b > 200) else None)
+        if k != cur:
+            if cur:
+                runs.append((cur, start, i - start))
+            cur, start = k, i
+    tabs = [k for k, s, n in runs if 0.035 * w <= n <= 0.06 * w]
+    if len(tabs) < len(LV1_TABS) or tabs[:len(LV1_TABS)].count("C") != 1:
+        return None
+    return LV1_TABS[tabs.index("C")]
 
 
 def _wintypes(u32, ctypes):
@@ -904,6 +986,10 @@ class FloatApp:
         self._lv1_seek = 0.0
         self._hidden_with_lv1 = False
         self._z_state = None           # "top" (premier plan) ou HWND de l'appli active sous laquelle on est
+        self._lv1_tab = None           # onglet du haut de la LV1 (« Mixer 1 »…), lu à l'écran
+        self._tab_tick = 0
+        self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
+        self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
         self.root.attributes("-topmost", True)
         try:
             self.root.attributes("-alpha", 0.97)
@@ -914,16 +1000,20 @@ class FloatApp:
         x, y = self._apply_screen_profile(x, y)
         self.root.geometry("+%d+%d" % (x, y))
 
-        # 2.1.0 (demande de Joseph) : UNE seule barre en haut. La barre de connexion (IP/Connecter/Scanner/
-        # Démo) n'est plus empilée au-dessus : elle s'ouvre SOUS les voies (bouton « Console », ou toute
-        # seule tant que la console n'est pas connectée), pour ne jamais décaler les voies calées sur la LV1.
-        self.titlebar = self._build_titlebar()
-        self.strips_frame = tk.Frame(self.root, bg=BG)
+        # 2.2.0 (demande de Joseph) : plus de barre en haut, pour s'intégrer à la LV1. Une languette à
+        # GAUCHE des voies (point de connexion = poignée, flèche de repli, menu ⋯), posée sur la colonne
+        # « Insert / Input Select » de la LV1 ; repliée, il ne reste qu'elle, à gauche du canal 1. Scènes
+        # et Routing : petite fenêtre en bas à gauche de la LV1 (_build_dock), panneaux au-dessus d'elle.
+        # La barre de connexion s'ouvre SOUS les voies (Console), sans jamais les décaler.
+        self.tab = self._build_tab()
+        self.right = tk.Frame(self.root, bg=BG)
+        self.right.pack(side="left", anchor="n")
+        self.strips_frame = tk.Frame(self.right, bg=BG)
         self.strips_frame.pack(side="top", fill="x")
         self.connectbar = self._build_connectbar()
         self.strips = []
         self._build_strips()
-        self.panel = tk.Frame(self.root, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
+        self._build_dock()
         self._build_resize_grip()
 
         self.root.bind("<Escape>", lambda e: self.quit())
@@ -944,91 +1034,112 @@ class FloatApp:
         self._poll()
 
     # -- construction de l'UI -------------------------------------------
-    def _build_titlebar(self):
-        # Barre de titre : boutons de taille/repli a GAUCHE (plus accessibles au pouce quand la fenetre
-        # est glissee pres du bord), cibles agrandies pour le tactile (padx/pady genereux, pas juste la
-        # police), et une large zone vide AU MILIEU dediee au glisser-deposer au doigt - importante
-        # surtout replie (▸), ou la barre de titre est tout ce qui reste visible pour reattraper la
-        # fenetre : avant la 1.5.0, les boutons occupaient presque toute la largeur et ne laissaient que
-        # de minces interstices pour saisir la fenetre.
-        bar = tk.Frame(self.root, bg="#0d0e0f")
-        bar.pack(side="top", fill="x")
-        bar.bind("<ButtonPress-1>", self._win_drag_start)
-        bar.bind("<B1-Motion>", self._win_drag_move)
+    def _build_tab(self):
+        """Languette verticale à gauche des voies (2.2.0, remplace la barre du haut) : point de connexion
+        (poignée pour déplacer la fenêtre), flèche de repli, menu ⋯ (banques, taille, console, fond,
+        verrou, fermer), cadenas visible quand l'édition est verrouillée."""
+        tab = tk.Frame(self.root, bg="#0d0e0f", width=TAB_W)
+        tab.pack(side="left", fill="y", anchor="n")
+        tab.bind("<ButtonPress-1>", self._win_drag_start)
+        tab.bind("<B1-Motion>", self._win_drag_move)
 
-        # Point de connexion : sert aussi de poignée pour déplacer la fenêtre (float 2.7.0, demande de Joseph) -
-        # c'est tout ce qui reste visible avec la flèche une fois la fenêtre repliée. Zone de prise
-        # agrandie autour du point pour le doigt.
-        self.led_conn = tk.Canvas(bar, width=17, height=17, bg="#0d0e0f", highlightthickness=0, cursor="fleur")
-        self.led_conn.pack(side="left", padx=(3, 0), pady=2)
-        self._conn_id = self.led_conn.create_oval(4, 4, 13, 13, fill="#555555", outline="")
+        self.led_conn = tk.Canvas(tab, width=TAB_W, height=20, bg="#0d0e0f", highlightthickness=0, cursor="fleur")
+        self.led_conn.pack(side="top", pady=(2, 0))
+        c = TAB_W / 2.0
+        self._conn_id = self.led_conn.create_oval(c - 4.5, 5.5, c + 4.5, 14.5, fill="#555555", outline="")
         self.led_conn.bind("<ButtonPress-1>", self._win_drag_start)
         self.led_conn.bind("<B1-Motion>", self._win_drag_move)
 
-        self.btn_collapse = tk.Button(bar, text="▾", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
-                                       activebackground="#1c1e20", padx=7, pady=4, command=self._toggle_collapse)
-        self.btn_collapse.pack(side="left", padx=(0, 2), pady=2)
-        tk.Button(bar, text="−", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
-                  activebackground="#1c1e20", padx=7, pady=4,
-                  command=lambda: self._resize_strips(-2)).pack(side="left", padx=1, pady=2)
-        tk.Button(bar, text="+", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
-                  activebackground="#1c1e20", padx=7, pady=4,
-                  command=lambda: self._resize_strips(2)).pack(side="left", padx=(1, 8), pady=2)
+        self.btn_collapse = tk.Button(tab, text="◂", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 10, "bold"),
+                                       activebackground="#1c1e20", padx=0, pady=2, width=2,
+                                       command=self._toggle_collapse)
+        self.btn_collapse.pack(side="top")
+        self.btn_more = tk.Button(tab, text="⋯", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
+                                  activebackground="#1c1e20", padx=0, pady=0, width=2, command=self._more_menu)
+        self.btn_more.pack(side="top")
+        self.lock_lbl = tk.Label(tab, text="🔒", bg="#0d0e0f", fg=WARN, font=("Segoe UI", 9))
 
-        # Banques : vue LV1 (canaux de la LV1) puis vue X32 (préamplis), dans le même menu
         self.bank_var = tk.StringVar(value=self._bank_name())
-        self.bank_menu = tk.OptionMenu(bar, self.bank_var, *[b[0] for b in LV1_BANKS + BANKS],
-                                       command=self._select_bank)
-        self.bank_menu.config(bg="#0d0e0f", fg=TXT, bd=0, highlightthickness=0, font=("Segoe UI", 9, "bold"),
-                               activebackground="#1c1e20", relief="flat")
-        self.bank_menu["menu"].config(bg="#15171a", fg=TXT)
-        self.bank_menu["menu"].insert_separator(len(LV1_BANKS))
-        self.bank_menu.pack(side="left", padx=2)
+        self.theme_var = tk.StringVar(value=self.theme)
+        self.console_var = tk.BooleanVar(value=False)
+        self.lock_var = tk.BooleanVar(value=False)
+        return tab
 
-        # Boutons Scenes/Routing plus "explicites" (demande utilisateur) : contour visible au repos,
-        # et bascule vers le meme bleu "actif" que les onglets Gains/Routing du navigateur une fois le
-        # panneau ouvert (gere dans _toggle_panel), plutot qu'un simple gris a peine plus clair.
-        self.btn_scenes = tk.Button(bar, text="Scènes", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
-                                     activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
+    def _more_menu(self):
+        mk = dict(tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032", selectcolor=TXT)
+        m = tk.Menu(self.root, **mk)
+        banks = tk.Menu(m, **mk)
+        for name, _s in LV1_BANKS:
+            banks.add_radiobutton(label=name, value=name, variable=self.bank_var,
+                                  command=lambda n=name: self._select_bank(n))
+        banks.add_separator()
+        for name, _s in BANKS:
+            banks.add_radiobutton(label=name, value=name, variable=self.bank_var,
+                                  command=lambda n=name: self._select_bank(n))
+        m.add_cascade(label="Banque : %s" % self._bank_name(), menu=banks)
+        m.add_command(label="Plus large  (+)", command=lambda: self._resize_strips(2))
+        m.add_command(label="Plus étroit  (−)", command=lambda: self._resize_strips(-2))
+        m.add_separator()
+        m.add_checkbutton(label="Console (IP, connexion)", variable=self.console_var,
+                          command=lambda: self._toggle_console(self.console_var.get()))
+        m.add_checkbutton(label="Verrouiller l'édition", variable=self.lock_var, command=self._toggle_lock)
+        themes = tk.Menu(m, **mk)
+        for name in THEMES:
+            themes.add_radiobutton(label=name + ("  (défaut)" if name == DEFAULT_THEME else ""), value=name,
+                                   variable=self.theme_var, command=lambda n=name: self._set_theme(n))
+        m.add_cascade(label="Fond de la fenêtre", menu=themes)
+        m.add_separator()
+        m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
+                      state="disabled")
+        m.add_command(label="Fermer le float", command=self.quit)
+        apply_theme(m)
+        b = self.btn_more
+        m.tk_popup(b.winfo_rootx() + b.winfo_width(), b.winfo_rooty())
+
+    def _build_dock(self):
+        """Scènes / Routing (2.2.0, demande de Joseph) : petite fenêtre flottante en bas à gauche de la
+        LV1, affichée avec les voies (SndChk / Setup) ; les panneaux s'ouvrent juste au-dessus."""
+        def win():
+            w = tk.Toplevel(self.root, bg=BG)
+            w.overrideredirect(True)
+            try:
+                w.attributes("-alpha", 0.97)
+            except tk.TclError:
+                pass
+            w.withdraw()
+            return w
+        self.dock = win()
+        self.btn_scenes = tk.Button(self.dock, text="Scènes", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                                     activebackground="#2a2c2e", relief="flat", padx=12, pady=6,
                                      highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
                                      command=lambda: self._toggle_panel("scenes"))
-        self.btn_scenes.pack(side="left", padx=(8, 2))
-        self.btn_routing = tk.Button(bar, text="Routing", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
-                                      activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
+        self.btn_scenes.pack(side="left", padx=(3, 2), pady=3)
+        self.btn_routing = tk.Button(self.dock, text="Routing", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
+                                      activebackground="#2a2c2e", relief="flat", padx=12, pady=6,
                                       highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
                                       command=lambda: self._toggle_panel("routing"))
-        self.btn_routing.pack(side="left", padx=2)
-        self.btn_console = tk.Button(bar, text="Console", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 9, "bold"),
-                                      activebackground="#2a2c2e", relief="flat", padx=10, pady=5,
-                                      highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
-                                      command=lambda: self._toggle_console())
-        self.btn_console.pack(side="left", padx=2)
+        self.btn_routing.pack(side="left", padx=(2, 3), pady=3)
+        self.panel_win = win()
+        self.panel = tk.Frame(self.panel_win, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
+        self.panel.pack(fill="both", expand=True)
 
-        self.btn_lock = tk.Button(bar, text="🔓", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10),
-                                   activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
-                                   highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
-                                   command=self._toggle_lock)
-        self.btn_lock.pack(side="right", padx=4, pady=2)
-        tk.Button(bar, text="✕", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10), activebackground=WARN,
-                  relief="flat", padx=7, pady=5, highlightthickness=1, highlightbackground=LINE2,
-                  cursor="hand2", command=self.quit).pack(side="right", padx=4, pady=2)
-        # Choix du fond (Anthracite par defaut, Noir = celui d'origine, Or, Bleu nuit), memorise
-        self.theme_var = tk.StringVar(value=self.theme)
-        self.btn_theme = tk.Button(bar, text="◐", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 10),
-                                    activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
-                                    highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
-                                    command=self._theme_menu)
-        self.btn_theme.pack(side="right", padx=4, pady=2)
-
-        # Poignee de glisser : prend tout l'espace restant entre les boutons de gauche et de droite.
-        # Memes bindings que la barre elle-meme, mais garantie d'etre toujours presente et large, meme
-        # fenetre repliee ou tres etroite - contrairement aux interstices entre boutons.
-        handle = tk.Label(bar, text="⋯⋯⋯⋯⋯⋯⋯⋯⋯⋯", bg="#0d0e0f", fg="#2a2c2e", font=("Segoe UI", 8))
-        handle.pack(side="left", fill="both", expand=True)
-        handle.bind("<ButtonPress-1>", self._win_drag_start)
-        handle.bind("<B1-Motion>", self._win_drag_move)
-        self.drag_handle = handle
-        return bar
+    def _place_dock(self):
+        """Dock en bas à gauche de la LV1 (à défaut : sous le float) ; panneau ouvert juste au-dessus."""
+        rect = client_rect(self._lv1_hwnd) if self._lv1_hwnd else None
+        self.dock.update_idletasks()
+        dw, dh = self.dock.winfo_reqwidth(), self.dock.winfo_reqheight()
+        if rect:
+            x, y = rect[0] + 12, rect[1] + rect[3] - dh - 12
+        else:
+            x, y = self.root.winfo_x(), self.root.winfo_y() + self.root.winfo_height() + 4
+        if (self.dock.winfo_x(), self.dock.winfo_y()) != (x, y):
+            self.dock.geometry("+%d+%d" % (x, y))
+        if self.panel_mode:
+            self.panel_win.update_idletasks()
+            ph = self.panel_win.winfo_reqheight()
+            py = max(0, y - ph - 6)
+            if (self.panel_win.winfo_x(), self.panel_win.winfo_y()) != (x, py):
+                self.panel_win.geometry("+%d+%d" % (x, py))
 
     def _build_connectbar(self):
         """Barre de connexion, EN HAUT depuis la 1.7.0 (a la demande explicite : avant, elle etait sous
@@ -1119,7 +1230,8 @@ class FloatApp:
         self.bank_var.set(self._bank_name())
 
     def _build_resize_grip(self):
-        grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0, cursor="bottom_right_corner")
+        grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0,
+                         cursor="bottom_right_corner")
         self.grip = grip
         grip.place(relx=1.0, rely=1.0, anchor="se")
         grip.create_line(1, 9, 9, 1, fill=MUT)
@@ -1181,6 +1293,13 @@ class FloatApp:
     def _apply_screen_profile(self, x, y):
         """Position + largeur des colonnes pour l'écran où se trouve le float : celles mémorisées pour
         cette résolution, sinon le dernier calage mis à l'échelle de cet écran, sinon (x, y) tels quels."""
+        if self.cfg.get("layout") != LAYOUT_VERSION:
+            # calage d'avant la 2.2.0 : barre en haut, voies au bord gauche de la fenêtre. Maintenant la
+            # languette est à gauche et plus de barre : on décale pour garder les voies au même endroit.
+            x, y = x - TAB_W, y + OLD_TITLE_H
+            for prof in (self.cfg.get("screens") or {}).values():
+                prof["dx"] = prof.get("dx", 0) - TAB_W
+                prof["dy"] = prof.get("dy", 0) + OLD_TITLE_H
         rect = monitor_rect(x, y)
         screens = self.cfg.get("screens") or {}
         if not rect:
@@ -1216,20 +1335,6 @@ class FloatApp:
                     self._save_cfg()
                     return
 
-    def _theme_menu(self):
-        m = tk.Menu(self.root, tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032",
-                    selectcolor=TXT)
-        m.add_command(label="Fond de la fenêtre", state="disabled")
-        for name in THEMES:
-            m.add_radiobutton(label=name + ("  (défaut)" if name == DEFAULT_THEME else ""), value=name,
-                              variable=self.theme_var, command=lambda n=name: self._set_theme(n))
-        m.add_separator()
-        m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
-                      state="disabled")
-        apply_theme(m)
-        b = self.btn_theme
-        m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
-
     def _set_theme(self, name):
         self.theme = name
         self.theme_var.set(name)
@@ -1241,13 +1346,14 @@ class FloatApp:
         self._save_cfg()
 
     def _follow_lv1(self):
-        """Toutes les 100 ms : float devant la LV1, derrière les autres applis (demande de Joseph).
-        - LV1 (ou le float) active : float « toujours au premier plan » -> elle ne peut plus passer devant
-          quand on clique dessus (changement de couche...) ;
-        - une autre appli active : le float quitte le premier plan et se range juste SOUS elle ;
-        - LV1 réduite : float caché. Sans LV1 : toujours au premier plan, comme avant.
+        """Toutes les 100 ms : fenêtres du float (voies, dock Scènes/Routing, panneau) devant la LV1,
+        derrière les autres applis (demande de Joseph).
+        - LV1 (ou le float) active : « toujours au premier plan » -> la LV1 ne passe plus devant quand on
+          clique dessus ; une autre appli active : juste SOUS elle ;
+        - cachées quand la LV1 est réduite, ou affiche un autre onglet que Mixer 1 / Mixer 2 (2.2.0) ;
+        - sans LV1 : toujours au premier plan, comme avant.
         (Se placer par rapport à la fenêtre de la LV1 elle-même est refusé par Windows : elle tourne en
-        administrateur.) Fenêtre de la LV1 recherchée toutes les 2 s (relancée, fermée...)."""
+        administrateur.) Fenêtre de la LV1 recherchée toutes les 2 s, onglet lu à l'écran toutes les 300 ms."""
         now = time.time()
         if self._lv1_hwnd and not window_alive(self._lv1_hwnd):
             self._lv1_hwnd = None
@@ -1256,27 +1362,38 @@ class FloatApp:
             self._lv1_hwnd = find_lv1_window()
             self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
         lv1 = self._lv1_hwnd
-        me = float_hwnd(self.root)
-        if lv1 and window_iconic(lv1):
-            if not self._hidden_with_lv1:
-                self._hidden_with_lv1 = True
-                self.root.withdraw()
-        else:
-            if self._hidden_with_lv1:
-                self._hidden_with_lv1 = False
+        fg = foreground_window()
+        front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
+        self._tab_tick += 1
+        if lv1 and not window_iconic(lv1) and front and self._tab_tick % 3 == 0:
+            tab = lv1_tab(lv1)          # illisible (fenêtre couverte...) : on garde le dernier connu
+            if tab:
+                self._lv1_tab = tab
+                if tab in MIXER_TABS:
+                    self._surface = "mixer2" if tab == "Mixer 2" else "mixer1"
+        shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
+        if shown != self._shown:
+            self._shown = shown
+            if shown:
                 self.root.deiconify()
-                self._z_state = None       # Tk réapplique son « -topmost » au réaffichage : tout refaire
-            if me:
-                fg = foreground_window()
-                front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
-                if front:
-                    if self._z_state != "top":
-                        set_topmost(me, True)
-                        self._z_state = "top"
-                elif self._z_state != fg:
-                    set_topmost(me, False)
-                    place_below(me, fg)
-                    self._z_state = fg
+                self._z_state = None   # Tk réapplique son « -topmost » au réaffichage : tout refaire
+            else:
+                self.root.withdraw()
+            self._sync_dock()
+        if shown:
+            self._sync_dock()
+            wins = [w for w in (self.root, self.dock, self.panel_win) if w.state() != "withdrawn"]
+            hwnds = [h for h in (float_hwnd(w) for w in wins) if h]
+            if front:
+                if self._z_state != "top":
+                    for h in hwnds:
+                        set_topmost(h, True)
+                    self._z_state = "top"
+            elif self._z_state != fg:
+                for h in hwnds:
+                    set_topmost(h, False)
+                    place_below(h, fg)
+                self._z_state = fg
         self.root.after(100, self._follow_lv1)
 
     def _theme_pass(self):
@@ -1296,53 +1413,56 @@ class FloatApp:
                              "strip_h": self.strip_h}
         self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
                     "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
-                    "screens": screens, "last_screen": last}
+                    "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION}
         save_cfg(self.cfg)
 
     def _toggle_lock(self):
         self.locked = not self.locked
-        self.btn_lock.config(text="🔒" if self.locked else "🔓",
-                              bg=(WARN if self.locked else tc("#1c1e20")),
-                              fg=("#fff" if self.locked else MUT))
+        self.lock_var.set(self.locked)
+        if self.locked:
+            self.lock_lbl.pack(side="top", pady=(2, 0))
+        else:
+            self.lock_lbl.pack_forget()
 
     def _toggle_collapse(self):
-        """Replie la fenêtre pour libérer l'écran de la LV1 quand on n'a pas besoin des gains. Depuis la
-        float 2.7.0 (demande de Joseph), repliée il ne reste QUE le point de connexion (qui sert de poignée pour
-        déplacer la fenêtre) et la flèche pour la rouvrir."""
+        """Replie la fenêtre pour libérer l'écran de la LV1 : il ne reste que la languette (point de
+        connexion = poignée, et flèche pour rouvrir), à gauche du canal 1 (2.2.0, demande de Joseph)."""
         self.collapsed = not self.collapsed
-        bar = self.titlebar
         if self.collapsed:
             self._toggle_panel(None)
-            self.connectbar.pack_forget()
-            self.strips_frame.pack_forget()
-            # on retient l'ordre et les options d'empilement de la barre de titre pour la reconstruire
-            # telle quelle au dépli (pack() seul replacerait les widgets à la fin, dans le désordre)
-            self._title_pack = [(w, w.pack_info()) for w in bar.pack_slaves()]
-            for w, _info in self._title_pack:
-                if w not in (self.led_conn, self.btn_collapse):
-                    w.pack_forget()
+            self.right.pack_forget()
+            self.btn_more.pack_forget()
             self.grip.place_forget()
             self.btn_collapse.config(text="▸")
         else:
-            for w, _info in self._title_pack:
-                w.pack_forget()
-            for w, info in self._title_pack:
-                w.pack(**info)
+            self.right.pack(side="left", anchor="n")
+            self.btn_more.pack(side="top", after=self.btn_collapse)
             self.grip.place(relx=1.0, rely=1.0, anchor="se")
-            # BUG corrige (1.7.1) : pack_forget() puis pack() replace un widget a la FIN de la pile
-            # d'empilement courante, pas a sa position d'origine - comme la barre de titre restait
-            # packee pendant le repli, un simple pack(side="top") la repoussait en dessous d'elle a
-            # chaque depli, inversant l'ordre voulu (connexion en haut) au bout d'un cycle repli/depli.
-            # Fix : forcer explicitement la position avec before=.
-            self.strips_frame.pack(side="top", fill="x", after=self.titlebar)
-            if self.console_open:
-                self.connectbar.pack(side="top", fill="x", after=self.strips_frame)
-            self.btn_collapse.config(text="▾")
+            self.btn_collapse.config(text="◂")
+        self._sync_dock()
         self.root.update_idletasks()
+
+    def _sync_dock(self):
+        """Dock Scènes/Routing (et son panneau) visibles avec les voies, cachés sinon."""
+        show = self._shown and not self.collapsed
+        if show:
+            self._place_dock()
+            if self.dock.state() == "withdrawn":
+                self.dock.deiconify()
+                self._z_state = None
+            if self.panel_mode and self.panel_win.state() == "withdrawn":
+                self.panel_win.deiconify()
+                self._z_state = None
+        else:
+            if self.dock.state() != "withdrawn":
+                self.dock.withdraw()
+            if self.panel_win.state() != "withdrawn":
+                self.panel_win.withdraw()
 
     def _toggle_console(self, show=None, auto=False):
         """Barre de connexion (IP, Connecter, Scanner, Démo) SOUS les voies : ne décale jamais les voies."""
         show = (not self.console_open) if show is None else show
+        self.console_var.set(show)
         if show == self.console_open:
             return
         self.console_open = show
@@ -1351,11 +1471,10 @@ class FloatApp:
             self.connectbar.pack(side="top", fill="x", after=self.strips_frame)
         else:
             self.connectbar.pack_forget()
-        self.btn_console.config(bg=(TEAL if show else tc("#1c1e20")), fg=("#032" if show else TXT))
 
     def _toggle_panel(self, mode):
         if self.panel_mode == mode or mode is None:
-            self.panel.pack_forget()
+            self.panel_win.withdraw()
             self.panel_mode = None
             self.btn_scenes.config(bg=tc("#1c1e20"), fg=TXT)
             self.btn_routing.config(bg=tc("#1c1e20"), fg=TXT)
@@ -1371,9 +1490,10 @@ class FloatApp:
             self._fill_scenes_panel()
         else:
             self._fill_routing_panel()
-        self.panel.pack(side="top", fill="x", after=self.strips_frame)
-        apply_theme(self.panel)
-        self.root.update_idletasks()
+        apply_theme(self.panel_win)
+        self._place_dock()
+        self.panel_win.deiconify()
+        self._z_state = None
 
     def _panel_row(self, text, sub, on_click):
         row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
@@ -1468,7 +1588,7 @@ class FloatApp:
             self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n))
 
     def _panel_width(self):
-        return int(max(200, len(self.strips) * self.strip_w))
+        return 300
 
     def _save_scene(self, name):
         if not name:
@@ -1658,7 +1778,11 @@ class FloatApp:
         # Suit la couche affichée sur la LV1 (Ch 1-16, 17-32... lue dans sa base, lv1/layers.py) : seulement
         # quand elle CHANGE, pour qu'un choix fait à la main dans le float tienne jusqu'au prochain
         # changement de couche dans la LV1. Grp/Fx, Custom... (bank None) : on ne bouge pas.
-        lay = snap.get("lv1_layer") or {}
+        lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
+            snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
+        if self._surface != getattr(self, "_surface_seen", None):
+            self._surface_seen = self._surface        # Mixer 1 <-> Mixer 2 : tout réappliquer
+            self._lv1_layer_seen = self._lv1_preset_seen = None
         key = (lay.get("mode"), lay.get("page"), tuple(lay.get("channels") or ()))
         if key != self._lv1_layer_seen:
             self._lv1_layer_seen = key

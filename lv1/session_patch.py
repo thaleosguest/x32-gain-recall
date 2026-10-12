@@ -56,7 +56,7 @@ import tempfile
 import time
 
 from .channelinfo import read_channel_info
-from .layers import read_layer
+from .layers import read_layers
 
 # La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG", vu sur
 # une vraie base ; "X-WSG", la carte Waves pour X32, ajoutée sur la foi de son nom commercial, pas encore
@@ -150,7 +150,7 @@ def extract_routes(db_path):
 def read_session(db_path):
     """(routes, infos, couche) lus sur UNE copie de la session :
     infos = {canal: {"name", "color"}} (lv1/channelinfo.py) ;
-    couche = couche affichée sur la LV1 (lv1/layers.py), ou None ;
+    couche = couches affichées sur la LV1, {"mixer1", "mixer2"} (lv1/layers.py) ;
     routes = {canal LV1 (1-based): [{"input": "A"/"B", "device": libellé, "sources": [voie 1-based, ...],
     "active": bool}, ...]} — toutes les routes vers les canaux, entrées A et B, quel que soit le status
     ("active" = au moins une voie en status 1). Les voies au-delà de la largeur du canal (voie droite
@@ -161,7 +161,7 @@ def read_session(db_path):
         device_labels = load_device_labels(con)
         widths = load_channel_widths(con)
         info = read_channel_info(con)
-        layer = read_layer(con)
+        layer = read_layers(con)
         cur.execute("""
             SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
                    src_cluster_type_index, src_channel_index, status

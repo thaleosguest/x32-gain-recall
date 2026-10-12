@@ -65,6 +65,15 @@ def read_layer(con, surface=SURFACE_MIXER1):
             "preset": preset[0] if preset else None, "preset_name": preset[1] if preset else None}
 
 
+SURFACE_MIXER2 = 3
+
+
+def read_layers(con):
+    """{"mixer1": couche de la vue Mixer 1, "mixer2": couche de la vue Mixer 2} (read_layer).
+    Établi le 2026-10-12 : Mixer 2 = surface 3, mêmes propriétés et mêmes tables que Mixer 1."""
+    return {"mixer1": read_layer(con, SURFACE_MIXER1), "mixer2": read_layer(con, SURFACE_MIXER2)}
+
+
 def _mode_preset(con, surface, mode, page):
     """(id, nom) du mode affiché dans le panneau « Modes » de la LV1 (Home, Setup, SndChk, Edit, Fx,
     Monitor, Status, Dugan) pour la page courante, ou None.

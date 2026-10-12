@@ -209,8 +209,12 @@ class PatchMap:
             return {ch: list(v) for ch, v in self._merged.items()}
 
     def layer(self):
-        """Couche affichée sur la LV1 (Mixer 1) : {"mode", "page", "bank"} (voir lv1/layers.py) ou None."""
-        return dict(self._layer) if self._layer else None
+        """Couche affichée sur la LV1 (Mixer 1) : {"mode", "page", "bank", ...} (voir lv1/layers.py) ou None."""
+        return self.layers().get("mixer1")
+
+    def layers(self):
+        """{"mixer1": couche, "mixer2": couche} (lv1/layers.py.read_layers), {} si inconnues."""
+        return {k: dict(v) for k, v in (self._layer or {}).items() if v}
 
     def channel_count(self):
         """Nombre de canaux d'entrée connus de la LV1 (plus grand numéro vu dans la session ou la table)."""
