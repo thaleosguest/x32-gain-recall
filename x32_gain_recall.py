@@ -1373,9 +1373,132 @@ def _push_browser_back(timeout=15.0):
         pass
 
 
-def _startup_windows(url, browser, float_win):
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "XM32 Gain Recall LV1"
+AUTOSTART = {"on": False}
+SERVER = None          # ThreadingHTTPServer (pour quitter depuis l'icone ou le float)
+TRAY = None
+
+
+def autostart_command():
+    """Ligne de commande de « Lancer avec Windows » : l'exe avec --at-login (pas de navigateur, float qui
+    attend la LV1). None hors exe compile (version Python : pas proposee)."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return None
+    return '"%s" --at-login' % sys.executable
+
+
+def autostart_read():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            return winreg.QueryValueEx(k, RUN_NAME)[0]
+    except (ImportError, OSError):
+        return None
+
+
+def autostart_set(on):
+    """Ajoute / retire l'appli des programmes lances a l'ouverture de session (cle Run de HKCU : cet
+    utilisateur seulement, sans droits administrateur)."""
+    cmd = autostart_command()
+    if on and not cmd:
+        return False, "Disponible seulement avec l'exe"
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            if on:
+                winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(k, RUN_NAME)
+                except FileNotFoundError:
+                    pass
+    except (ImportError, OSError) as e:
+        return False, str(e)
+    AUTOSTART["on"] = on
+    return True, ""
+
+
+def autostart_init():
+    """Au lancement : etat de la case, et chemin remis a jour si l'exe a ete deplace / remplace."""
+    cur = autostart_read()
+    AUTOSTART["on"] = bool(cur)
+    cmd = autostart_command()
+    if cur and cmd and cur != cmd:
+        autostart_set(True)
+
+
+def quit_app():
+    """Quitter (icone ou float) : arrete le serveur ; le float et l'onglet du navigateur se ferment d'eux-memes
+    quand l'appli ne repond plus (voir x32_gain_float._poll et la page)."""
+    if FLOAT_PROC is not None and FLOAT_PROC.poll() is None:
+        try:
+            FLOAT_PROC.terminate()
+        except OSError:
+            pass
+    if TRAY:
+        TRAY.stop()
+    if SERVER:
+        SERVER.shutdown()
+
+
+def show_app():
+    """Re-afficher (exe relance alors qu'il tourne deja, ou icone) : la page au premier plan, et le float."""
+    webbrowser.open(LOCAL_URL)
+    launch_float_window()
+
+
+def already_running(port):
+    """Une instance de cette appli repond deja sur ce port ? On lui demande de se montrer et on s'arrete :
+    sans fenetre noire, un double-clic de plus ouvrirait sinon une 2e appli (et un 2e float)."""
+    import urllib.request
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%d/api/show" % port, data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return r.headers.get("Server", "").startswith("X32GainRecall") and json.loads(r.read()).get("ok")
+    except Exception:
+        return False
+
+
+def redirect_output_to_log(name):
+    """Exe sans console : print() et les erreurs vont dans un fichier du dossier de l'appli (remplace a chaque
+    lancement)."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        f = open(os.path.join(app_data_dir(), name), "w", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+    sys.stdout = sys.stdout or f
+    sys.stderr = sys.stderr or f
+
+
+def start_tray():
+    global TRAY
+    try:
+        import tray
+    except ImportError:
+        return
+    TRAY = tray.TrayIcon(
+        "%s v%s" % (APP_SHORT, APP_VERSION),
+        [("Ouvrir la page", lambda: webbrowser.open(LOCAL_URL)),
+         ("Afficher le float", launch_float_window),
+         None,
+         ("Lancer avec Windows", lambda: autostart_set(not AUTOSTART["on"])),
+         None,
+         ("Quitter", quit_app)],
+        checked={"Lancer avec Windows": lambda: AUTOSTART["on"]},
+        icon_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico"),
+    ).start()
+    if autostart_command() is None:   # version Python : pas de lancement avec Windows
+        TRAY.items = [i for i in TRAY.items if not (i and i[0] == "Lancer avec Windows")]
+        TRAY.items = [i for n, i in enumerate(TRAY.items) if not (i is None and n and TRAY.items[n - 1] is None)]
+
+
+def _startup_windows(url, browser, float_win, at_login=False):
     """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours, puis la LV1
-    au premier plan."""
+    au premier plan. Ouverture de session (--at-login) : pas de navigateur, le float attend la LV1."""
     time.sleep(0.6)
     if browser:
         webbrowser.open(url)
@@ -1383,7 +1506,7 @@ def _startup_windows(url, browser, float_win):
     if float_win:
         # --lv1-front : le float, au premier plan en s'ouvrant, y passe la LV1 (Windows le refuse a cette
         # appli-ci, en arriere-plan a ce moment-la : verifie)
-        ok, err = launch_float_window(["--lv1-front"])
+        ok, err = launch_float_window(["--wait-lv1"] if at_login else ["--lv1-front"])
         if not ok:
             print(err)
 
@@ -1511,6 +1634,8 @@ class Handler(BaseHTTPRequestHandler):
             snap["local_url"] = LOCAL_URL
             snap["lan_urls"] = LAN_URLS
             snap["code_rotatable"] = bool(ALLOW_ANY_HOST and CODE_PATH)
+            snap["autostart"] = AUTOSTART["on"]
+            snap["autostart_ok"] = autostart_command() is not None
             self._json(snap)
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
@@ -1647,6 +1772,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
+        if p in ("/api/quit", "/api/autostart", "/api/show"):
+            # le PC de l'appli seulement (pas une tablette) : quitter, lancement avec Windows, ré-afficher
+            if not (self.client_address[0] in ("127.0.0.1", "::1")
+                    and self.headers.get("Host", "") in ALLOWED_HOSTS):
+                return self._json({"ok": False, "error": "seulement depuis le PC de l'appli"}, 403)
+            if p == "/api/quit":
+                threading.Thread(target=quit_app, daemon=True).start()
+                return self._json({"ok": True})
+            if p == "/api/autostart":
+                ok, err = autostart_set(bool(d.get("on")))
+                return self._json({"ok": ok, "error": err, "on": AUTOSTART["on"]})
+            show_app()
+            return self._json({"ok": True})
         if p == "/api/launch-float":
             ok, err = launch_float_window()
             return self._json({"ok": ok, "error": err})
@@ -2537,7 +2675,7 @@ async function meterLoop(){
         else if(Date.now()-downSince>2000&&!$("#gone")){
           if(/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname))window.close();
           const g=document.createElement("div");g.id="gone";
-          g.innerHTML="<div class='box'><h3>Appli arrêtée</h3><p>La fenêtre de l'appli a été fermée. "+
+          g.innerHTML="<div class='box'><h3>Appli arrêtée</h3><p>L'appli a été quittée. "+
             "Vous pouvez fermer cet onglet ; il se recharge tout seul si l'appli est relancée.</p></div>";
           document.body.appendChild(g);}
       }}
@@ -2768,6 +2906,9 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
+    ap.add_argument("--at-login", action="store_true",
+                    help="lancement a l'ouverture de session (Lancer avec Windows) : sans navigateur, float cache "
+                         "jusqu'a ce que la LV1 soit lancee")
     ap.add_argument("--data", help="chemin du fichier de scenes (defaut : dossier choisi dans l'interface, sinon %%APPDATA%%/X32 Gain Recall)")
     ap.add_argument(
         "--local-only",
@@ -2822,6 +2963,13 @@ def main():
         ),
     )
     a = ap.parse_args()
+    if a.at_login:
+        a.no_browser = True
+    if not a.sim and already_running(a.web_port):
+        print("Deja lance : appli existante re-affichee.")
+        return
+    redirect_output_to_log("x32_gain_recall.log")   # apres : un 2e lancement ne vide pas le journal du 1er
+    autostart_init()
     a.lan = not a.local_only  # accessible au reseau local par defaut depuis la 1.3 ; --local-only revient a l'ancien comportement
 
     global ALLOW_ANY_HOST, LAN_CODE, WEB_PORT, CODE_PATH, LOCAL_URL, LAN_URLS
@@ -2860,6 +3008,8 @@ def main():
         sys.exit(1)
     port = srv.server_address[1]
     WEB_PORT = port
+    global SERVER
+    SERVER = srv
     ALLOWED_HOSTS.update({"127.0.0.1:%d" % port, "localhost:%d" % port})
     url = "http://127.0.0.1:%d/" % port
 
@@ -2918,14 +3068,19 @@ def main():
         ("  [session : %s (%d canaux)]" % (st["session_file"] or st["session_source"], st["session_channels"])) if st["session_source"] else ""))
     for err in st["errors"].values():
         print("  ! %s" % err)
-    print("Ctrl+C pour quitter.")
-    threading.Thread(target=_startup_windows, args=(url, not a.no_browser, not a.no_float), daemon=True).start()
+    print("Quitter : icone pres de l'horloge (clic droit), ou menu ... du float." +
+          (" Ou Ctrl+C ici." if sys.stdout and sys.stdout.isatty() else ""))
+    start_tray()
+    threading.Thread(target=_startup_windows, args=(url, not a.no_browser, not a.no_float, a.at_login),
+                     daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         CLIENT.disconnect()
+        if TRAY:
+            TRAY.stop()
 
 
 if __name__ == "__main__":
@@ -2935,6 +3090,7 @@ if __name__ == "__main__":
         # flottante, importee ici seulement (et non en haut du fichier) pour que ce script continue a
         # demarrer sans tkinter quand on ne s'en sert pas comme fenetre flottante.
         sys.argv.remove("--float")
+        redirect_output_to_log("x32_float.log")
         import x32_gain_float
         x32_gain_float.main()
     else:

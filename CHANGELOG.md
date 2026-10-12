@@ -3,6 +3,9 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
+- **Plus de fenêtre noire** : l'exe est compilé sans console ; l'appli vit dans une **icône près de l'horloge** (clic droit : Ouvrir la page, Afficher le float, Lancer avec Windows, Quitter ; double-clic : la page). Messages dans `x32_gain_recall.log` / `x32_float.log` (dossier de l'appli). Menu ⋯ du float : **Quitter l'appli**.
+- **Une seule appli à la fois** : relancer l'exe alors qu'il tourne ré-affiche la page et le float au lieu d'ouvrir une 2e appli.
+- **Lancer avec Windows** (icône ou menu ⋯ du float) : démarrage à l'ouverture de session (clé Run de l'utilisateur, sans droits administrateur), sans navigateur ; le float reste caché jusqu'au lancement de la LV1. Chemin remis à jour si l'exe est déplacé.
 - **Float calé tout seul sur la LV1** : posé dans les cadres « Preamp / Gain / 48 » des 16 tranches (modes SndChk / Setup), en proportion de la fenêtre de la LV1 (relevé en 1920x1080 : identique au calage fait à la main). Suit un changement de taille de la fenêtre LV1. Le déplacer ou le redimensionner à la main le passe en calage manuel ; menu ⋯ → *Caler sur la LV1 (auto)* pour revenir.
 - **Première connexion automatique** : sans console connue, l'appli cherche les X32/M32 du réseau au lancement (toutes les 10 s pendant 2 min) ; une seule trouvée -> connexion, et elle est retenue.
 - **Tranche sélectionnée en mode Edit** : le gain et le 48V du ou des préamplis X32 de la tranche sélectionnée dans la LV1 s'affichent dans le cadre vide du bloc « Input » (sous A/B), et se règlent là. Rien à caler : placé en proportion de la fenêtre de la LV1. La LV1 n'écrit pas la sélection dans sa base : elle est lue à l'écran (fond gris de la tranche sélectionnée), quand la LV1 est la fenêtre active. Cadre vide si la tranche n'a pas de préampli X32 ou n'est pas dans la couche affichée.

@@ -42,14 +42,16 @@ scènes de gains (une par groupe ou par date, par exemple).
 
 ## 2. Connecter la X32
 
-1. Au lancement, trois fenêtres s'ouvrent :
-   - le **float**, la petite fenêtre des potards (voir plus bas) ;
-   - la **page de l'appli** dans le navigateur, **réduite dans la barre des tâches** pour ne pas passer
-     devant la LV1 : cliquez-la pour l'ouvrir. Sur ce PC, pas de code à taper ;
-   - une **fenêtre noire** de journal : **ne la fermez pas**, c'est l'appli. La fermer ferme aussi le
-     float et l'onglet du navigateur.
+1. Au lancement :
+   - le **float** s'ouvre, la petite fenêtre des potards (voir plus bas) ;
+   - la **page de l'appli** s'ouvre dans le navigateur, **réduite dans la barre des tâches** pour ne pas
+     passer devant la LV1 : cliquez-la pour l'ouvrir. Sur ce PC, pas de code à taper ;
+   - une **icône** apparaît près de l'horloge (au besoin dans la flèche ˄ des icônes cachées) : c'est
+     l'appli. Clic droit : *Ouvrir la page*, *Afficher le float*, *Lancer avec Windows*, *Quitter*.
+     Double-clic : ouvre la page.
 
    Une fois le float ouvert, **la LV1 repasse au premier plan** toute seule (si elle est lancée).
+   Relancer l'exe alors que l'appli tourne déjà ré-affiche simplement la page et le float.
 2. La première fois, l'appli **cherche la console toute seule** sur le réseau. Si elle en trouve une, elle
    s'y connecte : rien à faire. Si la console n'est pas encore allumée, elle réessaie pendant 2 minutes.
    - Plusieurs consoles sur le réseau, ou aucune trouvée ? Dans la page (ou ⋯ → Console dans le float) :
@@ -146,11 +148,23 @@ Connexion non chiffrée : réseau de confiance seulement, pas le Wi-Fi public d'
 
 ---
 
+## Lancer avec Windows
+
+Clic droit sur l'icône près de l'horloge (ou menu **⋯** du float) → **Lancer avec Windows**. L'appli
+démarre alors toute seule à l'ouverture de la session Windows, sans ouvrir le navigateur ; le float
+reste caché jusqu'au lancement de la LV1, puis s'y pose. Décochez pour arrêter.
+
+## Quitter l'appli
+
+Clic droit sur l'icône près de l'horloge → **Quitter**, ou menu **⋯** du float → **Quitter l'appli**.
+Le float, la page et la connexion à la console s'arrêtent. (*Fermer le float* ne ferme que le float :
+l'appli continue, l'icône aussi.)
+
 ## Avant chaque prestation
 
 1. Lancer la LV1 et sa session.
-2. Double-clic sur `XM32_Gain_Recall_LV1.exe` : le float s'ouvre à sa place et se connecte tout seul
-   à la dernière console.
+2. Double-clic sur `XM32_Gain_Recall_LV1.exe` (inutile avec *Lancer avec Windows*) : le float s'ouvre à
+   sa place et se connecte tout seul à la dernière console.
 3. Rappeler la scène de gains du groupe, si vous en avez une.
 4. **⋯ → Verrouiller l'édition** une fois les balances faites.
 
@@ -159,18 +173,19 @@ Connexion non chiffrée : réseau de confiance seulement, pas le Wi-Fi public d'
 | Ce que vous voyez | Ce qu'il faut faire |
 |---|---|
 | *Scanner* ne trouve rien | Autoriser l'appli dans le pare-feu (réseaux privés), vérifier le câble réseau de la X32, ou taper son IP |
-| Voies toutes grises, sans nom LV1 | La LV1 tourne-t-elle sur **ce** PC ? La X32 arrive-t-elle par une carte DN32-WSG / X-WSG ? Regarder le message au démarrage dans la fenêtre noire |
+| Voies toutes grises, sans nom LV1 | La LV1 tourne-t-elle sur **ce** PC ? La X32 arrive-t-elle par une carte DN32-WSG / X-WSG ? Regarder le journal `x32_gain_recall.log` dans le dossier de l'appli (voir plus bas) |
 | Une seule voie grise | Ce préampli n'est patché sur aucun canal LV1, ou le canal est sur l'entrée **B** |
 | Le float a disparu | Normal hors Mixer 1 / Mixer 2, ou LV1 réduite. Revenez sur Mixer 1 |
 | Le float est replié | Normal hors SndChk / Setup. Cliquez la flèche pour le déplier |
 | Colonnes décalées par rapport aux tranches | **⋯ → Caler sur la LV1 (auto)** |
-| Un correctif « ne change rien » | Un ancien exe est peut-être encore ouvert : fermez toutes les fenêtres de l'appli (et sa fenêtre noire), relancez |
+| Un correctif « ne change rien » | Un ancien exe est peut-être encore ouvert : icône près de l'horloge → *Quitter* (et vérifiez qu'il n'en reste pas une 2e), relancez |
 | Après une mise à jour de la LV1 | L'appli est testée sur LV1 V17 : si les couleurs ou les couches ne suivent plus, signalez-le (onglet *Issues* du dépôt) |
 
 ## Où sont mes fichiers ?
 
 Tout est dans `%APPDATA%\X32 Gain Recall` (collez ce chemin dans la barre de l'Explorateur) :
-scènes, routings, code tablette, position du float. Sauvegardez ce dossier pour tout garder.
+scènes, routings, code tablette, position du float, et le journal de la dernière session
+(`x32_gain_recall.log`, `x32_float.log`). Sauvegardez ce dossier pour tout garder.
 
 ---
 

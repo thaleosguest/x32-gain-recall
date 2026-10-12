@@ -577,6 +577,12 @@ class ServerBackend:
     def apply_routing(self, pid):
         return self._post("/api/routings/apply", {"id": pid, "groups": ["io"]}) or {"ok": False, "error": self.last_error}
 
+    def quit_app(self):
+        return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
+
+    def set_autostart(self, on):
+        return self._post("/api/autostart", {"on": on}) or {"ok": False, "error": self.last_error}
+
     def close(self):
         pass
 
@@ -1067,6 +1073,7 @@ class FloatApp:
 
         self.root = tk.Tk()
         self.auto_var = tk.BooleanVar(value=self.auto_place)
+        self.autostart_var = tk.BooleanVar(value=False)
         self.root.title(APP_SHORT + " — Float")
         try:  # logo dans la barre des tâches / Alt+Tab (au lieu de la plume de Tk)
             self._icons = [tk.PhotoImage(data=d) for d in ICON_PNG_B64]
@@ -1086,6 +1093,10 @@ class FloatApp:
         self._tab_tick = 0
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
+        # lancé à l'ouverture de session (Lancer avec Windows) : caché tant que la LV1 n'a pas été vue, au lieu
+        # de s'afficher seul sur le bureau
+        self._wait_lv1 = bool(getattr(args, "wait_lv1", False))
+        self.autostart = None          # case « Lancer avec Windows » (état lu dans /api/state)
         self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
         self._sel_col = None           # mode Edit : colonne de la tranche sélectionnée, lue à l'écran
         self._sel_key = None           # (canal, préamplis) affichés dans la fenêtre de la tranche sélectionnée
@@ -1209,6 +1220,12 @@ class FloatApp:
         m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
                       state="disabled")
         m.add_command(label="Fermer le float", command=self.quit)
+        if not self.args.direct:
+            if self.autostart is not None:
+                self.autostart_var.set(self.autostart)
+                m.add_checkbutton(label="Lancer avec Windows", variable=self.autostart_var,
+                                  command=self._toggle_autostart)
+            m.add_command(label="Quitter l'appli", command=self._quit_app)
         apply_theme(m)
         b = self.btn_more
         m.tk_popup(b.winfo_rootx() + b.winfo_width(), b.winfo_rooty())
@@ -1567,7 +1584,11 @@ class FloatApp:
             if self._lv1_lay.get("preset_name") == "Edit":
                 # pas de « dernier connu » ici : une tranche désélectionnée (ou hors couche) vide le cadre
                 self._sel_col = lv1_selected_column(lv1)
+        if lv1:
+            self._wait_lv1 = False
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
+        if self._wait_lv1:
+            shown = False
         if shown != self._shown:
             self._shown = shown
             if shown:
@@ -1965,6 +1986,8 @@ class FloatApp:
                 self._toggle_console(True, auto=True)
         elif self._console_auto and snap.get("connected"):
             self._toggle_console(False)
+        if snap.get("autostart_ok"):
+            self.autostart = bool(snap.get("autostart"))
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
         lm = snap.get("lv1_map") or {}
@@ -2073,6 +2096,22 @@ class FloatApp:
         if tries > 1:
             self.root.after(200, lambda: self._lv1_front(tries - 1))
 
+    def _toggle_autostart(self):
+        r = self.backend.set_autostart(self.autostart_var.get())
+        if r.get("ok"):
+            self.autostart = r.get("on")
+        else:
+            self.autostart_var.set(bool(self.autostart))
+            messagebox.showerror(APP_SHORT, "Lancer avec Windows : %s" % (r.get("error") or "impossible"),
+                                 parent=self.root)
+
+    def _quit_app(self):
+        """Quitter toute l'appli (plus de fenêtre noire à fermer depuis la 2.3.0) : le float se ferme aussitôt."""
+        if messagebox.askyesno(APP_SHORT, "Quitter l'appli ? (le float, la page et la connexion à la console "
+                               "s'arrêtent)", parent=self.root):
+            self.backend.quit_app()
+            self.quit()
+
     def quit(self):
         self._save_cfg()
         self.backend.close()
@@ -2128,6 +2167,7 @@ def main():
                      help=argparse.SUPPRESS)  # usage interne : passe par le bouton "Float" du navigateur
                      # pour eviter de retaper le code d'acces --lan ; non documente pour la saisie manuelle
     ap.add_argument("--lv1-front", action="store_true", help=argparse.SUPPRESS)  # lancement auto : LV1 devant
+    ap.add_argument("--wait-lv1", action="store_true", help=argparse.SUPPRESS)   # ouverture de session : caché sans LV1
     ap.add_argument("--direct", action="store_true",
                      help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
     ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")

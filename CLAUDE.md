@@ -256,6 +256,14 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `ovv_modes_presets`). Mesuré = calage manuel de Joseph au pixel près. Geste manuel -> `auto_place` False.
 - **1re connexion** : `_first_connect()` (pas de `last_ip`) : `scan_network()` toutes les 10 s / 2 min, une
   seule console -> connexion + `remember_console`. Testé avec la X32 de Joseph (X32RACK-JS, 192.168.1.201).
+- **Sans console (2.3.0)** : PyInstaller `--noconsole` ; `tray.py` = icône de notification en ctypes pur
+  (Shell_NotifyIconW, fenêtre cachée + boucle de messages sur son thread). Journal : `redirect_output_to_log`
+  (après le test « déjà lancé », sinon un 2e lancement vide le journal du 1er). Quitter : `quit_app()`
+  (SERVER.shutdown + float terminé) ; `/api/quit`, `/api/autostart`, `/api/show` réservés à 127.0.0.1.
+  Instance unique : `already_running()` POST `/api/show` sur le port, en-tête `Server: X32GainRecall`.
+  CI : exe fenêtré -> `Start-Process -Wait -PassThru` + code de sortie (PowerShell n'attend pas sinon).
+- **Lancer avec Windows** : HKCU `...\CurrentVersion\Run`, valeur « XM32 Gain Recall LV1 » = `"exe" --at-login`
+  (exe seulement) ; `--at-login` = pas de navigateur + float `--wait-lv1` (caché tant que pas de LV1).
 - Captures d'écran sans Pillow : BitBlt + PNG en Python pur (script `grab.py` refait dans le scratchpad).
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
