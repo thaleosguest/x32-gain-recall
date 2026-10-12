@@ -14,7 +14,11 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel (v2.0.0 — PR thaleosguest/x32-gain-recall#2, pas encore fusionnée)
+## État actuel : v2.0.0 publiée (2026-10-12)
+
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.0.0 (exe + `.sha256`).
+PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2 (v2.0.0) fusionnées dans `main`.
+
 
 - **Plug and play (v2.0.0)** : patch, couleurs ET noms des canaux LV1 sont lus dans la
   base de la LV1 — **Companion n'est plus nécessaire** (facultatif : `--companion [URL]`,
@@ -23,9 +27,12 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
   dans le float (pastille + « L 15 = EXP 15 » + nom) ET le navigateur (bandeau du haut).
 - **Architecture décidée : une seule appli.** Tout ce qui touche la LV1 est dans le
   package `lv1/`, importé par `x32_gain_recall.py` (même `.exe`) :
-  - `lv1/patchmap.py` : table EXP → canal LV1, relue à chaud sur un thread,
+  - `lv1/patchmap.py` : table EXP → canal LV1, relue à chaud (0,5 s) sur un thread,
     exposée dans `/api/state` (`lv1_map`, état dans `lv1`) ;
-  - `lv1/session_patch.py` (ex `lv1_session_patch_export.py`) : lecture des routes ;
+  - `lv1/session_patch.py` (ex `lv1_session_patch_export.py`) : lecture des routes
+    (sur copie), `python -m lv1.session_patch --live` pour voir le patch actuel ;
+  - `lv1/channelinfo.py` : noms + palette des couleurs ;
+  - `lv1/companion.py` : interrogation Companion, facultative ;
   - `lv1/osc_sniffer.py` (ex `lv1_osc_sniffer.py`) : diagnostic uniquement.
 - Le float cherche la couleur du canal LV1 qui reçoit l'EXP de chaque préampli
   (EXP lu en direct sur la X32 via `exp_map`). Un EXP sur aucun canal reste gris :
@@ -77,8 +84,11 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
   repasser un canal en mono laisse sa route de voie droite dans `routes` (bug vu : EXP 18
   coloré comme In 17 au lieu d'In 21). Ignorer `dst_channel_index >= num_inputs`.
 - Un serveur SGS peut avoir le même `assign` qu'un device d'E/S : exclure SGS/Host.
+- La carte de la X32/M32 est reconnue par son **modèle** `device.description = "DN32-WSG"`
+  (défaut `--lv1-device DN32-WSG,X32RACK`) : « X32RACK » n'est que le nom que Joseph a donné
+  à l'appareil, il peut être différent chez quelqu'un d'autre.
 - Setup réel (portable-js) : **A = X32RACK** (carte DN32-WSG de la X32 : voie N = EXP N),
-  B = souvent TracksLive-FL (virtual soundcheck). **Seul X32RACK compte par défaut** :
+  B = souvent TracksLive-FL (virtual soundcheck). **Seule la carte X32 compte par défaut** :
   TracksLive n'est PAS un miroir fiable des numéros X32 (vu : X32RACK 1 sur In 1 mais
   TracksLive 1 sur In 2), et en entrée A c'est une vraie source de lecture (In 65 ←
   TracksLive 1,2). Repli possible : `--lv1-device X32RACK,TracksLive:B`, avec un rang
@@ -91,14 +101,54 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 - Le navigateur doit redessiner aussi quand seul le côté LV1 change : la page compare
   `exp_map`/`lv1_map`/`lv1_channels`, pas seulement `rev` (qui ne suit que la X32).
 
-## Reste à faire / à vérifier
+## Données de l'appli (depuis la 2.0.0)
 
-- Couleurs vues fonctionner avec le vrai Companion (capture de Joseph). Reste : revérifier
-  EXP 18 après le correctif mono, puis fusionner la PR #2, tagger `v1.9.0` (le tag doit
-  égaler `APP_VERSION`) et vérifier le build `.exe` (PyInstaller doit embarquer `lv1/`,
-  import statique : a priori OK).
-- Joseph n'a que `py` (pas `python`) dans son terminal PowerShell : lui donner des
-  commandes `py ...`.
+- Par défaut tout est dans `%APPDATA%\X32 Gain Recall` (choix de Joseph : séparé de l'exe) :
+  scènes, routings, code d'accès, config du float, `lv1_patch_map.json`, et
+  `x32_gain_recall_settings.json` (dossier des scènes choisi + `legacy_migrated`).
+- Le dossier des **scènes** (et routings) se choisit dans le navigateur : panneau Scènes →
+  « Dossier… » (chemin, ou Parcourir = fenêtre tkinter sur le PC de l'appli). Reprend les scènes
+  déjà présentes ou propose d'y copier les actuelles.
+- Au 1er lancement, les fichiers des versions ≤ 1.9 rangés à côté de l'exe sont **recopiés**
+  (jamais supprimés) dans `%APPDATA%`.
+- JSON lus en `utf-8-sig` (fichiers enregistrés par le Bloc-notes avec BOM).
+- Une scène ne contient que la X32 (gains, 48V, noms X32) ; rien de la LV1, qui sauvegarde
+  sa propre session.
+
+## Fenêtre flottante
+
+- Fond au choix (bouton ◐) : **Anthracite** par défaut (le noir d'origine se confondait avec la
+  LV1), Noir, Or, Bleu nuit. Implémenté par correspondance des gris d'origine (`_CANON`) →
+  teintes du thème (`apply_theme()` sur tout l'arbre + `tc()` pour les couleurs posées en cours
+  de route). Toute nouvelle couleur sombre en dur doit être ajoutée à `_CANON` et aux thèmes.
+- Ligne « L 15 = EXP 15 » puis nom LV1 en plus gros ; tout tient sur une ligne dès ~60 px.
+
+## Publier une version
+
+1. `APP_VERSION` dans `x32_gain_recall.py` + section dans `CHANGELOG.md`.
+2. Fusionner dans `main`, puis tag annoté `vX.Y.Z` (doit égaler `APP_VERSION`) et `git push origin vX.Y.Z`.
+3. GitHub Actions (`build.yml`) compile l'exe, lance `--version` et `--help` (normal et `--float`),
+   publie la release. `gh workflow run build.yml --ref <branche>` compile une branche **sans**
+   publier (artefact « X32_Gain_Recall-windows ») : pratique pour faire tester l'exe à Joseph.
+
+## Pièges de ce PC
+
+- `gh` n'est pas dans le PATH : `& "C:\Program Files\GitHub CLI\gh.exe"` (connecté en `thaleosguest`).
+- Pas d'identité git globale : commits avec
+  `git -c user.name="Claude" -c user.email="thaleosguest@users.noreply.github.com" commit ...`
+  (identité de l'historique du repo) ; messages longs via `-F fichier`, pas en argument PowerShell.
+- Joseph n'a que `py` (pas `python`) dans son terminal PowerShell : lui donner des commandes `py ...`
+  (et `& "chemin"` pour lancer un exe dont le chemin est entre guillemets).
+- `gh auth login` ne marche pas dans le panneau Terminal de l'app : le faire dans une vraie
+  fenêtre PowerShell.
+- argparse : un `%` dans un `help=` doit être écrit `%%` (sinon l'appli plante au démarrage).
+
+## Reste à faire / idées
+
+- Rien de bloquant. À revérifier après une mise à jour de la LV1 : écriture en direct de
+  `CurrentLV1.dat`, paramètre couleur 592 et palette.
+- Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
+
 ## Environnement cible
 
 - PC hôte : laptop "portable-js" (i7-8750H, 16 Go RAM, Windows 10 IoT
