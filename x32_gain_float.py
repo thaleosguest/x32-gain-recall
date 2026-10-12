@@ -92,7 +92,10 @@ from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa:
 FLOAT_VERSION = "2.6.0"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
-CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "x32_float_config.json")
+# A cote des scenes (dossier de l'exe ou du script, sinon le dossier personnel - voir pick_data_path) :
+# PAS a cote de __file__, qui dans l'exe PyInstaller pointe vers son dossier temporaire _MEI..., efface a
+# chaque fermeture (position/taille/banque du float etaient oubliees a chaque lancement de l'exe).
+CFG_PATH = os.path.join(os.path.dirname(os.path.abspath(pick_data_path())), "x32_float_config.json")
 
 # Memes banques que l'appli principale (groupes de 16 headamps sur les 128 : Local, AES50-A, AES50-B)
 BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A 17-32", 48),
