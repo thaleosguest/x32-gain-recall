@@ -154,6 +154,14 @@ Clic droit sur l'icône près de l'horloge (ou menu **⋯** du float) → **Lanc
 démarre alors toute seule à l'ouverture de la session Windows, sans ouvrir le navigateur ; le float
 reste caché jusqu'au lancement de la LV1, puis s'y pose. Décochez pour arrêter.
 
+## Mises à jour
+
+Au lancement (puis une fois par jour), l'appli regarde sur GitHub si une version plus récente est
+publiée. Si oui : une bulle près de l'horloge, une entrée **Mise à jour… disponible** dans le menu de
+l'icône et dans le menu **⋯** du float, et un lien **⬆ disponible** en haut de la page. Ils ouvrent la
+page de téléchargement : rien ne s'installe tout seul. Pour mettre à jour : quitter l'appli, remplacer
+l'exe par le nouveau, relancer (scènes et réglages sont gardés).
+
 ## Quitter l'appli
 
 Clic droit sur l'icône près de l'horloge → **Quitter**, ou menu **⋯** du float → **Quitter l'appli**.

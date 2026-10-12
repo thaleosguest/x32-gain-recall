@@ -3,6 +3,7 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
+- **Avis de mise à jour** : au lancement puis une fois par jour, l'appli regarde la dernière release publiée sur GitHub ; plus récente -> bulle de notification, entrée dans le menu de l'icône et du float (⋯), lien en haut de la page, vers la page de téléchargement. Rien n'est téléchargé ni installé tout seul. `--no-update-check` pour ne pas vérifier.
 - **LV1 fermée : le float se cache** (au lieu de rester seul au milieu de l'écran) et revient quand la LV1 est relancée. Lancé sans LV1, il reste visible comme avant, jusqu'à ce qu'une LV1 soit vue.
 - **Plus de fenêtre noire** : l'exe est compilé sans console ; l'appli vit dans une **icône près de l'horloge** (clic droit : Ouvrir la page, Afficher le float, Lancer avec Windows, Quitter ; double-clic : la page). Messages dans `x32_gain_recall.log` / `x32_float.log` (dossier de l'appli). Menu ⋯ du float : **Quitter l'appli**.
 - **Une seule appli à la fois** : relancer l'exe alors qu'il tourne ré-affiche la page et le float au lieu d'ouvrir une 2e appli.

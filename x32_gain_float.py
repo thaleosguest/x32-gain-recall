@@ -74,6 +74,7 @@ import os
 import sys
 import threading
 import time
+import webbrowser
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox
@@ -1098,6 +1099,7 @@ class FloatApp:
         # l'ouverture de session (Lancer avec Windows). Lancé sans LV1 à la main : visible, comme avant.
         self._wait_lv1 = bool(getattr(args, "wait_lv1", False))
         self.autostart = None          # case « Lancer avec Windows » (état lu dans /api/state)
+        self.update = None             # {"version", "url"} si une version plus récente est publiée
         self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
         self._sel_col = None           # mode Edit : colonne de la tranche sélectionnée, lue à l'écran
         self._sel_key = None           # (canal, préamplis) affichés dans la fenêtre de la tranche sélectionnée
@@ -1220,6 +1222,9 @@ class FloatApp:
         m.add_separator()
         m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
                       state="disabled")
+        if self.update and self.update.get("url"):
+            m.add_command(label="⬆ Mise à jour %s disponible…" % self.update.get("version"),
+                          command=lambda u=self.update["url"]: webbrowser.open(u))
         m.add_command(label="Fermer le float", command=self.quit)
         if not self.args.direct:
             if self.autostart is not None:
@@ -1989,6 +1994,7 @@ class FloatApp:
             self._toggle_console(False)
         if snap.get("autostart_ok"):
             self.autostart = bool(snap.get("autostart"))
+        self.update = snap.get("update")
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
         lm = snap.get("lv1_map") or {}

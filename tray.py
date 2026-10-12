@@ -15,7 +15,7 @@ WM_DESTROY, WM_CLOSE, WM_COMMAND, WM_NULL = 0x0002, 0x0010, 0x0111, 0x0000
 WM_APP_TRAY = 0x8000 + 1                        # WM_APP + 1 : message de rappel de l'icône
 WM_LBUTTONDBLCLK, WM_RBUTTONUP = 0x0203, 0x0205
 NIM_ADD, NIM_MODIFY, NIM_DELETE = 0, 1, 2
-NIF_MESSAGE, NIF_ICON, NIF_TIP = 1, 2, 4
+NIF_MESSAGE, NIF_ICON, NIF_TIP, NIF_INFO = 1, 2, 4, 0x10
 MF_STRING, MF_CHECKED, MF_GRAYED, MF_SEPARATOR = 0x0, 0x8, 0x1, 0x800
 TPM_RETURNCMD, TPM_NONOTIFY, TPM_RIGHTBUTTON = 0x0100, 0x0080, 0x0002
 
@@ -97,6 +97,17 @@ class TrayIcon:
         self._ready.wait(3)
         return self
 
+    def notify(self, title, text):
+        """Bulle de notification Windows (une fois, ex. mise à jour disponible)."""
+        if not self.hwnd:
+            return
+        nid = self._nid()
+        nid.uFlags = NIF_INFO
+        nid.szInfoTitle = title[:63]
+        nid.szInfo = text[:255]
+        nid.dwInfoFlags = 1                       # NIIF_INFO
+        ctypes.windll.shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
+
     def stop(self):
         if self.hwnd:
             ctypes.windll.user32.PostMessageW(self.hwnd, WM_CLOSE, 0, 0)
@@ -160,6 +171,9 @@ class TrayIcon:
                 u32.AppendMenuW(hmenu, MF_SEPARATOR, 0, None)
                 continue
             label, _action = item
+            text = self._label(label)
+            if text is None:                 # entrée masquée pour l'instant (ex. pas de mise à jour)
+                continue
             flags = MF_STRING
             check = self.checked.get(label)
             if check is not None:
@@ -167,7 +181,7 @@ class TrayIcon:
                     flags |= MF_CHECKED if check() else 0
                 except Exception:
                     pass
-            u32.AppendMenuW(hmenu, flags, n + 1, self._label(label))
+            u32.AppendMenuW(hmenu, flags, n + 1, text)
         u32.SetMenuDefaultItem(hmenu, 1, 0)
         pt = wintypes.POINT()
         u32.GetCursorPos(ctypes.byref(pt))

@@ -1380,6 +1380,54 @@ SERVER = None          # ThreadingHTTPServer (pour quitter depuis l'icone ou le 
 TRAY = None
 
 
+RELEASES_API = "https://api.github.com/repos/thaleosguest/x32-gain-recall/releases/latest"
+UPDATE = {"version": None, "url": None}   # derniere version publiee, si plus recente que celle-ci
+
+
+def _version_tuple(v):
+    try:
+        return tuple(int(x) for x in str(v).lstrip("vV").split("-")[0].split("."))
+    except ValueError:
+        return ()
+
+
+def check_update():
+    """Derniere release publiee sur GitHub plus recente que APP_VERSION ? -> UPDATE. Rien n'est telecharge
+    ni installe : on le signale (icone, float, page) avec le lien de la page de telechargement."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(RELEASES_API, headers={"User-Agent": "%s/%s" % (APP_SHORT.replace("/", ""), APP_VERSION),
+                                                            "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rel = json.loads(r.read())
+    except Exception as e:
+        print("Verification des mises a jour impossible : %s" % e)
+        return
+    tag = rel.get("tag_name") or ""
+    if rel.get("draft") or rel.get("prerelease") or not _version_tuple(tag):
+        return
+    if _version_tuple(tag) > _version_tuple(APP_VERSION):
+        new = UPDATE["version"] != tag.lstrip("vV")
+        UPDATE.update(version=tag.lstrip("vV"), url=rel.get("html_url") or RELEASES_API)
+        print("Mise a jour disponible : %s (%s)" % (UPDATE["version"], UPDATE["url"]))
+        if new and TRAY:
+            TRAY.notify("%s %s disponible" % (APP_SHORT, UPDATE["version"]),
+                        "Clic droit sur cette icone -> Mise a jour, pour la telecharger.")
+
+
+def update_loop():
+    """Au lancement (apres 5 s), puis une fois par jour (appli laissee ouverte longtemps)."""
+    time.sleep(5)
+    while True:
+        check_update()
+        time.sleep(24 * 3600)
+
+
+def open_update():
+    if UPDATE["url"]:
+        webbrowser.open(UPDATE["url"])
+
+
 def autostart_command():
     """Ligne de commande de « Lancer avec Windows » : l'exe avec --at-login (pas de navigateur, float qui
     attend la LV1). None hors exe compile (version Python : pas proposee)."""
@@ -1484,6 +1532,8 @@ def start_tray():
         "%s v%s" % (APP_SHORT, APP_VERSION),
         [("Ouvrir la page", lambda: webbrowser.open(LOCAL_URL)),
          ("Afficher le float", launch_float_window),
+         (lambda: ("Mise a jour %s disponible..." % UPDATE["version"]) if UPDATE["version"] else None,
+          open_update),
          None,
          ("Lancer avec Windows", lambda: autostart_set(not AUTOSTART["on"])),
          None,
@@ -1635,6 +1685,7 @@ class Handler(BaseHTTPRequestHandler):
             snap["lan_urls"] = LAN_URLS
             snap["code_rotatable"] = bool(ALLOW_ANY_HOST and CODE_PATH)
             snap["autostart"] = AUTOSTART["on"]
+            snap["update"] = dict(UPDATE) if UPDATE["version"] else None
             snap["autostart_ok"] = autostart_command() is not None
             self._json(snap)
         elif path == "/api/meters":
@@ -2124,6 +2175,7 @@ body.v-rout #rview{display:grid}
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
+    <a id="bupd" class="mini" style="display:none;text-decoration:none;color:#f2b63b" target="_blank" rel="noopener" title="Une version plus récente est publiée : page de téléchargement"></a>
     <button id="lancode" class="mini" style="display:none" title="Version, adresses et code d'accès"></button>
     <div class="logo">__APP_LOGO__<div>X/M32 GAIN RECALL<small>FOR EMOTION LV1 &middot; v__APP_VERSION__</small></div></div>
   </div>
@@ -2390,6 +2442,9 @@ function update(){
   else{w.style.display="block";w.innerHTML=S.trying?"<b>Connexion en cours…</b><br>En attente d'une réponse de la console sur "+esc(S.ip)+" (UDP 10023). Si rien n'arrive : vérifiez l'IP (X32 : Setup → Network), que le PC est sur le même réseau/sous-réseau, et le pare-feu Windows."
     :"<b>1.</b> Sur la X32 : <b>Setup → Network</b> pour lire son adresse IP.<br><b>2.</b> Entrez-la en haut puis <b>Connecter</b>.<br><b>3.</b> Réglez les gains, sauvez une scène, rappelez-la plus tard.<br><br>Pas de console sous la main ? Le bouton <b>Démo</b> lance une X32 simulée.";}
   renderStatus();renderPresetButtons();routingButtons();
+  const up=$("#bupd");
+  if(S.update&&S.update.version){up.style.display="";up.href=S.update.url;up.innerHTML="&#11014; v"+esc(S.update.version)+" disponible";}
+  else up.style.display="none";
   const lc=$("#lancode");lc.style.display="";
   lc.innerHTML=S.lan_code?("&#128273; Code : <b>"+esc(S.lan_code)+"</b>"):
     ((S.lan_urls&&S.lan_urls.length)?"&#127760; Accès réseau":"&#127760; Accès");
@@ -2906,6 +2961,8 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
+    ap.add_argument("--no-update-check", action="store_true",
+                    help="ne pas verifier sur GitHub si une version plus recente est publiee")
     ap.add_argument("--at-login", action="store_true",
                     help="lancement a l'ouverture de session (Lancer avec Windows) : sans navigateur, float cache "
                          "jusqu'a ce que la LV1 soit lancee")
@@ -3071,6 +3128,8 @@ def main():
     print("Quitter : icone pres de l'horloge (clic droit), ou menu ... du float." +
           (" Ou Ctrl+C ici." if sys.stdout and sys.stdout.isatty() else ""))
     start_tray()
+    if not a.no_update_check:
+        threading.Thread(target=update_loop, daemon=True).start()
     threading.Thread(target=_startup_windows, args=(url, not a.no_browser, not a.no_float, a.at_login),
                      daemon=True).start()
     try:

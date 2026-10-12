@@ -264,6 +264,9 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   CI : exe fenêtré -> `Start-Process -Wait -PassThru` + code de sortie (PowerShell n'attend pas sinon).
 - **Lancer avec Windows** : HKCU `...\CurrentVersion\Run`, valeur « XM32 Gain Recall LV1 » = `"exe" --at-login`
   (exe seulement) ; `--at-login` = pas de navigateur + float `--wait-lv1` (caché tant que pas de LV1).
+- **Avis de mise à jour** : `check_update()` (GitHub API `releases/latest`, User-Agent obligatoire), au lancement +5 s
+  puis toutes les 24 h ; `UPDATE` -> `/api/state.update`, entrée de l'icône (libellé fonction ; None = masquée),
+  bulle `TrayIcon.notify`, menu ⋯ du float, lien `#bupd` de la page. Test : forcer `APP_VERSION = "2.1.0"`.
 - Captures d'écran sans Pillow : BitBlt + PNG en Python pur (script `grab.py` refait dans le scratchpad).
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
