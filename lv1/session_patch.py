@@ -143,6 +143,11 @@ def load_channel_widths(con):
 
 
 PARAM_INPUT_SELECT = 0     # snapshot_chainer_params.param_id : entrée A/B sélectionnée du canal
+# Talk Back de la LV1 (2.2.0, demande de Joseph) : comme un canal, avec ses entrées A/B (routes vers
+# dst_cluster_type 8 = « TalkBack » de cluster_type ; objet obj_type 8). Numéroté TALKBACK (négatif, pour
+# ne jamais se confondre avec un canal d'entrée 1..80) dans les tables canal -> sources.
+TALKBACK = -8
+OBJ_TYPE_TALKBACK = 8
 
 
 def load_input_select(con):
@@ -150,15 +155,16 @@ def load_input_select(con):
     Établi le 2026-10-12 avec l'enregistreur + captures d'écran : param_id 0 de snapshot_chainer_params
     (état courant, snapshot_id -1) vaut 1.0 quand le canal est sur B ; pas de ligne (ou 0) = A.
     ATTENTION : routes.status n'est PAS « entrée sélectionnée » (lu à l'envers dans un 1er essai : il vaut
-    1 sur l'entrée NON sélectionnée, 0 ou 4 sinon) - ne pas s'en servir pour ça."""
+    1 sur l'entrée NON sélectionnée, 0 ou 4 sinon) - ne pas s'en servir pour ça.
+    Le Talk Back (objet obj_type 8) a la même règle, sous la clé TALKBACK."""
     try:
         rows = con.execute("""
-            SELECT o.obj_index + 1, p.param_value FROM snapshot_chainer_params p JOIN object o ON o.id = p.chainer_id
-            WHERE o.obj_type = 0 AND p.snapshot_id = -1 AND p.param_id = ?
-        """, (PARAM_INPUT_SELECT,)).fetchall()
+            SELECT o.obj_type, o.obj_index, p.param_value FROM snapshot_chainer_params p JOIN object o ON o.id = p.chainer_id
+            WHERE o.obj_type IN (0, ?) AND p.snapshot_id = -1 AND p.param_id = ?
+        """, (OBJ_TYPE_TALKBACK, PARAM_INPUT_SELECT)).fetchall()
     except sqlite3.Error:
         return {}
-    return {ch: ("B" if (v or 0) >= 0.5 else "A") for ch, v in rows}
+    return {(idx + 1 if t == 0 else TALKBACK): ("B" if (v or 0) >= 0.5 else "A") for t, idx, v in rows}
 
 
 def extract_routes(db_path):
@@ -183,10 +189,10 @@ def read_session(db_path):
         selected = load_input_select(con)
         layer = read_layers(con)
         cur.execute("""
-            SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
+            SELECT id, dst_cluster_type, dst_cluster_type_index, dst_section_index, dst_channel_index,
                    src_cluster_type_index, src_channel_index, status
             FROM routes
-            WHERE dst_cluster_type = 0 AND src_cluster_type = 10
+            WHERE dst_cluster_type IN (0, 8) AND src_cluster_type = 10
         """)
         rows = cur.fetchall()
     finally:
@@ -195,9 +201,13 @@ def read_session(db_path):
 
     # Plusieurs lignes pour la même (canal, entrée, voie) : on garde l'id le plus élevé (la plus récente).
     latest = {}
-    for row_id, ch_idx, section, slot, assign, src_idx, status in rows:
-        if slot >= widths.get(ch_idx, 2):
-            continue
+    for row_id, dst_type, idx, section, slot, assign, src_idx, status in rows:
+        if dst_type == 0:
+            ch_idx = idx                    # canal d'entrée, 0-based
+            if slot >= widths.get(ch_idx, 2):
+                continue
+        else:
+            ch_idx = TALKBACK - 1           # Talk Back (ch_idx + 1 = TALKBACK)
         key = (ch_idx, section, slot)
         if key not in latest or row_id > latest[key][0]:
             latest[key] = (row_id, assign, src_idx, status)

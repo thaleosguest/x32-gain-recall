@@ -20,7 +20,13 @@ import sqlite3
 SURFACE_MIXER1 = 2
 PROP_LAYERS_MODE = 12
 PROP_LAYERS_PAGE = 14
-MODE_FACTORY, MODE_CUSTOM, MODE_INPUTS = 0, 1, 4
+MODE_FACTORY, MODE_CUSTOM, MODE_INPUTS, MODE_BUSSES = 0, 1, 4, 5
+TALKBACK = -8          # Talk Back (même clé que lv1/session_patch.py)
+# Tranches des couches Mix (mode BussChn) qui ont une entrée réglable : {page: {tranche: canal}}.
+# Page 4 = « Masters » : LR, Center, Sub, -, Cue, Talk Back, -, -, Matrix 1-8 (capture de Joseph,
+# 2026-10-12, LV1 en 80 canaux) -> le Talk Back est la 6e tranche. Disposition fixe de la LV1 (pas
+# dans la base).
+BUS_PAGE_INPUTS = {4: {5: TALKBACK}}
 INPUT_PAGES = {MODE_FACTORY: 4, MODE_INPUTS: 5}   # pages de canaux d'entrée par mode
 STRIPS = 16
 
@@ -36,6 +42,8 @@ def _custom_channels(con, surface, page):
             "JOIN object o ON o.id = t.obj_id WHERE t.layer_id = ?", (layers[page],)):
         if 0 <= strip < STRIPS and obj_type == 0:
             out[strip] = obj_index + 1
+        elif 0 <= strip < STRIPS and obj_type == 8:      # Talk Back
+            out[strip] = TALKBACK
     return out
 
 
@@ -58,6 +66,8 @@ def read_layer(con, surface=SURFACE_MIXER1):
             channels = list(range(page * STRIPS + 1, page * STRIPS + STRIPS + 1))
         elif mode == MODE_CUSTOM:
             channels = _custom_channels(con, surface, page)
+        elif mode == MODE_BUSSES and page in BUS_PAGE_INPUTS:
+            channels = [BUS_PAGE_INPUTS[page].get(i) for i in range(STRIPS)]
         preset = _mode_preset(con, surface, mode, page)
     except sqlite3.Error:
         return None

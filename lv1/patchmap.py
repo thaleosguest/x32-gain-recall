@@ -78,7 +78,8 @@ def build_exp_map(channels, ranks=None):
     entrée B qui annonce encore EXP 8 sur In 9 alors que X32RACK 8 est patché sur In 7)."""
     ranks = ranks or {}
     exp_to_ch, exp_rank, conflicts = {}, {}, set()
-    for ch in sorted(channels, key=lambda c: (ranks.get(c, 0), c)):
+    # canaux d'entrée avant le Talk Back (clé négative) : un EXP partagé garde la couleur de son canal
+    for ch in sorted(channels, key=lambda c: (ranks.get(c, 0), c < 0, c)):
         r = ranks.get(ch, 0)
         for exp in channels[ch]:
             if exp in exp_to_ch:
@@ -228,6 +229,9 @@ class PatchMap:
         chans = info.keys() if channels is None else channels
         out = {}
         for ch in chans:
+            if ch < 0:      # Talk Back (lv1/session_patch.TALKBACK)
+                out[ch] = {"color": None, "name": "Talk Back", "label": "Talk Back"}
+                continue
             i = info.get(ch, {})
             out[ch] = {"color": i.get("color"), "name": i.get("name"), "label": display_name(ch, i.get("name"))}
         return out

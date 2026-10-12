@@ -93,6 +93,10 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
 - Languette : 14 px, fond transparent (HOLE), bloc point/flèche/⋯ au MILIEU de la hauteur (sur le vide
   entre « Gain » et « 48 » de la LV1 ; à 22 px en haut, elle cachait « Preamp/Local »), même position
   replié ou déplié. `layout` 3 ; conversion depuis 2 : x + (22 − 14).
+- **Talk Back** : routes `dst_cluster_type = 8` (TalkBack), objet `obj_type 8` (A/B : param 0, comme un
+  canal). Clé TALKBACK = -8 dans les tables canal -> sources. Position dans les couches : Masters =
+  mode 5 (BussChn) page 4, tranche 5 (`BUS_PAGE_INPUTS`, disposition fixe de la LV1, relevée sur
+  capture en 80 canaux) ; Custom : obj_type 8. EXP partagé : le canal d'entrée garde la couleur.
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
 - **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →
