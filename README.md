@@ -23,6 +23,12 @@ Version courante : **2.0.0** (voir [CHANGELOG](CHANGELOG.md)).
 3. Le navigateur s'ouvre : *Scanner* (ou taper l'IP de la X32), puis *Connecter*. Le code d'accès tablette est affiché en haut à droite.
 4. Si la LV1 tourne sur ce PC, chaque voie affiche tout de suite le **canal LV1** qui reçoit ce préampli : nom, couleur, « L 15 = EXP 15 », et suit les repatchs en 1 à 2 s. Bouton **Float** pour la fenêtre flottante à poser sur l'écran de la LV1.
 
+### Le donner à quelqu'un d'autre
+L'exe suffit, sans rien à configurer côté LV1 : **ni MyRemote, ni adresse IP, ni port, ni Companion**. L'appli lit le fichier que la LV1 tient à jour sur son propre PC (`C:\Users\Public\Waves Audio\eMotion\Sessions\CurrentLV1.dat`, même emplacement sur toute installation). Conditions :
+- l'appli tourne sur **le même PC que la LV1** (sinon : gains, scènes et routing X32 marchent, mais sans couleurs ni noms LV1) ;
+- la X32/M32 arrive dans la LV1 par sa **carte SoundGrid DN32-WSG**, reconnue par son modèle, quel que soit le nom donné à l'appareil ;
+- testé sur **LV1 V17** : une autre version pourrait ranger ses données autrement, auquel cas l'état est signalé au lancement et la table manuelle `lv1_patch_map.json` sert de secours.
+
 ## Utilisation
 **Avec Python** : `python x32_gain_recall.py` (ou double-clic sur `Lancer_X32_Gain_Recall.bat`), puis entrer l'IP de la X32 (Setup → Network) et *Connecter*, ou *Scanner* pour la trouver automatiquement sur le réseau local. Option `--sim` : X32 simulée, sans console.
 
@@ -56,7 +62,7 @@ python x32_gain_float.py --direct --sim
 
 **Rien à configurer quand la LV1 tourne sur le même PC** : la LV1 écrit son patch en continu, **sans sauvegarde**, dans sa base de travail `C:\Users\Public\Waves Audio\eMotion\Sessions\CurrentLV1.dat` (même format SQLite qu'une session `.emo`). Un repatch y apparaît environ **1 seconde** plus tard (mesuré sur LV1 V17), et l'appli la relit à chaque écriture : la table suit les repatchs toute seule. L'appli lit toujours une **copie** de ce fichier, jamais l'original, pour ne rien verrouiller ni créer dans les dossiers de la LV1.
 
-Seules les routes depuis **X32RACK** comptent (la carte DN32-WSG de la X32 : sa voie N = EXP N), en entrée A ou B, quelle que soit celle qui est sélectionnée. La **voie droite d'un canal mono** est ignorée : repasser un canal stéréo en mono ne supprime pas sa vieille route dans la base de la LV1 (la largeur est lue dans la table `chainer`). Un EXP qui n'arrive sur aucun canal reste **sans couleur**. TracksLive n'est pas pris par défaut, car il ne rejoue pas forcément les voies X32 avec les mêmes numéros ; `--lv1-device X32RACK,TracksLive:B` l'ajoute en repli, sans jamais l'emporter sur une route X32RACK.
+Seules les routes depuis la **carte DN32-WSG** de la X32 comptent (reconnue par son modèle, ou par le nom « X32RACK » ; sa voie N = EXP N), en entrée A ou B, quelle que soit celle qui est sélectionnée. La **voie droite d'un canal mono** est ignorée : repasser un canal stéréo en mono ne supprime pas sa vieille route dans la base de la LV1 (la largeur est lue dans la table `chainer`). Un EXP qui n'arrive sur aucun canal reste **sans couleur**. TracksLive n'est pas pris par défaut, car il ne rejoue pas forcément les voies X32 avec les mêmes numéros ; `--lv1-device X32RACK,TracksLive:B` l'ajoute en repli, sans jamais l'emporter sur une route X32RACK.
 
 Autres sources, si besoin :
 - **Table manuelle** `lv1_patch_map.json` à côté des scènes (non versionné ; partir de [`lv1_patch_map.example.json`](lv1_patch_map.example.json)), au format `{"19": [21, 22], "1": [1]}` — canal LV1 → numéro(s) EXP. Relue à chaud, **prioritaire** canal par canal : pour forcer un canal. Autre emplacement : `--lv1-map CHEMIN`.

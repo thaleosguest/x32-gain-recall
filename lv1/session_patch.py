@@ -57,7 +57,10 @@ import time
 
 from .channelinfo import read_channel_info
 
-DEFAULT_DEVICES = ("X32RACK",)
+# La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG"), pas
+# seulement par son nom ("X32RACK" ici, mais chacun peut renommer son appareil) : indispensable pour que
+# l'appli marche telle quelle chez quelqu'un d'autre.
+DEFAULT_DEVICES = ("DN32-WSG", "X32RACK")
 INPUT_NAMES = {0: "A", 1: "B"}
 
 # Base de travail EN DIRECT de la LV1 (même schéma qu'un .emo, en mode WAL). Vérifié en live le
@@ -117,7 +120,7 @@ def load_device_labels(con):
         label = friendly_name or description or f"device#{assign}"
         if gender_name:
             label = f"{label} ({gender_name})"
-        labels.setdefault(assign, label)
+        labels.setdefault(assign, (label, description or ""))
     return labels
 
 
@@ -176,9 +179,10 @@ def read_session(db_path):
 
     groups = {}   # (canal, entrée, assign) -> {"input", "device", "sources", "active"}
     for (ch_idx, section, slot), (row_id, assign, src_idx, status) in sorted(latest.items()):
+        label, model = device_labels.get(assign, (f"device#{assign}", ""))
         g = groups.setdefault((ch_idx + 1, section, assign), {
             "input": INPUT_NAMES.get(section, str(section)),
-            "device": device_labels.get(assign, f"device#{assign}"),
+            "device": label, "model": model,
             "sources": [], "active": False})
         g["sources"].append(src_idx + 1)
         g["active"] = g["active"] or status == 1
@@ -190,9 +194,11 @@ def read_session(db_path):
 
 
 def _matches(spec, group):
-    """spec "NOM" ou "NOM:A"/"NOM:B" (NOM = sous-chaîne du libellé, insensible à la casse)."""
+    """spec "NOM" ou "NOM:A"/"NOM:B" (NOM = sous-chaîne du nom OU du modèle du device, insensible à la casse)."""
     name, _, inp = spec.partition(":")
-    return name.strip().lower() in group["device"].lower() and (not inp or inp.strip().upper() == group["input"])
+    name = name.strip().lower()
+    hit = name in group["device"].lower() or name in group.get("model", "").lower()
+    return hit and (not inp or inp.strip().upper() == group["input"])
 
 
 def extract_patch(db_path, devices=DEFAULT_DEVICES):
