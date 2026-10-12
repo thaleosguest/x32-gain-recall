@@ -74,6 +74,7 @@ import os
 import sys
 import threading
 import time
+import webbrowser
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import messagebox
@@ -90,7 +91,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.9.0"
+FLOAT_VERSION = "2.10.0"
 GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
                           # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
@@ -336,6 +337,49 @@ def lv1_tab(hwnd):
     return LV1_TABS[tabs.index("C")]
 
 
+# Tranche sélectionnée (mode Edit) : relevés du 2026-10-12 sur la LV1 plein écran 1920x1080, en fractions de
+# la zone client. La LV1 ne l'écrit pas dans sa base (enregistreur : rien pendant 3 sélections).
+SEL_GREY = (120, 120, 120)                  # fond de la zone de fader de la tranche sélectionnée (autres : 17)
+SEL_ROWS = (800 / 1080.0, 880 / 1080.0, 960 / 1080.0)   # lignes lues (une suffit ; plusieurs si l'une est couverte)
+SEL_X0, SEL_PITCH, SEL_W = 143 / 1920.0, 96 / 1920.0, 92 / 1920.0   # 1re tranche, pas, largeur du fond gris
+# Calage automatique du float (modes SndChk / Setup : section « Input » en haut) : les cadres vides « Preamp /
+# Gain / 48 » des 16 tranches, relevés le 2026-10-12 (1920x1080) ; identiques au calage fait à la main par Joseph.
+AUTO_X0, AUTO_Y0 = 142 / 1920.0, 184 / 1080.0      # coin haut-gauche du cadre de la 1re tranche
+AUTO_PITCH, AUTO_H = 96 / 1920.0, 133 / 1080.0     # pas des tranches, hauteur des cadres
+# Cadre vide du bloc « Input » (sous A/B) de la page Edit, où se pose le réglage de la tranche sélectionnée
+SEL_BOX = (32 / 1920.0, 183 / 1080.0, 92 / 1920.0, 133 / 1080.0)   # x, y, largeur, hauteur
+
+
+def lv1_selected_column(hwnd):
+    """Colonne (0-15) de la tranche sélectionnée dans la couche affichée, lue à l'écran (fond gris de sa
+    zone de fader), ou None : aucune (tranche sélectionnée hors de la couche, LR...) ou illisible."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    for fy in SEL_ROWS:
+        row = screen_row(x, y + round(h * fy), w)
+        runs, start = [], None
+        for i, (r, g, b) in enumerate(row + [(0, 0, 0)]):
+            grey = abs(r - SEL_GREY[0]) <= 6 and abs(g - SEL_GREY[1]) <= 6 and abs(b - SEL_GREY[2]) <= 6
+            if grey and start is None:
+                start = i
+            elif not grey and start is not None:
+                runs.append((start, i - start))
+                start = None
+        # le fond gris est coupé par le fader et le vumètre : on regroupe les morceaux par colonne
+        cols = set()
+        for st, n in runs:
+            if n < 0.008 * w:
+                continue
+            k = int((st / float(w) - SEL_X0) / SEL_PITCH + 0.02)
+            if 0 <= k < 16 and st / float(w) <= SEL_X0 + k * SEL_PITCH + SEL_W:
+                cols.add(k)
+        if len(cols) == 1:
+            return cols.pop()
+    return None
+
+
 def _wintypes(u32, ctypes):
     u32.GetForegroundWindow.restype = ctypes.c_void_p
     u32.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
@@ -417,6 +461,7 @@ class ServerBackend:
         self.needs_login = False
         self.last_error = ""
         self.reachable = False
+        self.refused = False   # connexion refusee : plus rien n'ecoute sur le port (appli principale fermee)
         if session_token:
             # Deja authentifie par le bouton "Float" du navigateur (qui a lui-meme deja le code
             # d'acces --lan valide) : on recoit une session toute prete, pas besoin de retaper le
@@ -437,6 +482,7 @@ class ServerBackend:
                 ct = r.headers.get("Content-Type", "")
                 body = r.read()
             self.reachable = True
+            self.refused = False
             if "application/json" not in ct:
                 self.needs_login = True
                 return None
@@ -449,8 +495,9 @@ class ServerBackend:
             else:
                 self.last_error = "HTTP %d" % e.code
             return None
-        except (urllib.error.URLError, OSError, ValueError, TimeoutError):
+        except (urllib.error.URLError, OSError, ValueError, TimeoutError) as e:
             self.reachable = False
+            self.refused = isinstance(getattr(e, "reason", e), ConnectionRefusedError)
             return None
 
     def _post(self, path, data):
@@ -484,6 +531,8 @@ class ServerBackend:
         return self._get("/api/state") or EMPTY_SNAPSHOT
 
     def meters(self):
+        if not self.reachable:   # appli principale absente : ne pas attendre un 2e refus (~2 s sous Windows)
+            return EMPTY_METERS
         return self._get("/api/meters") or EMPTY_METERS
 
     def connect(self, ip):
@@ -528,6 +577,12 @@ class ServerBackend:
 
     def apply_routing(self, pid):
         return self._post("/api/routings/apply", {"id": pid, "groups": ["io"]}) or {"ok": False, "error": self.last_error}
+
+    def quit_app(self):
+        return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
+
+    def set_autostart(self, on):
+        return self._post("/api/autostart", {"on": on}) or {"ok": False, "error": self.last_error}
 
     def close(self):
         pass
@@ -981,6 +1036,9 @@ class FloatApp:
         self.strip_w = float(cfg.get("strip_w", 46))
         # hauteur des colonnes (2.1.0, réglable avec le coin bas-droit) ; défaut : largeur + STRIP_EXTRA_H
         self.strip_h = int(cfg.get("strip_h") or round(self.strip_w) + STRIP_EXTRA_H)
+        # calé tout seul sur les tranches de la LV1 (défaut) ; un déplacement / redimensionnement à la main
+        # repasse en calage manuel (menu ⋯ pour revenir à l'automatique)
+        self.auto_place = cfg.get("auto_place", True)
         self.console_open = False      # barre de connexion (IP, Connecter...) : sous les voies, à la demande
         self._console_auto = None      # True si ouverte automatiquement (pas connecté) : refermée à la connexion
         self.locked = False
@@ -1015,6 +1073,8 @@ class FloatApp:
             self.backend = ServerBackend(args.port, session_token=args.session_token)
 
         self.root = tk.Tk()
+        self.auto_var = tk.BooleanVar(value=self.auto_place)
+        self.autostart_var = tk.BooleanVar(value=False)
         self.root.title(APP_SHORT + " — Float")
         try:  # logo dans la barre des tâches / Alt+Tab (au lieu de la plume de Tk)
             self._icons = [tk.PhotoImage(data=d) for d in ICON_PNG_B64]
@@ -1034,6 +1094,16 @@ class FloatApp:
         self._tab_tick = 0
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
+        # caché tant qu'il n'y a pas de LV1 : dès qu'elle a été vue une fois (LV1 fermée -> le float disparaît
+        # au lieu de rester seul au milieu de l'écran, demande de Joseph), ou d'emblée au lancement à
+        # l'ouverture de session (Lancer avec Windows). Lancé sans LV1 à la main : visible, comme avant.
+        self._wait_lv1 = bool(getattr(args, "wait_lv1", False))
+        self.autostart = None          # case « Lancer avec Windows » (état lu dans /api/state)
+        self.update = None             # {"version", "url"} si une version plus récente est publiée
+        self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
+        self._sel_col = None           # mode Edit : colonne de la tranche sélectionnée, lue à l'écran
+        self._sel_key = None           # (canal, préamplis) affichés dans la fenêtre de la tranche sélectionnée
+        self._sel_units = []
         self.root.attributes("-topmost", True)
         self.root.configure(bg=BG)        # opaque (2.2.0 ; 0,97 avant)
         try:
@@ -1059,6 +1129,7 @@ class FloatApp:
         self._build_strips()
         self._build_dock()
         self._build_resize_grip()
+        self._build_sel_win()
 
         self.root.bind("<Escape>", lambda e: self.quit())
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -1075,6 +1146,8 @@ class FloatApp:
         apply_theme(self.root)
         self.root.after(1000, self._theme_pass)
         self.root.after(300, self._follow_lv1)
+        if getattr(args, "lv1_front", False):
+            self.root.after(500, self._lv1_front)
         self._poll()
 
     # -- construction de l'UI -------------------------------------------
@@ -1131,6 +1204,8 @@ class FloatApp:
             banks.add_radiobutton(label=name, value=name, variable=self.bank_var,
                                   command=lambda n=name: self._select_bank(n))
         m.add_cascade(label="Banque : %s" % self._bank_name(), menu=banks)
+        m.add_checkbutton(label="Caler sur la LV1 (auto)", variable=self.auto_var,
+                          command=lambda: self._set_auto_place(self.auto_var.get()))
         m.add_command(label="Plus large  (+)", command=lambda: self._resize_strips(2))
         m.add_command(label="Plus étroit  (−)", command=lambda: self._resize_strips(-2))
         m.add_separator()
@@ -1147,7 +1222,16 @@ class FloatApp:
         m.add_separator()
         m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
                       state="disabled")
+        if self.update and self.update.get("url"):
+            m.add_command(label="⬆ Mise à jour %s disponible…" % self.update.get("version"),
+                          command=lambda u=self.update["url"]: webbrowser.open(u))
         m.add_command(label="Fermer le float", command=self.quit)
+        if not self.args.direct:
+            if self.autostart is not None:
+                self.autostart_var.set(self.autostart)
+                m.add_checkbutton(label="Lancer avec Windows", variable=self.autostart_var,
+                                  command=self._toggle_autostart)
+            m.add_command(label="Quitter l'appli", command=self._quit_app)
         apply_theme(m)
         b = self.btn_more
         m.tk_popup(b.winfo_rootx() + b.winfo_width(), b.winfo_rooty())
@@ -1262,6 +1346,72 @@ class FloatApp:
         apply_theme(self.strips_frame)
         self.bank_var.set(self._bank_name())
 
+    # -- tranche sélectionnée (mode Edit) ----------------------------------
+    def _build_sel_win(self):
+        """Petite fenêtre posée dans le cadre vide du bloc « Input » de la page Edit de la LV1 : gain et 48V
+        du ou des préamplis X32 de la tranche sélectionnée (demande de Joseph). Placée en proportion de la
+        fenêtre de la LV1 (SEL_BOX) : rien à caler."""
+        w = tk.Toplevel(self.root)
+        w.overrideredirect(True)
+        w.withdraw()
+        w.attributes("-topmost", True)
+        w.configure(bg=PANEL)
+        self.sel_win = w
+        self.sel_tag = tk.Label(w, text="", bg=PANEL, fg=MUT, font=("Segoe UI", 7, "bold"))
+        self.sel_tag.pack(side="top", pady=(2, 0))
+        self.sel_body = tk.Frame(w, bg=PANEL)
+        self.sel_body.pack(side="top", fill="both", expand=True)
+        self._sel_geom = None
+
+    def _sel_channel(self):
+        """(canal LV1, [préamplis X32]) de la tranche sélectionnée, ou None."""
+        chans = self._lv1_lay.get("channels") or []
+        if self._sel_col is None or self._sel_col >= len(chans) or not chans[self._sel_col]:
+            return None
+        ch = chans[self._sel_col]
+        exp_to_idx = {int(e): int(k) for k, e in (self.exp_map or {}).items() if e}
+        idxs = [exp_to_idx[e] for e in self.lv1_sources.get(ch, []) if e in exp_to_idx]
+        return (ch, idxs) if idxs else None
+
+    def _sync_sel_win(self, lv1_shown):
+        """Affiche la fenêtre de la tranche sélectionnée en mode Edit (onglet Mixer 1 / 2), si la tranche a
+        un préampli X32 ; la reconstruit quand la tranche change ; la suit si la fenêtre de la LV1 bouge."""
+        sel = None
+        if lv1_shown and self._lv1_tab in MIXER_TABS and self._lv1_lay.get("preset_name") == "Edit":
+            sel = self._sel_channel()
+        if not sel:
+            if self.sel_win.state() != "withdrawn":
+                self.sel_win.withdraw()
+            return
+        rect = client_rect(self._lv1_hwnd)
+        if not rect:
+            return
+        x, y, w, h = rect
+        bx, by = x + round(w * SEL_BOX[0]), y + round(h * SEL_BOX[1])
+        bw, bh = max(40, round(w * SEL_BOX[2])), max(60, round(h * SEL_BOX[3]))
+        if sel != self._sel_key or (bw, bh) != (self._sel_geom or (0, 0, 0, 0))[2:]:
+            self._sel_key = sel
+            for c in self.sel_body.winfo_children():
+                c.destroy()
+            self._sel_units = []
+            ch, idxs = sel
+            self.sel_tag.config(text=join_tags(idxs))
+            avail = bh - self.sel_tag.winfo_reqheight() - 4
+            uw = (bw - 4) // 2                    # comme les colonnes du float : un mono est un demi-stéréo
+            for i in idxs[:2]:
+                u = Unit(self.sel_body, self, i, uw, compact=True)
+                u.resize(uw, avail)
+                u.pack(side="left", expand=True)
+                self._sel_units.append(u)
+            apply_theme(self.sel_win)
+        geom = (bx, by, bw, bh)
+        if geom != self._sel_geom:
+            self._sel_geom = geom
+            self.sel_win.geometry("%dx%d+%d+%d" % (bw, bh, bx, by))
+        if self.sel_win.state() == "withdrawn":
+            self.sel_win.deiconify()
+            self._z_state = None
+
     def _build_resize_grip(self):
         grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0,
                          cursor="bottom_right_corner")
@@ -1278,6 +1428,7 @@ class FloatApp:
         self._drag_oy = e.y_root - self.root.winfo_y()
 
     def _win_drag_move(self, e):
+        self._set_auto_place(False)
         self.root.geometry("+%d+%d" % (e.x_root - self._drag_ox, e.y_root - self._drag_oy))
         self._save_soon()
 
@@ -1292,6 +1443,7 @@ class FloatApp:
         """Coin bas-droit : la largeur TOTALE suit la souris au pixel près (répartie sur les 16 colonnes),
         pour caler le bord droit du float sur le bord droit de la 16e tranche de la LV1."""
         x0, y0, w0, h0 = getattr(self, "_grip0", (e.x_root, e.y_root, self.strip_w, self.strip_h))
+        self._set_auto_place(False)
         n = max(1, len(self.strips))
         self._set_strip_w(w0 + (e.x_root - x0) / n, h0 + (e.y_root - y0))
 
@@ -1304,7 +1456,7 @@ class FloatApp:
 
     def _set_strip_w(self, w, h=None):
         w = max(28.0, min(140.0, w))
-        h = self.strip_h if h is None else int(max(110, min(700, h)))
+        h = self.strip_h if h is None else int(max(70, min(700, h)))
         if abs(w - self.strip_w) < 0.01 and h == self.strip_h:
             return
         self.strip_w, self.strip_h = w, h
@@ -1317,7 +1469,31 @@ class FloatApp:
 
     def _resize_strips(self, delta):
         """Boutons −/+ : un quart de pixel par colonne (4 px sur la largeur totale), pour le réglage fin."""
+        self._set_auto_place(False)
         self._set_strip_w(self.strip_w + delta / 8.0)
+
+    # -- calage automatique sur la LV1 ----------------------------------------
+    def _set_auto_place(self, on):
+        if on == self.auto_place:
+            return
+        self.auto_place = on
+        self.auto_var.set(on)
+        self._auto_geom = None
+        self._save_soon()
+
+    def _auto_fit(self, lv1):
+        """Calage automatique : colonnes posées sur les cadres « Preamp / Gain / 48 » des 16 tranches de la LV1,
+        en proportion de sa fenêtre (suit un changement de taille ou de place de la fenêtre LV1)."""
+        rect = client_rect(lv1)
+        if not rect or rect[2] < 400:
+            return
+        if rect == getattr(self, "_auto_geom", None):
+            return
+        self._auto_geom = rect
+        x, y, w, h = rect
+        self._set_strip_w(w * AUTO_PITCH, round(h * AUTO_H))
+        self.root.geometry("+%d+%d" % (x + round(w * AUTO_X0) - TAB_W, y + round(h * AUTO_Y0)))
+        self._save_soon()
 
     # -- calage par écran -----------------------------------------------------
     @staticmethod
@@ -1411,7 +1587,14 @@ class FloatApp:
                 self._lv1_tab = tab
                 if tab in MIXER_TABS:
                     self._surface = "mixer2" if tab == "Mixer 2" else "mixer1"
+            if self._lv1_lay.get("preset_name") == "Edit":
+                # pas de « dernier connu » ici : une tranche désélectionnée (ou hors couche) vide le cadre
+                self._sel_col = lv1_selected_column(lv1)
+        if lv1:
+            self._wait_lv1 = True          # LV1 vue : désormais, plus de LV1 = float caché
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
+        if self._wait_lv1 and not lv1:
+            shown = False
         if shown != self._shown:
             self._shown = shown
             if shown:
@@ -1420,20 +1603,23 @@ class FloatApp:
             else:
                 self.root.withdraw()
             self._sync_dock()
+        if shown and lv1 and self.auto_place and not window_iconic(lv1):
+            self._auto_fit(lv1)
+        self._sync_sel_win(shown and lv1 and not window_iconic(lv1))
         if shown:
             self._sync_dock()
-            wins = [w for w in (self.root, self.panel_win) if w.state() != "withdrawn"]
+            wins = [w for w in (self.root, self.panel_win, self.sel_win) if w.state() != "withdrawn"]
             hwnds = [h for h in (float_hwnd(w) for w in wins) if h]
             if front:
-                if self._z_state != "top":
+                if self._z_state != ("top", len(hwnds)):    # une fenêtre de plus (tranche sélectionnée) : refaire
                     for h in hwnds:
                         set_topmost(h, True)
-                    self._z_state = "top"
-            elif self._z_state != fg:
+                    self._z_state = ("top", len(hwnds))
+            elif self._z_state != (fg, len(hwnds)):
                 for h in hwnds:
                     set_topmost(h, False)
                     place_below(h, fg)
-                self._z_state = fg
+                self._z_state = (fg, len(hwnds))
         self.root.after(100, self._follow_lv1)
 
     def _theme_pass(self):
@@ -1453,7 +1639,8 @@ class FloatApp:
                              "strip_h": self.strip_h}
         self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
                     "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
-                    "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION}
+                    "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION,
+                    "auto_place": self.auto_place}
         save_cfg(self.cfg)
 
     def _toggle_lock(self):
@@ -1779,6 +1966,16 @@ class FloatApp:
         snap = self.backend.snapshot()
         self.led_conn.itemconfig(self._conn_id, fill=(OK if snap.get("connected") else
                                                         ("#f2b63b" if snap.get("trying") else "#555555")))
+        if not self.args.direct:
+            # fenetre noire de l'appli principale fermee : le float, qui n'existe que par elle, se ferme aussi
+            # (seulement si elle a deja repondu : un float lance avant l'appli attend qu'elle demarre)
+            if self.backend.reachable:
+                self._server_seen, self._refused_since = True, None
+            elif self.backend.refused and getattr(self, "_server_seen", False):
+                self._refused_since = getattr(self, "_refused_since", None) or time.monotonic()
+                if time.monotonic() - self._refused_since > 1.5:
+                    self.quit()
+                    return
         if not self.backend.reachable and not self.args.direct:
             self.status_lbl.config(text="Appli principale non trouvée sur le port %d" % self.args.port, fg=WARN)
         elif not snap.get("connected") and not snap.get("trying"):
@@ -1795,6 +1992,9 @@ class FloatApp:
                 self._toggle_console(True, auto=True)
         elif self._console_auto and snap.get("connected"):
             self._toggle_console(False)
+        if snap.get("autostart_ok"):
+            self.autostart = bool(snap.get("autostart"))
+        self.update = snap.get("update")
         m = self.backend.meters()
         em = snap.get("exp_map") or {}
         lm = snap.get("lv1_map") or {}
@@ -1808,6 +2008,7 @@ class FloatApp:
         # changement de couche dans la LV1. Grp/Fx, Custom... (bank None) : on ne bouge pas.
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
+        self._lv1_lay = lay
         if self._surface != getattr(self, "_surface_seen", None):
             self._surface_seen = self._surface        # Mixer 1 <-> Mixer 2 : tout réappliquer
             self._lv1_layer_seen = self._lv1_preset_seen = None
@@ -1838,6 +2039,10 @@ class FloatApp:
                 self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
+        for u in self._sel_units:
+            u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
+            u.set_phantom(snap["phantom"][u.idx] if snap.get("phantom") else None)
+            u.set_led(m["v"][u.idx] if m.get("live") else None, self.clip_db)
         for s in self.strips:
             for u in s.units:
                 u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
@@ -1881,6 +2086,38 @@ class FloatApp:
             return None
         lm = self.lv1_map
         return lm.get(str(exp), lm.get(exp))
+
+    def _lv1_front(self, tries=15):
+        """Lancement automatique : passer la LV1 au premier plan. Le float le peut tant qu'il a lui-meme le
+        premier plan (il l'a en s'ouvrant), l'appli principale non. Plusieurs essais : sa fenetre peut ne
+        recevoir le premier plan qu'un peu apres."""
+        ctypes, u32 = _user32()
+        hwnd = find_lv1_window()
+        if not (u32 and hwnd):
+            return
+        if u32.GetForegroundWindow() == hwnd:
+            return
+        if u32.IsIconic(hwnd):
+            u32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        u32.SetForegroundWindow(hwnd)
+        if tries > 1:
+            self.root.after(200, lambda: self._lv1_front(tries - 1))
+
+    def _toggle_autostart(self):
+        r = self.backend.set_autostart(self.autostart_var.get())
+        if r.get("ok"):
+            self.autostart = r.get("on")
+        else:
+            self.autostart_var.set(bool(self.autostart))
+            messagebox.showerror(APP_SHORT, "Lancer avec Windows : %s" % (r.get("error") or "impossible"),
+                                 parent=self.root)
+
+    def _quit_app(self):
+        """Quitter toute l'appli (plus de fenêtre noire à fermer depuis la 2.3.0) : le float se ferme aussitôt."""
+        if messagebox.askyesno(APP_SHORT, "Quitter l'appli ? (le float, la page et la connexion à la console "
+                               "s'arrêtent)", parent=self.root):
+            self.backend.quit_app()
+            self.quit()
 
     def quit(self):
         self._save_cfg()
@@ -1936,6 +2173,8 @@ def main():
     ap.add_argument("--session-token", default=None,
                      help=argparse.SUPPRESS)  # usage interne : passe par le bouton "Float" du navigateur
                      # pour eviter de retaper le code d'acces --lan ; non documente pour la saisie manuelle
+    ap.add_argument("--lv1-front", action="store_true", help=argparse.SUPPRESS)  # lancement auto : LV1 devant
+    ap.add_argument("--wait-lv1", action="store_true", help=argparse.SUPPRESS)   # ouverture de session : caché sans LV1
     ap.add_argument("--direct", action="store_true",
                      help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
     ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")

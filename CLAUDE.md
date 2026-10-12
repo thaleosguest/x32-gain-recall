@@ -14,10 +14,14 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.2.0 publiée (2026-10-12)
+## État actuel : v2.3.0 publiée (2026-10-13)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.2.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.2.0 (branche `dev-2.2`) fusionnée dans `main` ; avant : #4 (v2.1.0), #1, #2 (v2.0.0), #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.3.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.3.0 (branche `dev-2.3`) fusionnée dans `main` ; avant : #5 (v2.2.0), #4 (v2.1.0), #1, #2 (v2.0.0), #3.
+2.3.0 = plug and play : mode d'emploi (`MODE_EMPLOI.md`), float ouvert et calé tout seul, 1re connexion
+automatique + reconnexion, navigateur réduit, LV1 au premier plan, pas de code sur le PC, icône près de
+l'horloge (exe sans console), une seule instance, Lancer avec Windows, float caché LV1 fermée, tranche
+sélectionnée en mode Edit, avis de mise à jour (détails : section « Démarrage, plug and play »).
 2.1.0 = nom « X/M32 Gain Recall for eMotion LV1 », logo, X-WSG, vue LV1, float qui suit couches et
 modes de la LV1, calage par écran, float lié à la LV1.
 2.2.0 = float intégré à la LV1 : languette à gauche (plus de barre), caché hors Mixer 1/2 (onglet lu à
@@ -232,6 +236,44 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - `gh auth login` ne marche pas dans le panneau Terminal de l'app : le faire dans une vraie
   fenêtre PowerShell.
 - argparse : un `%` dans un `help=` doit être écrit `%%` (sinon l'appli plante au démarrage).
+
+## Démarrage, plug and play (2.3.0)
+
+- Au lancement : navigateur ouvert puis **réduit** (`_push_browser_back` : toute fenêtre dont le titre
+  contient `APP_NAME`, après 0,8 s, surveillée 4 s — Brave remet au premier plan une fenêtre réduite trop
+  tôt), puis float (`launch_float_window`, un seul à la fois : `FLOAT_PROC`). Reconnexion à `last_ip`
+  (settings). Pas de code d'accès pour 127.0.0.1/::1 SI le Host est dans `ALLOWED_HOSTS` (anti
+  DNS-rebinding). Serveur fermé : le float quitte (port refusé ~4 s), l'onglet fait `window.close()`.
+- **LV1 au premier plan au démarrage** : c'est le float (`--lv1-front`, option cachée passée par
+  `_startup_windows`) qui fait `SetForegroundWindow(LV1)`, car il a le premier plan en s'ouvrant. Essayé
+  depuis le serveur (même avec `AttachThreadInput`) : refusé par Windows (serveur en arrière-plan).
+  Test réaliste = lancer via `explorer.exe fichier.bat` (sinon le processus hérite des droits de Claude).
+- Arrêter un serveur de test par sa ligne de commande (`*8091*`) tue aussi le shell dont la commande
+  contient ce texte : filtrer sur `x32_gain_recall.py --web-port`.
+- **Tranche sélectionnée (mode Edit)** : PAS dans la base (enregistreur : aucune écriture pendant 3
+  sélections). Lue à l'écran (`lv1_selected_column`) : fond (120,120,120) de la zone de fader de la tranche
+  sélectionnée (autres : 17), lignes 800/880/960 sur 1080, 1re tranche x=143/1920, pas 96, largeur 92 ;
+  ~5 ms. Réglage posé dans le cadre vide du bloc Input (`SEL_BOX` : x 32, y 183, 92x133 sur 1920x1080),
+  fenêtre `sel_win` du float. Canal -> colonne par `lv1_layers[surface].channels`.
+- **Calage auto du float** (`auto_place`, défaut) : `AUTO_X0/Y0` = 142/1920, 184/1080, pas 96/1920, hauteur
+  133/1080 (cadres vides des tranches en SndChk ; Setup a la même section du haut, type 0 dans
+  `ovv_modes_presets`). Mesuré = calage manuel de Joseph au pixel près. Geste manuel -> `auto_place` False.
+- **1re connexion** : `_first_connect()` (pas de `last_ip`) : `scan_network()` toutes les 10 s / 2 min, une
+  seule console -> connexion + `remember_console`. Testé avec la X32 de Joseph (X32RACK-JS, 192.168.1.201).
+- **Sans console (2.3.0)** : PyInstaller `--noconsole` ; `tray.py` = icône de notification en ctypes pur
+  (Shell_NotifyIconW, fenêtre cachée + boucle de messages sur son thread). Journal : `redirect_output_to_log`
+  (après le test « déjà lancé », sinon un 2e lancement vide le journal du 1er). Quitter : `quit_app()`
+  (SERVER.shutdown + float terminé) ; `/api/quit`, `/api/autostart`, `/api/show` réservés à 127.0.0.1.
+  Instance unique : `already_running()` POST `/api/show` sur le port, en-tête `Server: X32GainRecall`.
+  CI : exe fenêtré -> `Start-Process -Wait -PassThru` + code de sortie (PowerShell n'attend pas sinon).
+- **Lancer avec Windows** : HKCU `...\CurrentVersion\Run`, valeur « XM32 Gain Recall LV1 » = `"exe" --at-login`
+  (exe seulement) ; `--at-login` = pas de navigateur + float `--wait-lv1` (caché tant que pas de LV1).
+- **Avis de mise à jour** : `check_update()` (GitHub API `releases/latest`, User-Agent obligatoire), au lancement +5 s
+  puis toutes les 24 h ; `UPDATE` -> `/api/state.update`, entrée de l'icône (libellé fonction ; None = masquée),
+  bulle `TrayIcon.notify`, menu ⋯ du float, lien `#bupd` de la page. Test : forcer `APP_VERSION = "2.1.0"`.
+- Captures d'écran sans Pillow : BitBlt + PNG en Python pur (script `grab.py` refait dans le scratchpad).
+- Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
+  `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
 
 ## Reste à faire / idées
 

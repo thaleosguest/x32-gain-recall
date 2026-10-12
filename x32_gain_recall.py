@@ -51,7 +51,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.3.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1284,7 +1284,10 @@ def scan_network(timeout=1.5, port=X32_PORT):
     return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
 
 
-def launch_float_window():
+FLOAT_PROC = None  # float lance par cette appli (un seul a la fois)
+
+
+def launch_float_window(extra=()):
     """Lance la fenetre flottante en tant que processus separe, SUR CETTE MACHINE.
 
     Depuis la 1.5.0, plus de second .exe a gerer : la fenetre flottante est integree au meme
@@ -1299,12 +1302,16 @@ def launch_float_window():
     facon. Ce bouton n'a donc d'utilite que pour qui clique depuis le navigateur de CETTE
     machine (cas typique : PC qui heberge aussi la LV1).
     """
+    global FLOAT_PROC
+    if FLOAT_PROC is not None and FLOAT_PROC.poll() is None:
+        return True, ""  # deja ouvert (au demarrage ou par un clic precedent) : pas de deuxieme float
     frozen = getattr(sys, "frozen", False)
     here = os.path.dirname(os.path.abspath(sys.executable if frozen else __file__))
     if frozen:
         cmd = [sys.executable, "--float", "--port", str(WEB_PORT)]
     else:
         cmd = [sys.executable, os.path.abspath(__file__), "--float", "--port", str(WEB_PORT)]
+    cmd += list(extra)
     if ALLOW_ANY_HOST and LAN_CODE:
         # Quiconque clique ce bouton est deja authentifie dans le navigateur (sinon la page de
         # connexion s'affiche avant meme de voir ce bouton) : on lui offre une session toute prete
@@ -1316,10 +1323,242 @@ def launch_float_window():
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        subprocess.Popen(cmd, **kwargs)
+        FLOAT_PROC = subprocess.Popen(cmd, **kwargs)
     except OSError as e:
         return False, "Lancement impossible : %s" % e
     return True, ""
+
+
+def _windows(match):
+    """Windows : fenetres principales visibles dont le titre verifie match(titre)."""
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.windll.user32
+    found = []
+
+    def cb(hwnd, _):
+        buf = ctypes.create_unicode_buffer(512)
+        if (user32.IsWindowVisible(hwnd) and not user32.GetWindow(hwnd, 4)  # 4 = GW_OWNER
+                and user32.GetWindowTextW(hwnd, buf, 512) and match(buf.value)):
+            found.append(hwnd)
+        return True
+    user32.EnumWindows(ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(cb), 0)
+    return found
+
+
+def _push_browser_back(timeout=15.0):
+    """Windows : le navigateur s'ouvre au premier plan, devant la LV1. Des que sa fenetre affiche la page (titre
+    = APP_NAME, apres le chargement), on la reduit : la LV1 et le float restent devant. Reduite trop tot, elle
+    revient toute seule (vu avec Brave) : on surveille encore 4 s et on reduit toute fenetre de la page."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+
+        def page_windows():
+            return [h for h in _windows(lambda t: APP_NAME in t) if not user32.IsIconic(h)]
+
+        end, seen = time.monotonic() + timeout, False
+        while time.monotonic() < end:
+            wins = page_windows()
+            if wins and not seen:
+                seen, end = True, time.monotonic() + 4.8
+                time.sleep(0.8)
+                wins = page_windows()
+            for hwnd in wins:
+                user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE (n'exige pas d'etre au premier plan)
+            time.sleep(0.1)
+    except Exception:
+        pass
+
+
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_NAME = "XM32 Gain Recall LV1"
+AUTOSTART = {"on": False}
+SERVER = None          # ThreadingHTTPServer (pour quitter depuis l'icone ou le float)
+TRAY = None
+
+
+RELEASES_API = "https://api.github.com/repos/thaleosguest/x32-gain-recall/releases/latest"
+UPDATE = {"version": None, "url": None}   # derniere version publiee, si plus recente que celle-ci
+
+
+def _version_tuple(v):
+    try:
+        return tuple(int(x) for x in str(v).lstrip("vV").split("-")[0].split("."))
+    except ValueError:
+        return ()
+
+
+def check_update():
+    """Derniere release publiee sur GitHub plus recente que APP_VERSION ? -> UPDATE. Rien n'est telecharge
+    ni installe : on le signale (icone, float, page) avec le lien de la page de telechargement."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(RELEASES_API, headers={"User-Agent": "%s/%s" % (APP_SHORT.replace("/", ""), APP_VERSION),
+                                                            "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            rel = json.loads(r.read())
+    except Exception as e:
+        print("Verification des mises a jour impossible : %s" % e)
+        return
+    tag = rel.get("tag_name") or ""
+    if rel.get("draft") or rel.get("prerelease") or not _version_tuple(tag):
+        return
+    if _version_tuple(tag) > _version_tuple(APP_VERSION):
+        new = UPDATE["version"] != tag.lstrip("vV")
+        UPDATE.update(version=tag.lstrip("vV"), url=rel.get("html_url") or RELEASES_API)
+        print("Mise a jour disponible : %s (%s)" % (UPDATE["version"], UPDATE["url"]))
+        if new and TRAY:
+            TRAY.notify("%s %s disponible" % (APP_SHORT, UPDATE["version"]),
+                        "Clic droit sur cette icone -> Mise a jour, pour la telecharger.")
+
+
+def update_loop():
+    """Au lancement (apres 5 s), puis une fois par jour (appli laissee ouverte longtemps)."""
+    time.sleep(5)
+    while True:
+        check_update()
+        time.sleep(24 * 3600)
+
+
+def open_update():
+    if UPDATE["url"]:
+        webbrowser.open(UPDATE["url"])
+
+
+def autostart_command():
+    """Ligne de commande de « Lancer avec Windows » : l'exe avec --at-login (pas de navigateur, float qui
+    attend la LV1). None hors exe compile (version Python : pas proposee)."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return None
+    return '"%s" --at-login' % sys.executable
+
+
+def autostart_read():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            return winreg.QueryValueEx(k, RUN_NAME)[0]
+    except (ImportError, OSError):
+        return None
+
+
+def autostart_set(on):
+    """Ajoute / retire l'appli des programmes lances a l'ouverture de session (cle Run de HKCU : cet
+    utilisateur seulement, sans droits administrateur)."""
+    cmd = autostart_command()
+    if on and not cmd:
+        return False, "Disponible seulement avec l'exe"
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+            if on:
+                winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(k, RUN_NAME)
+                except FileNotFoundError:
+                    pass
+    except (ImportError, OSError) as e:
+        return False, str(e)
+    AUTOSTART["on"] = on
+    return True, ""
+
+
+def autostart_init():
+    """Au lancement : etat de la case, et chemin remis a jour si l'exe a ete deplace / remplace."""
+    cur = autostart_read()
+    AUTOSTART["on"] = bool(cur)
+    cmd = autostart_command()
+    if cur and cmd and cur != cmd:
+        autostart_set(True)
+
+
+def quit_app():
+    """Quitter (icone ou float) : arrete le serveur ; le float et l'onglet du navigateur se ferment d'eux-memes
+    quand l'appli ne repond plus (voir x32_gain_float._poll et la page)."""
+    if FLOAT_PROC is not None and FLOAT_PROC.poll() is None:
+        try:
+            FLOAT_PROC.terminate()
+        except OSError:
+            pass
+    if TRAY:
+        TRAY.stop()
+    if SERVER:
+        SERVER.shutdown()
+
+
+def show_app():
+    """Re-afficher (exe relance alors qu'il tourne deja, ou icone) : la page au premier plan, et le float."""
+    webbrowser.open(LOCAL_URL)
+    launch_float_window()
+
+
+def already_running(port):
+    """Une instance de cette appli repond deja sur ce port ? On lui demande de se montrer et on s'arrete :
+    sans fenetre noire, un double-clic de plus ouvrirait sinon une 2e appli (et un 2e float)."""
+    import urllib.request
+    try:
+        req = urllib.request.Request("http://127.0.0.1:%d/api/show" % port, data=b"{}", method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return r.headers.get("Server", "").startswith("X32GainRecall") and json.loads(r.read()).get("ok")
+    except Exception:
+        return False
+
+
+def redirect_output_to_log(name):
+    """Exe sans console : print() et les erreurs vont dans un fichier du dossier de l'appli (remplace a chaque
+    lancement)."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    try:
+        f = open(os.path.join(app_data_dir(), name), "w", encoding="utf-8", buffering=1)
+    except OSError:
+        return
+    sys.stdout = sys.stdout or f
+    sys.stderr = sys.stderr or f
+
+
+def start_tray():
+    global TRAY
+    try:
+        import tray
+    except ImportError:
+        return
+    TRAY = tray.TrayIcon(
+        "%s v%s" % (APP_SHORT, APP_VERSION),
+        [("Ouvrir la page", lambda: webbrowser.open(LOCAL_URL)),
+         ("Afficher le float", launch_float_window),
+         (lambda: ("Mise a jour %s disponible..." % UPDATE["version"]) if UPDATE["version"] else None,
+          open_update),
+         None,
+         ("Lancer avec Windows", lambda: autostart_set(not AUTOSTART["on"])),
+         None,
+         ("Quitter", quit_app)],
+        checked={"Lancer avec Windows": lambda: AUTOSTART["on"]},
+        icon_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico"),
+    ).start()
+    if autostart_command() is None:   # version Python : pas de lancement avec Windows
+        TRAY.items = [i for i in TRAY.items if not (i and i[0] == "Lancer avec Windows")]
+        TRAY.items = [i for n, i in enumerate(TRAY.items) if not (i is None and n and TRAY.items[n - 1] is None)]
+
+
+def _startup_windows(url, browser, float_win, at_login=False):
+    """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours, puis la LV1
+    au premier plan. Ouverture de session (--at-login) : pas de navigateur, le float attend la LV1."""
+    time.sleep(0.6)
+    if browser:
+        webbrowser.open(url)
+        _push_browser_back()
+    if float_win:
+        # --lv1-front : le float, au premier plan en s'ouvrant, y passe la LV1 (Windows le refuse a cette
+        # appli-ci, en arriere-plan a ce moment-la : verifie)
+        ok, err = launch_float_window(["--wait-lv1"] if at_login else ["--lv1-front"])
+        if not ok:
+            print(err)
 
 
 def start_sim():
@@ -1355,6 +1594,10 @@ class Handler(BaseHTTPRequestHandler):
     def _auth_ok(self):
         if not ALLOW_ANY_HOST or not LAN_CODE:
             # pas de --lan (deja protege par 127.0.0.1), ou --lan-sans-mdp assume explicitement
+            return True
+        if self.client_address[0] in ("127.0.0.1", "::1") and self.headers.get("Host", "") in ALLOWED_HOSTS:
+            # le PC de l'appli lui-meme : pas de code (seuls tablettes / telephones le tapent). Host verifie :
+            # une page web piegee qui viserait 127.0.0.1 par DNS-rebinding arrive avec SON nom d'hote.
             return True
         tok = self._session_token()
         return tok is not None and tok in SESSIONS
@@ -1441,6 +1684,9 @@ class Handler(BaseHTTPRequestHandler):
             snap["local_url"] = LOCAL_URL
             snap["lan_urls"] = LAN_URLS
             snap["code_rotatable"] = bool(ALLOW_ANY_HOST and CODE_PATH)
+            snap["autostart"] = AUTOSTART["on"]
+            snap["update"] = dict(UPDATE) if UPDATE["version"] else None
+            snap["autostart_ok"] = autostart_command() is not None
             self._json(snap)
         elif path == "/api/meters":
             self._json(CLIENT.meters_snapshot())
@@ -1552,6 +1798,8 @@ class Handler(BaseHTTPRequestHandler):
             CLIENT.demo = ip == "127.0.0.1"
             if ok:
                 threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
+                if not CLIENT.demo:
+                    remember_console(ip)
             return self._json({"ok": ok, "error": CLIENT.error})
         if p == "/api/demo":
             ok, err = start_sim()
@@ -1575,6 +1823,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
+        if p in ("/api/quit", "/api/autostart", "/api/show"):
+            # le PC de l'appli seulement (pas une tablette) : quitter, lancement avec Windows, ré-afficher
+            if not (self.client_address[0] in ("127.0.0.1", "::1")
+                    and self.headers.get("Host", "") in ALLOWED_HOSTS):
+                return self._json({"ok": False, "error": "seulement depuis le PC de l'appli"}, 403)
+            if p == "/api/quit":
+                threading.Thread(target=quit_app, daemon=True).start()
+                return self._json({"ok": True})
+            if p == "/api/autostart":
+                ok, err = autostart_set(bool(d.get("on")))
+                return self._json({"ok": ok, "error": err, "on": AUTOSTART["on"]})
+            show_app()
+            return self._json({"ok": True})
         if p == "/api/launch-float":
             ok, err = launch_float_window()
             return self._json({"ok": ok, "error": err})
@@ -1834,7 +2095,8 @@ select.inp{padding:6px}
 
 /* ---- modale / toast ---- */
 #modal{position:fixed;inset:0;background:#000a;display:none;align-items:center;justify-content:center;z-index:10}
-#modal .box{background:#15171a;border:1px solid var(--line2);border-radius:8px;padding:18px 20px;max-width:520px;width:calc(100% - 30px)}
+#gone{position:fixed;inset:0;background:#000c;display:flex;align-items:center;justify-content:center;z-index:30}
+#modal .box,#gone .box{background:#15171a;border:1px solid var(--line2);border-radius:8px;padding:18px 20px;max-width:520px;width:calc(100% - 30px)}
 #modal h3{margin:0 0 8px;font-size:16px}
 #modal p{margin:6px 0;color:#c9cfd4;line-height:1.4;user-select:text}
 #modal .row{margin-top:14px;justify-content:flex-end}
@@ -1913,6 +2175,7 @@ body.v-rout #rview{display:grid}
     <button class="mini act" id="bvu" title="Vumètre d'entrée discret sur chaque voie">&#9646; Vumètre</button>
     <button class="mini lock" id="block" title="Verrouille l'&eacute;dition (comme le cadenas du LV1)">&#128274; Verrou</button>
     <div class="spacer"></div>
+    <a id="bupd" class="mini" style="display:none;text-decoration:none;color:#f2b63b" target="_blank" rel="noopener" title="Une version plus récente est publiée : page de téléchargement"></a>
     <button id="lancode" class="mini" style="display:none" title="Version, adresses et code d'accès"></button>
     <div class="logo">__APP_LOGO__<div>X/M32 GAIN RECALL<small>FOR EMOTION LV1 &middot; v__APP_VERSION__</small></div></div>
   </div>
@@ -2179,6 +2442,9 @@ function update(){
   else{w.style.display="block";w.innerHTML=S.trying?"<b>Connexion en cours…</b><br>En attente d'une réponse de la console sur "+esc(S.ip)+" (UDP 10023). Si rien n'arrive : vérifiez l'IP (X32 : Setup → Network), que le PC est sur le même réseau/sous-réseau, et le pare-feu Windows."
     :"<b>1.</b> Sur la X32 : <b>Setup → Network</b> pour lire son adresse IP.<br><b>2.</b> Entrez-la en haut puis <b>Connecter</b>.<br><b>3.</b> Réglez les gains, sauvez une scène, rappelez-la plus tard.<br><br>Pas de console sous la main ? Le bouton <b>Démo</b> lance une X32 simulée.";}
   renderStatus();renderPresetButtons();routingButtons();
+  const up=$("#bupd");
+  if(S.update&&S.update.version){up.style.display="";up.href=S.update.url;up.innerHTML="&#11014; v"+esc(S.update.version)+" disponible";}
+  else up.style.display="none";
   const lc=$("#lancode");lc.style.display="";
   lc.innerHTML=S.lan_code?("&#128273; Code : <b>"+esc(S.lan_code)+"</b>"):
     ((S.lan_urls&&S.lan_urls.length)?"&#127760; Accès réseau":"&#127760; Accès");
@@ -2446,7 +2712,7 @@ async function meterLoop(){
     if(sv){gview=sv.view==="x32"?"x32":"lv1";bank=Math.min(BANKS.length-1,Math.max(0,sv.bank|0));
       lv1bank=Math.min(LV1_BANKS.length-1,Math.max(0,sv.lv1bank|0));}}catch(_){}
   buildStrips();loadPresets();meterLoop();
-  let rev=-1,lv1sig="";
+  let rev=-1,lv1sig="",downSince=0;
   async function poll(){
     try{const s=await api("/api/state");
       // rev ne bouge qu'avec l'etat X32 : un repatch / une couleur / un nom change dans la LV1 doit aussi
@@ -2455,8 +2721,20 @@ async function meterLoop(){
       if(s.rev!==rev||sig!==lv1sig||s.connected!==S.connected||s.trying!==S.trying){rev=s.rev;lv1sig=sig;S=s;
         // vue LV1 : un repatch (LV1 ou X32) change les colonnes elles-memes
         if(gview==="lv1"&&JSON.stringify(lv1Layout())!==layoutKey)buildStrips();else update();}
-    }catch(_){S.connected=false;S.trying=false;update();}
-    setTimeout(poll,150);
+      if(downSince){location.reload();return;} // appli relancee : repartir d'une page neuve
+    }catch(e){S.connected=false;S.trying=false;update();
+      // appli principale arretee (fenetre noire fermee) : fetch echoue (TypeError), pas une simple reponse
+      // invalide. Sur ce PC, on ferme l'onglet ; ailleurs (tablette) ou si le navigateur refuse, on le dit.
+      if(e instanceof TypeError){
+        if(!downSince)downSince=Date.now();
+        else if(Date.now()-downSince>2000&&!$("#gone")){
+          if(/^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname))window.close();
+          const g=document.createElement("div");g.id="gone";
+          g.innerHTML="<div class='box'><h3>Appli arrêtée</h3><p>L'appli a été quittée. "+
+            "Vous pouvez fermer cet onglet ; il se recharge tout seul si l'appli est relancée.</p></div>";
+          document.body.appendChild(g);}
+      }}
+    setTimeout(poll,downSince?1000:150);
   }
   poll();
 })();
@@ -2536,6 +2814,41 @@ def save_settings(s):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(s, f, ensure_ascii=False, indent=1)
     os.replace(tmp, path)
+
+
+def _first_connect(tries=12, every=10.0):
+    """Premier lancement (aucune console connue) : on cherche les X32/M32 du reseau ; une seule trouvee -> on
+    s'y connecte (et elle est retenue). Plusieurs : rien, on choisit dans la barre de connexion. Aucune : on
+    recommence toutes les 10 s pendant 2 min (console allumee apres l'appli), sauf connexion faite a la main."""
+    found = []
+    for n in range(tries):
+        if CLIENT.ip:
+            return
+        found = scan_network()
+        if found:
+            break
+        if n == 0:
+            print("Aucune console trouvee sur le reseau pour l'instant : nouvel essai toutes les %d s." % every)
+        time.sleep(every)
+    if len(found) == 1 and not CLIENT.ip:
+        ip = found[0]["ip"]
+        print("Console trouvee sur le reseau : %s (%s), connexion." % (found[0].get("name") or "?", ip))
+        if CLIENT.connect(ip):
+            threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
+            remember_console(ip)
+    elif len(found) > 1:
+        print("%d consoles trouvees sur le reseau : choisir dans la barre de connexion." % len(found))
+
+
+def remember_console(ip):
+    """Derniere console demandee, reconnectee au prochain lancement (x32_gain_recall_settings.json)."""
+    s = load_settings()
+    if s.get("last_ip") != ip:
+        s["last_ip"] = ip
+        try:
+            save_settings(s)
+        except OSError:
+            pass
 
 
 def scenes_dir():
@@ -2647,6 +2960,12 @@ def main():
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
+    ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
+    ap.add_argument("--no-update-check", action="store_true",
+                    help="ne pas verifier sur GitHub si une version plus recente est publiee")
+    ap.add_argument("--at-login", action="store_true",
+                    help="lancement a l'ouverture de session (Lancer avec Windows) : sans navigateur, float cache "
+                         "jusqu'a ce que la LV1 soit lancee")
     ap.add_argument("--data", help="chemin du fichier de scenes (defaut : dossier choisi dans l'interface, sinon %%APPDATA%%/X32 Gain Recall)")
     ap.add_argument(
         "--local-only",
@@ -2701,6 +3020,13 @@ def main():
         ),
     )
     a = ap.parse_args()
+    if a.at_login:
+        a.no_browser = True
+    if not a.sim and already_running(a.web_port):
+        print("Deja lance : appli existante re-affichee.")
+        return
+    redirect_output_to_log("x32_gain_recall.log")   # apres : un 2e lancement ne vide pas le journal du 1er
+    autostart_init()
     a.lan = not a.local_only  # accessible au reseau local par defaut depuis la 1.3 ; --local-only revient a l'ancien comportement
 
     global ALLOW_ANY_HOST, LAN_CODE, WEB_PORT, CODE_PATH, LOCAL_URL, LAN_URLS
@@ -2739,6 +3065,8 @@ def main():
         sys.exit(1)
     port = srv.server_address[1]
     WEB_PORT = port
+    global SERVER
+    SERVER = srv
     ALLOWED_HOSTS.update({"127.0.0.1:%d" % port, "localhost:%d" % port})
     url = "http://127.0.0.1:%d/" % port
 
@@ -2759,6 +3087,12 @@ def main():
         CLIENT.demo = True
     elif a.ip:
         CLIENT.connect(a.ip)
+    elif load_settings().get("last_ip"):
+        # derniere console : connect() ne bloque pas et retente tout seul, la console peut arriver plus tard
+        CLIENT.connect(load_settings()["last_ip"])
+        threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
+    else:
+        threading.Thread(target=_first_connect, daemon=True).start()
 
     print("%s v%s  -  by %s  -  interface : %s" % (APP_NAME, APP_VERSION, APP_AUTHOR, url))
     if a.lan:
@@ -2791,15 +3125,21 @@ def main():
         ("  [session : %s (%d canaux)]" % (st["session_file"] or st["session_source"], st["session_channels"])) if st["session_source"] else ""))
     for err in st["errors"].values():
         print("  ! %s" % err)
-    print("Ctrl+C pour quitter.")
-    if not a.no_browser:
-        threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+    print("Quitter : icone pres de l'horloge (clic droit), ou menu ... du float." +
+          (" Ou Ctrl+C ici." if sys.stdout and sys.stdout.isatty() else ""))
+    start_tray()
+    if not a.no_update_check:
+        threading.Thread(target=update_loop, daemon=True).start()
+    threading.Thread(target=_startup_windows, args=(url, not a.no_browser, not a.no_float, a.at_login),
+                     daemon=True).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
         CLIENT.disconnect()
+        if TRAY:
+            TRAY.stop()
 
 
 if __name__ == "__main__":
@@ -2809,6 +3149,7 @@ if __name__ == "__main__":
         # flottante, importee ici seulement (et non en haut du fichier) pour que ce script continue a
         # demarrer sans tkinter quand on ne s'en sert pas comme fenetre flottante.
         sys.argv.remove("--float")
+        redirect_output_to_log("x32_float.log")
         import x32_gain_float
         x32_gain_float.main()
     else:
