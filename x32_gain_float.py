@@ -90,7 +90,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.8.5"
+FLOAT_VERSION = "2.8.6"
 GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
                           # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
@@ -688,7 +688,7 @@ class Unit(tk.Frame):
             w.bind("<B1-Motion>", self._drag_move)
             w.configure(cursor="sb_v_double_arrow")
 
-        self._val_font = tkfont.Font(family="Consolas", size=7 if compact else 10, weight="bold")
+        self._val_font = tkfont.Font(family="Consolas", size=8 if compact else 10, weight="bold")
         self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=self._val_font, cursor="xterm")
         self.val.pack(fill="x", padx=1 if compact else 4, pady=(3, 3))
         self.val.bind("<Button-1>", self._edit_value)
@@ -868,13 +868,15 @@ class Strip(tk.Frame):
         body.pack(fill="both", expand=True)
         uw = self._unit_width()
         for i in self.idxs:
-            u = Unit(body, owner, i, uw, compact=len(self.idxs) > 1)
+            # même potard, même 48V, même case de valeur en mono et en stéréo (2.2.0, demande de Joseph,
+            # sur le modèle de la section Trim / phase de la LV1) : un mono est un « demi-stéréo » centré
+            u = Unit(body, owner, i, uw, compact=True)
             u.resize(uw, self._avail_h())
             u.pack(side="left", expand=True)      # centré verticalement si la colonne est plus haute
             self.units.append(u)
 
     def _unit_width(self):
-        return (self.width - 2) // max(1, len(self.idxs))
+        return (self.width - 2) // 2         # mono comme stéréo : une demi-colonne
 
     def _avail_h(self):
         """Hauteur laissée aux préamplis : colonne moins pastille, repère, nom (mesurés) et bordures."""
@@ -1031,11 +1033,7 @@ class FloatApp:
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
         self.root.attributes("-topmost", True)
-        try:
-            self.root.attributes("-alpha", 0.97)
-        except tk.TclError:
-            pass
-        self.root.configure(bg=BG)
+        self.root.configure(bg=BG)        # opaque (2.2.0 ; 0,97 avant)
         try:
             self.root.attributes("-transparentcolor", HOLE)
         except tk.TclError:
@@ -1146,10 +1144,6 @@ class FloatApp:
         """Panneau Scènes / Routing (ouvert depuis le menu ⋯) : fenêtre à part, sous le float (2.2.0)."""
         self.panel_win = tk.Toplevel(self.root, bg=BG)
         self.panel_win.overrideredirect(True)
-        try:
-            self.panel_win.attributes("-alpha", 0.97)
-        except tk.TclError:
-            pass
         self.panel_win.withdraw()
         self.panel = tk.Frame(self.panel_win, bg=PANEL, highlightthickness=1, highlightbackground=LINE2)
         self.panel.pack(fill="both", expand=True)
@@ -1813,9 +1807,13 @@ class FloatApp:
         # (demande de Joseph). Seulement quand le mode CHANGE : un dépli / repli à la main tient jusqu'au
         # prochain changement de mode dans la LV1.
         preset = lay.get("preset_name")
-        if preset and preset != self._lv1_preset_seen:
-            self._lv1_preset_seen = preset
-            want_open = preset in AUTO_OPEN_MODES
+        # couche sans canal d'entrée (couches Mix de la LV1 : Groups, Fx, Mon, Masters... ; Custom sans
+        # entrée) : rien à régler -> replié aussi, quel que soit le mode (2.2.0, demande de Joseph)
+        has_inputs = any(lay.get("channels") or [])
+        state = (preset, has_inputs)
+        if preset and state != self._lv1_preset_seen:
+            self._lv1_preset_seen = state
+            want_open = preset in AUTO_OPEN_MODES and has_inputs
             if want_open == self.collapsed:
                 self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:

@@ -8,6 +8,10 @@ Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à parti
 - **Colonne sans préampli X32** (canal sans source, groupe, matrice… dans une couche Custom) : **totalement transparente et traversable à la souris** — on voit et on clique la LV1 en dessous (couleur rendue transparente par Windows, `-transparentcolor`).
 - Vue LV1 : **plus de nom de canal** (la LV1 l'affiche déjà juste en dessous) ; repère « L 15 = EXP 15 » toujours sur **une ligne**, raccourci si la colonne est étroite (« L15=EXP15 », « L15 · 15 »…) : les potards restent alignés d'une colonne à l'autre.
 - **Potards dimensionnés sur la place réelle** (mesurée sur les widgets) : le **48V reste visible** même quand le float est bas.
+- **Suit le flip A/B de la LV1** (par canal et FlipAB) : seule l'entrée sélectionnée compte. Un canal passé sur B (TracksLive, virtual soundcheck) n'a plus de préampli X32 -> colonne transparente dans le float, bandeau gris dans le navigateur. La LV1 réécrit aussitôt `routes.status` (1 = entrée sélectionnée), établi avec l'enregistreur.
+- Float **replié aussi sur une couche sans canal d'entrée** (couches Mix : Groups, Fx, Mon, Masters…), quel que soit le mode.
+- **Mono et stéréo harmonisés** (sur le modèle de la section Trim / phase de la LV1) : même potard, même 48V, même case de valeur ; un mono est centré dans sa colonne.
+- Fond du float **opaque**.
 - **Plus fin au doigt** : glisser 10 px par pas de 0,5 dB (au lieu de 5), et on peut attraper le potard par toute sa colonne (diode, fond), pas seulement le petit rond.
 - **Float caché hors des onglets Mixer 1 / Mixer 2** (All, Channel, Show, Patch, Setup) et réaffiché en y revenant. La LV1 n'écrit pas l'onglet affiché dans sa base : il est **lu à l'écran** (une ligne de pixels en haut de sa fenêtre, environ 3 fois par seconde : 7 boutons de même largeur, l'actif en bleu), sans coordonnées fixes.
 - **Mixer 2** suivi comme Mixer 1 (couches, Custom, mode SndChk / Setup…) : sa vue est la surface 3 de la base. Le float suit la vue de l'onglet affiché. `/api/state` : `lv1_layers` (`mixer1`, `mixer2`).

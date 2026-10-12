@@ -112,8 +112,10 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
 - `src_cluster_type = 10` → devices du Rack A/B SoundGrid ; `src_cluster_type_index`
   = `assign` du device (table `device`, nom via `device_name` par mac + gender) ;
   `src_channel_index` = voie 0-based
-- `status` : **pas** l'existence de la route — semble indiquer l'entrée sélectionnée
-  (routes A X32RACK en 0 quand B est active). Ne pas filtrer dessus.
+- `status` : **pas** l'existence de la route, mais l'**entrée sélectionnée** : 1 sur les routes de l'entrée
+  A ou B choisie, 0 (ou 4) sur l'autre ; réécrit aussitôt à chaque bascule A/B et à FlipAB (enregistreur,
+  2026-10-12). Depuis la 2.2.0, `pick_sources(follow_ab=True)` ne garde que l'entrée sélectionnée
+  (demande de Joseph : suivre le flip A/B ; canal sur B/TracksLive = pas de préampli X32).
 - **Largeur mono/stéréo** : `chainer.num_inputs` (1 ou 2) de l'objet canal
   (`chainer.obj_id = object.id`, `object.obj_type = 0`, `object.obj_index` = canal 0-based).
   Trouvé en comparant la base avant/après un passage mono → stéréo. **Indispensable** :

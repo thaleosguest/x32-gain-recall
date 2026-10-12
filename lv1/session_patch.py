@@ -213,10 +213,18 @@ def extract_patch(db_path, devices=DEFAULT_DEVICES):
     return pick_sources(extract_routes(db_path), devices)
 
 
-def pick_sources(routes, devices=DEFAULT_DEVICES):
-    """Comme extract_patch(), à partir de routes déjà lues (read_session)."""
+def pick_sources(routes, devices=DEFAULT_DEVICES, follow_ab=True):
+    """Comme extract_patch(), à partir de routes déjà lues (read_session).
+    follow_ab (2.2.0, demande de Joseph) : seule l'entrée SÉLECTIONNÉE (A ou B) de chaque canal compte.
+    Établi le 2026-10-12 avec l'enregistreur : chaque bascule A/B d'un canal (et FlipAB, pour tous les
+    canaux) réécrit routes.status : 1 sur les routes de l'entrée sélectionnée, 0 (ou 4) sur l'autre.
+    Canal sur B (TracksLive, virtual soundcheck) : aucun préampli X32 ne l'alimente -> absent."""
     out = {}
     for ch, groups in routes.items():
+        if follow_ab:
+            groups = [g for g in groups if g["active"]]
+            if not groups:
+                continue
         rank = 0
         if devices:
             pick = next(((r, g) for r, d in enumerate(devices) for g in groups if _matches(d, g)), None)
