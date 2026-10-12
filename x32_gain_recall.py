@@ -2283,10 +2283,13 @@ async function meterLoop(){
     e.title=x[0];e.onclick=()=>{bank=n;buildStrips();};b.appendChild(e);});
   try{const ip=localStorage.getItem("x32ip");if(ip)$("#ip").value=ip;}catch(_){}
   buildStrips();loadPresets();meterLoop();
-  let rev=-1;
+  let rev=-1,lv1sig="";
   async function poll(){
     try{const s=await api("/api/state");
-      if(s.rev!==rev||s.connected!==S.connected||s.trying!==S.trying){rev=s.rev;S=s;update();}
+      // rev ne bouge qu'avec l'etat X32 : un repatch / une couleur / un nom change dans la LV1 doit aussi
+      // redessiner les voies (sinon le navigateur restait fige sur l'ancien patch LV1)
+      const sig=JSON.stringify([s.exp_map,s.lv1_map,s.lv1_channels]);
+      if(s.rev!==rev||sig!==lv1sig||s.connected!==S.connected||s.trying!==S.trying){rev=s.rev;lv1sig=sig;S=s;update();}
     }catch(_){S.connected=false;S.trying=false;update();}
     setTimeout(poll,150);
   }

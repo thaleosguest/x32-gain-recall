@@ -75,12 +75,22 @@ class CompanionPoller:
 
     def start(self):
         def loop():
+            last, last_chans = 0.0, None
             while True:
+                # Tour normal toutes les `interval` s ; mais si l'ensemble des canaux suivis change (repatch
+                # LV1 ou X32), on interroge TOUT DE SUITE : la couleur et le nom d'un canal qui vient
+                # d'entrer en jeu arrivent sans attendre le tour suivant.
                 try:
-                    self.poll_once()
-                except Exception:    # ne jamais tuer le thread (channels_fn pendant une reconnexion, etc.)
-                    pass
-                time.sleep(self.interval)
+                    chans = frozenset(int(c) for c in self.channels_fn() if c)
+                except Exception:
+                    chans = last_chans
+                if chans != last_chans or time.monotonic() - last >= self.interval:
+                    try:
+                        self.poll_once()
+                    except Exception:    # ne jamais tuer le thread (channels_fn pendant une reconnexion...)
+                        pass
+                    last, last_chans = time.monotonic(), chans
+                time.sleep(0.1)
         threading.Thread(target=loop, daemon=True, name="lv1-companion").start()
         return self
 

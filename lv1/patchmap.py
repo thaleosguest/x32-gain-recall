@@ -89,7 +89,7 @@ def build_exp_map(channels, ranks=None):
 
 
 class PatchMap:
-    def __init__(self, manual_path=None, session_path=None, devices=DEFAULT_DEVICES, poll=1.0):
+    def __init__(self, manual_path=None, session_path=None, devices=DEFAULT_DEVICES, poll=0.5):
         self.manual_path = manual_path
         self.session_path = session_path
         self.devices = parse_devices(devices) if isinstance(devices, str) else (tuple(devices) if devices else None)
