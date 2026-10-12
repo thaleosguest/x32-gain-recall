@@ -2207,7 +2207,7 @@ function renderStatus(){
   let r="";const lr=S.last_recall;
   if(lr){r=` · Dernier rappel « ${esc(lr.name)} » : ${lr.sent_gain} gains`+(lr.sent_phantom?`, ${lr.sent_phantom} 48V`:"")+" envoyés — "+
     (lr.verified===null?"vérification…":(lr.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${lr.bad.length} écart(s) à la relecture : ${lr.bad.slice(0,8).map(label).join(", ")}</b>`));}
-  $("#status").innerHTML=c+r+routingMsg()+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span><span>by __APP_AUTHOR__</span>';
+  $("#status").innerHTML=c+r+routingMsg()+(vuDead?' · <b class="bad">vumètre : aucune donnée reçue</b>':"")+(S.error?` · <b class="bad">${esc(S.error)}</b>`:"")+'<span class="spacer"></span><span>Shift = pas fin/gros · molette = ±0,5 dB</span><span>v__APP_VERSION__ · by __APP_AUTHOR__</span>';
 }
 
 /* ---------- scenes ---------- */

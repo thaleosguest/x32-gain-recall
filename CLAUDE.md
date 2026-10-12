@@ -75,8 +75,14 @@ PR thaleosguest/x32-gain-recall#1 (ce fichier) et thaleosguest/x32-gain-recall#2
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
 - **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →
-  accès refusé (5) / paramètre invalide (87). Le float se place sous la fenêtre visible juste au-dessus
-  de la LV1 (ou HWND_TOP), toutes les 250 ms (`_follow_lv1`, `place_above`).
+  accès refusé (5) / paramètre invalide (87). Se placer « juste au-dessus de la LV1 » ne tenait pas
+  (un clic dans la LV1 la repassait devant, HWND_TOP refusé à une appli en arrière-plan). Solution
+  retenue (`_follow_lv1`, 100 ms) : fenêtre active = LV1 ou float → HWND_TOPMOST ; autre appli active →
+  HWND_NOTOPMOST puis juste sous elle ; LV1 réduite → float caché.
+- Tests du float : piloter `FloatApp` dans un script (voir harness : `argparse.Namespace(port=…)`) plutôt
+  qu'à la souris ; sauvegarder puis remettre `%APPDATA%\X32 Gain Recall\x32_float_config.json`.
+- Joseph a déjà testé par erreur un ancien exe resté ouvert : vérifier les processus
+  (`Get-CimInstance Win32_Process`, chemin de l'exe) quand un correctif « ne marche pas ».
 - Méthode qui marche pour trouver un réglage : photo de toutes les tables de la base (sur copie),
   Joseph change UN réglage dans la LV1, nouvelle photo, diff.
 

@@ -84,13 +84,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import x32_gain_recall  # noqa: E402  (pour installer la table LV1 en --direct, voir DirectBackend)
 from x32_gain_recall import (  # noqa: E402  (import apres sys.path, volontaire)
     X32Client, X32Sim, N_HA, GAIN_MIN, GAIN_MAX, quantize, scan_network,
-    PresetStore, RoutingStore, pick_data_path, LAN_COOKIE, APP_SHORT, APP_AUTHOR,
+    PresetStore, RoutingStore, pick_data_path, LAN_COOKIE, APP_SHORT, APP_AUTHOR, APP_VERSION,
 )
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.7.0"
+FLOAT_VERSION = "2.7.1"
 GAIN_DB_PER_PX = 0.10     # sensibilite par defaut du glisser (dB par pixel) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
 # Dans le dossier de donnees de l'appli (%APPDATA%\\X32 Gain Recall, voir x32_gain_recall.app_data_dir) :
@@ -245,30 +245,48 @@ def window_iconic(hwnd):
     return bool(u32 and u32.IsIconic(hwnd))
 
 
-def place_above(me, target):
-    """Met la fenêtre `me` juste au-dessus de `target` dans l'empilement (sans l'activer), si elle n'y
-    est pas déjà ; les fenêtres des autres applis déjà au-dessus de `target` restent au-dessus.
-    La LV1 tourne en administrateur : Windows interdit alors de se placer PAR RAPPORT à sa fenêtre
-    (SetWindowPos -> accès refusé), mais pas par rapport aux fenêtres des autres applis. On se glisse
-    donc juste sous la première fenêtre visible au-dessus de la LV1, ou tout en haut (hors fenêtres
-    « toujours au premier plan ») si la LV1 est devant."""
-    ctypes, u32 = _user32()
-    if not u32:
-        return
-    u32.GetWindow.restype = ctypes.c_void_p
-    u32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
-    u32.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+def _wintypes(u32, ctypes):
+    u32.GetForegroundWindow.restype = ctypes.c_void_p
     u32.SetWindowPos.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
                                  ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-    prev = u32.GetWindow(target, 3)                          # 3 = GW_HWNDPREV : fenêtre juste au-dessus
-    while prev and prev != me and not u32.IsWindowVisible(prev):
-        prev = u32.GetWindow(prev, 3)
-    if prev == me:
-        return
-    flags = 0x0001 | 0x0002 | 0x0010 | 0x0200       # NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
-    topmost = prev and (u32.GetWindowLongW(prev, -20) & 0x8)          # WS_EX_TOPMOST
-    if not prev or topmost or not u32.SetWindowPos(me, prev, 0, 0, 0, 0, flags):
-        u32.SetWindowPos(me, 0, 0, 0, 0, 0, flags)                     # 0 = HWND_TOP
+    u32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+
+
+def foreground_window():
+    ctypes, u32 = _user32()
+    if not u32:
+        return None
+    _wintypes(u32, ctypes)
+    return u32.GetForegroundWindow()
+
+
+def window_pid(hwnd):
+    ctypes, u32 = _user32()
+    if not u32 or not hwnd:
+        return None
+    _wintypes(u32, ctypes)
+    pid = ctypes.c_ulong()
+    u32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+_SWP = 0x0001 | 0x0002 | 0x0010 | 0x0200       # NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
+
+
+def set_topmost(me, on):
+    ctypes, u32 = _user32()
+    if u32:
+        _wintypes(u32, ctypes)
+        u32.SetWindowPos(me, -1 if on else -2, 0, 0, 0, 0, _SWP)     # HWND_TOPMOST / HWND_NOTOPMOST
+
+
+def place_below(me, other):
+    """Range `me` juste sous la fenêtre `other` (l'appli active). Si Windows refuse (appli en
+    administrateur), le float reste où HWND_NOTOPMOST l'a mis."""
+    ctypes, u32 = _user32()
+    if u32 and other:
+        _wintypes(u32, ctypes)
+        u32.SetWindowPos(me, other, 0, 0, 0, 0, _SWP)
 
 
 def load_cfg():
@@ -879,8 +897,10 @@ class FloatApp:
         # autres applis, cachée quand la LV1 est réduite. Sans LV1 : toujours au premier plan comme avant.
         # Voir _follow_lv1().
         self._lv1_hwnd = None
+        self._lv1_pid = None
         self._lv1_seek = 0.0
         self._hidden_with_lv1 = False
+        self._z_state = None           # "top" (premier plan) ou HWND de l'appli active sous laquelle on est
         self.root.attributes("-topmost", True)
         try:
             self.root.attributes("-alpha", 0.97)
@@ -1111,6 +1131,14 @@ class FloatApp:
 
     def _win_drag_move(self, e):
         self.root.geometry("+%d+%d" % (e.x_root - self._drag_ox, e.y_root - self._drag_oy))
+        self._save_soon()
+
+    def _save_soon(self):
+        """Enregistre position / taille 0,8 s après le dernier changement : rien n'est perdu si le float
+        est fermé autrement que par ✕ / Échap (appli principale fermée, session Windows...)."""
+        if getattr(self, "_save_job", None):
+            self.root.after_cancel(self._save_job)
+        self._save_job = self.root.after(800, self._save_cfg)
 
     def _grip_drag(self, e):
         """Coin bas-droit : la largeur TOTALE suit la souris au pixel près (répartie sur les 16 colonnes),
@@ -1136,6 +1164,7 @@ class FloatApp:
         for s, cw in zip(self.strips, widths):
             if s.width != cw or int(s.cget("height")) != height:
                 s.resize(cw, height)
+        self._save_soon()
 
     def _resize_strips(self, delta):
         """Boutons −/+ : un quart de pixel par colonne (4 px sur la largeur totale), pour le réglage fin."""
@@ -1192,7 +1221,8 @@ class FloatApp:
             m.add_radiobutton(label=name + ("  (défaut)" if name == DEFAULT_THEME else ""), value=name,
                               variable=self.theme_var, command=lambda n=name: self._set_theme(n))
         m.add_separator()
-        m.add_command(label="%s — by %s" % (APP_SHORT, APP_AUTHOR), state="disabled")
+        m.add_command(label="%s v%s (float %s) — by %s" % (APP_SHORT, APP_VERSION, FLOAT_VERSION, APP_AUTHOR),
+                      state="disabled")
         apply_theme(m)
         b = self.btn_theme
         m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
@@ -1208,34 +1238,43 @@ class FloatApp:
         self._save_cfg()
 
     def _follow_lv1(self):
-        """Toutes les 250 ms : garde le float JUSTE au-dessus de la LV1 dans l'empilement des fenêtres.
-        (Rendre le float « possédé » par la LV1 serait plus simple, mais Windows le refuse entre deux
-        programmes : erreur 87.) Fenêtre de la LV1 recherchée toutes les 2 s (relancée, fermée…)."""
+        """Toutes les 100 ms : float devant la LV1, derrière les autres applis (demande de Joseph).
+        - LV1 (ou le float) active : float « toujours au premier plan » -> elle ne peut plus passer devant
+          quand on clique dessus (changement de couche...) ;
+        - une autre appli active : le float quitte le premier plan et se range juste SOUS elle ;
+        - LV1 réduite : float caché. Sans LV1 : toujours au premier plan, comme avant.
+        (Se placer par rapport à la fenêtre de la LV1 elle-même est refusé par Windows : elle tourne en
+        administrateur.) Fenêtre de la LV1 recherchée toutes les 2 s (relancée, fermée...)."""
         now = time.time()
         if self._lv1_hwnd and not window_alive(self._lv1_hwnd):
             self._lv1_hwnd = None
         if not self._lv1_hwnd and now >= self._lv1_seek:
             self._lv1_seek = now + 2.0
             self._lv1_hwnd = find_lv1_window()
+            self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
         lv1 = self._lv1_hwnd
-        if self.root.attributes("-topmost") != (not lv1):
-            self.root.attributes("-topmost", not lv1)
-        if lv1:
-            iconic = window_iconic(lv1)
-            if iconic and not self._hidden_with_lv1:
+        me = float_hwnd(self.root)
+        if lv1 and window_iconic(lv1):
+            if not self._hidden_with_lv1:
                 self._hidden_with_lv1 = True
                 self.root.withdraw()
-            elif not iconic:
-                if self._hidden_with_lv1:
-                    self._hidden_with_lv1 = False
-                    self.root.deiconify()
-                me = float_hwnd(self.root)
-                if me:
-                    place_above(me, lv1)
-        elif self._hidden_with_lv1:
-            self._hidden_with_lv1 = False
-            self.root.deiconify()
-        self.root.after(250, self._follow_lv1)
+        else:
+            if self._hidden_with_lv1:
+                self._hidden_with_lv1 = False
+                self.root.deiconify()
+                self._z_state = None       # Tk réapplique son « -topmost » au réaffichage : tout refaire
+            if me:
+                fg = foreground_window()
+                front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
+                if front:
+                    if self._z_state != "top":
+                        set_topmost(me, True)
+                        self._z_state = "top"
+                elif self._z_state != fg:
+                    set_topmost(me, False)
+                    place_below(me, fg)
+                    self._z_state = fg
+        self.root.after(100, self._follow_lv1)
 
     def _theme_pass(self):
         """Passe reguliere (1 s) : rattrape les widgets crees en cours de route avec les teintes d'origine
