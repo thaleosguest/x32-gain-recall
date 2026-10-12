@@ -90,6 +90,9 @@ Joseph a encore « plein de choses à ajouter » : suite dans une 2.2.0.
   traversable au clic). Vue LV1 sans nom de canal, repère sur une ligne (sinon potards désalignés).
   Potard = place restante mesurée (`winfo_reqheight`) : 48V toujours visible. Glisser 0,05 dB/px.
   Calage d'avant (`layout` absent) converti : x − TAB_W, y + OLD_TITLE_H.
+- Languette : 14 px, fond transparent (HOLE), bloc point/flèche/⋯ au MILIEU de la hauteur (sur le vide
+  entre « Gain » et « 48 » de la LV1 ; à 22 px en haut, elle cachait « Preamp/Local »), même position
+  replié ou déplié. `layout` 3 ; conversion depuis 2 : x + (22 − 14).
 - Méthode « enregistreur » (meilleure que photo/diff manuel) : copie de la base à chaque écriture du
   `-wal` et journal des différences horodaté, pendant que Joseph enchaîne plusieurs manipulations.
 - **La LV1 tourne en administrateur** : `SetWindowPos`/`GWLP_HWNDPARENT` relatifs à sa fenêtre →

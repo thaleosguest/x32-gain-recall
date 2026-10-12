@@ -90,7 +90,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.8.7"
+FLOAT_VERSION = "2.8.8"
 GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
                           # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
@@ -110,9 +110,11 @@ AUTO_OPEN_MODES = ("SndChk", "Setup")
 # premiers seulement (demande de Joseph : invisible sur All, Channel, Show, Patch, Setup)
 LV1_TABS = ("Mixer 1", "Mixer 2", "All", "Channel", "Show", "Patch", "Setup")
 MIXER_TABS = ("Mixer 1", "Mixer 2")
-TAB_W = 22          # largeur de la languette à gauche des voies (2.2.0 : remplace la barre du haut)
+TAB_W = 14          # largeur de la languette à gauche des voies (2.2.0 : remplace la barre du haut ;
+                    # 22 px dans les 1ers essais : cachait la fin de « Preamp/Local » de la LV1)
 OLD_TITLE_H = 34    # hauteur de l'ancienne barre du haut (pour convertir un calage d'avant la 2.2.0)
-LAYOUT_VERSION = 2
+LAYOUT_VERSION = 3
+OLD_TAB_W = {2: 22}  # largeur de la languette selon la version de disposition (pour convertir un calage)
 # Couleur rendue TRANSPARENTE et traversable à la souris par Windows (-transparentcolor) : une colonne
 # sans préampli X32 (canal sans source, groupe, matrice...) disparaît complètement, on voit et on clique
 # la LV1 en dessous (2.2.0, demande de Joseph). Couleur jamais utilisée ailleurs.
@@ -1077,29 +1079,39 @@ class FloatApp:
 
     # -- construction de l'UI -------------------------------------------
     def _build_tab(self):
-        """Languette verticale à gauche des voies (2.2.0, remplace la barre du haut) : point de connexion
-        (poignée pour déplacer la fenêtre), flèche de repli, menu ⋯ (banques, taille, console, fond,
-        verrou, fermer), cadenas visible quand l'édition est verrouillée."""
-        tab = tk.Frame(self.root, bg="#0d0e0f", width=TAB_W)
+        """Languette à gauche des voies (2.2.0, remplace la barre du haut) : point de connexion (poignée pour
+        déplacer la fenêtre), flèche de repli, menu ⋯ (banques, taille, scènes, routing, console, fond,
+        verrou, fermer), cadenas quand l'édition est verrouillée.
+        Fond TRANSPARENT (HOLE) et boutons regroupés au MILIEU de la hauteur : posée sur la colonne de
+        libellés de la LV1, la languette ne cache que l'espace entre « Gain » et « 48 », pas le texte
+        (demande de Joseph : le point cachait la fin de « Preamp/Local »)."""
+        # hauteur fixe = celle des voies (transparente) : le bloc reste au MÊME endroit, déplié ou replié
+        tab = tk.Frame(self.root, bg=HOLE, width=TAB_W, height=self.strip_h)
+        tab.pack_propagate(False)
         tab.pack(side="left", fill="y", anchor="n")
-        tab.bind("<ButtonPress-1>", self._win_drag_start)
-        tab.bind("<B1-Motion>", self._win_drag_move)
+        box = tk.Frame(tab, bg="#0d0e0f")
+        self.tab_box = box
 
-        self.led_conn = tk.Canvas(tab, width=TAB_W, height=20, bg="#0d0e0f", highlightthickness=0, cursor="fleur")
-        self.led_conn.pack(side="top", pady=(2, 0))
+        def glyph(text, size, cmd=None, cursor="hand2"):
+            c = tk.Canvas(box, width=TAB_W, height=size + 6, bg="#0d0e0f", highlightthickness=0, cursor=cursor)
+            item = c.create_text(TAB_W / 2.0, (size + 6) / 2.0, text=text, fill=MUT, font=("Segoe UI", size, "bold"))
+            if cmd:
+                c.bind("<ButtonRelease-1>", lambda e: cmd())
+            c.pack(side="top")
+            return c, item
+
+        self.led_conn = tk.Canvas(box, width=TAB_W, height=TAB_W, bg="#0d0e0f", highlightthickness=0, cursor="fleur")
+        self.led_conn.pack(side="top")
         c = TAB_W / 2.0
-        self._conn_id = self.led_conn.create_oval(c - 4.5, 5.5, c + 4.5, 14.5, fill="#555555", outline="")
+        self._conn_id = self.led_conn.create_oval(c - 4, c - 4, c + 4, c + 4, fill="#555555", outline="")
         self.led_conn.bind("<ButtonPress-1>", self._win_drag_start)
         self.led_conn.bind("<B1-Motion>", self._win_drag_move)
-
-        self.btn_collapse = tk.Button(tab, text="◂", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 10, "bold"),
-                                       activebackground="#1c1e20", padx=0, pady=2, width=2,
-                                       command=self._toggle_collapse)
-        self.btn_collapse.pack(side="top")
-        self.btn_more = tk.Button(tab, text="⋯", bd=0, bg="#0d0e0f", fg=MUT, font=("Segoe UI", 11, "bold"),
-                                  activebackground="#1c1e20", padx=0, pady=0, width=2, command=self._more_menu)
-        self.btn_more.pack(side="top")
-        self.lock_lbl = tk.Label(tab, text="🔒", bg="#0d0e0f", fg=WARN, font=("Segoe UI", 9))
+        self.btn_collapse, self._arrow_id = glyph("◂", 9, self._toggle_collapse)
+        self.btn_more, _ = glyph("⋯", 9, self._more_menu)
+        self.lock_lbl = tk.Label(box, text="🔒", bg="#0d0e0f", fg=WARN, font=("Segoe UI", 7))
+        # haut du bloc fixé (centré sur la hauteur du bloc complet) : il ne bouge pas quand le ⋯ disparaît
+        box.update_idletasks()
+        box.place(relx=0.5, rely=0.5, y=-box.winfo_reqheight() // 2, anchor="n")
 
         self.bank_var = tk.StringVar(value=self._bank_name())
         self.theme_var = tk.StringVar(value=self.theme)
@@ -1296,6 +1308,7 @@ class FloatApp:
         if abs(w - self.strip_w) < 0.01 and h == self.strip_h:
             return
         self.strip_w, self.strip_h = w, h
+        self.tab.config(height=h)
         widths, height = self._col_widths(len(self.strips))
         for s, cw in zip(self.strips, widths):
             if s.width != cw or int(s.cget("height")) != height:
@@ -1314,13 +1327,19 @@ class FloatApp:
     def _apply_screen_profile(self, x, y):
         """Position + largeur des colonnes pour l'écran où se trouve le float : celles mémorisées pour
         cette résolution, sinon le dernier calage mis à l'échelle de cet écran, sinon (x, y) tels quels."""
-        if self.cfg.get("layout") != LAYOUT_VERSION:
-            # calage d'avant la 2.2.0 : barre en haut, voies au bord gauche de la fenêtre. Maintenant la
-            # languette est à gauche et plus de barre : on décale pour garder les voies au même endroit.
-            x, y = x - TAB_W, y + OLD_TITLE_H
+        layout = self.cfg.get("layout")
+        if layout != LAYOUT_VERSION:
+            # calage d'une autre disposition : on décale la fenêtre pour garder les VOIES au même endroit.
+            # Avant la 2.2.0 : barre en haut, voies au bord gauche ; ensuite : languette à gauche, de
+            # largeur OLD_TAB_W[layout] puis TAB_W.
+            if layout in OLD_TAB_W:
+                dx, dy = OLD_TAB_W[layout] - TAB_W, 0
+            else:
+                dx, dy = -TAB_W, OLD_TITLE_H
+            x, y = x + dx, y + dy
             for prof in (self.cfg.get("screens") or {}).values():
-                prof["dx"] = prof.get("dx", 0) - TAB_W
-                prof["dy"] = prof.get("dy", 0) + OLD_TITLE_H
+                prof["dx"] = prof.get("dx", 0) + dx
+                prof["dy"] = prof.get("dy", 0) + dy
         rect = monitor_rect(x, y)
         screens = self.cfg.get("screens") or {}
         if not rect:
@@ -1441,7 +1460,7 @@ class FloatApp:
         self.locked = not self.locked
         self.lock_var.set(self.locked)
         if self.locked:
-            self.lock_lbl.pack(side="top", pady=(2, 0))
+            self.lock_lbl.pack(side="top")
         else:
             self.lock_lbl.pack_forget()
 
@@ -1454,12 +1473,12 @@ class FloatApp:
             self.right.pack_forget()
             self.btn_more.pack_forget()
             self.grip.place_forget()
-            self.btn_collapse.config(text="▸")
+            self.btn_collapse.itemconfig(self._arrow_id, text="▸")
         else:
             self.right.pack(side="left", anchor="n")
             self.btn_more.pack(side="top", after=self.btn_collapse)
             self.grip.place(relx=1.0, rely=1.0, anchor="se")
-            self.btn_collapse.config(text="◂")
+            self.btn_collapse.itemconfig(self._arrow_id, text="◂")
         self._sync_dock()
         self.root.update_idletasks()
 
