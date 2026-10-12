@@ -2,7 +2,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **1.8.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **2.0.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -14,6 +14,14 @@ Version courante : **1.8.0** (voir [CHANGELOG](CHANGELOG.md)).
 - Bouton « Scanner » : recherche les X32/M32 sur le réseau local (broadcast `/xinfo`, voir [CHANGELOG](CHANGELOG.md)) ; la saisie manuelle de l'IP reste toujours possible si le scan ne trouve rien.
 - Accès depuis une tablette/téléphone sur le réseau local (`--lan`), protégé par un jeton d'accès.
 - Interface web **responsive** (depuis la 1.7.0) : sous ~980px de large, la colonne latérale (banques/scènes) passe sous les voies au lieu d'à côté, et la barre du haut passe à la ligne. Les voies elles-mêmes gardent leur défilement horizontal (seize potards côte à côte reste le principe, même sur petit écran).
+
+## Démarrage rapide (PC de la LV1)
+1. Télécharger **`X32_Gain_Recall.exe`** (onglet *Releases*) et le lancer. Aucune installation, pas de Python, **pas de Companion** à configurer.
+2. Au premier lancement, Windows peut afficher :
+   - **SmartScreen** (« Windows a protégé votre ordinateur ») : l'exe n'est pas signé → *Informations complémentaires* → *Exécuter quand même*. Pour vérifier le fichier, comparer son empreinte avec le `.sha256` de la release.
+   - **Pare-feu** : autoriser l'accès sur les réseaux **privés**, nécessaire pour piloter depuis une tablette et pour le bouton *Scanner*.
+3. Le navigateur s'ouvre : *Scanner* (ou taper l'IP de la X32), puis *Connecter*. Le code d'accès tablette est affiché en haut à droite.
+4. Si la LV1 tourne sur ce PC, chaque voie affiche tout de suite le **canal LV1** qui reçoit ce préampli : nom, couleur, « L 15 = EXP 15 », et suit les repatchs en 1 à 2 s. Bouton **Float** pour la fenêtre flottante à poser sur l'écran de la LV1.
 
 ## Utilisation
 **Avec Python** : `python x32_gain_recall.py` (ou double-clic sur `Lancer_X32_Gain_Recall.bat`), puis entrer l'IP de la X32 (Setup → Network) et *Connecter*, ou *Scanner* pour la trouver automatiquement sur le réseau local. Option `--sim` : X32 simulée, sans console.
@@ -42,7 +50,7 @@ python x32_gain_float.py --direct --sim
 
 **Nécessite tkinter**, inclus par défaut avec l'installeur officiel python.org (case « tcl/tk and IDLE » cochée par défaut) — pas une dépendance à installer séparément, mais à ne pas décocher à l'installation. L'exécutable Windows des Releases n'a pas ce problème (tkinter est inclus dedans).
 
-**Couleurs de canaux LV1** (depuis la 1.8.0) : une pastille en haut de chaque voie affiche la couleur du canal LV1 correspondant, via l'API HTTP de [Bitfocus Companion](https://bitfocus.io/companion) (module communautaire non officiel `companion-module-waves-lv1` — protocole LV1 propriétaire rétro-ingénié, pas une spec Waves officielle). Suppose Companion déjà lancé en continu à côté (`--companion http://IP:PORT`, défaut `http://127.0.0.1:8000`, `--color-poll` pour l'intervalle, `--no-colors` pour désactiver). Pastille grise tant que la couleur n'est pas connue — jamais une couleur inventée. Depuis la 1.9.0, le **nom du canal LV1** s'affiche aussi (ex. « FireRoom », ou « In N » si le canal n'a pas été renommé), sous la ligne « L 15 = EXP 15 » du float, et **dans le navigateur** : le bandeau du haut de chaque voie prend le nom et la couleur du canal LV1 (gris si la voie n'arrive sur aucun canal). C'est l'appli principale qui interroge Companion, une seule fois pour les deux (`--companion`, `--no-colors`, `--color-poll` sur `x32_gain_recall.py`).
+**Couleurs et noms des canaux LV1** : une pastille en haut de chaque voie du float (et le bandeau du haut dans le navigateur) prend la couleur du canal LV1 qui reçoit ce préampli, avec son nom (ex. « FireRoom », ou « In N » si le canal n'a pas été renommé). Depuis la 2.0.0, tout est lu **directement dans la LV1** (sa base de travail, voir plus bas), sans [Bitfocus Companion](https://bitfocus.io/companion). Companion reste utilisable en option (`--companion [URL]`, défaut `http://127.0.0.1:8000`, module communautaire `companion-module-waves-lv1`) : ses valeurs passent alors en priorité. `--no-colors` masque couleurs et noms. Pastille grise tant que la couleur n'est pas connue — jamais une couleur inventée.
 
 **Patch LV1 suivi en direct (EXP → canal), depuis la 1.9.0.** La LV1 range ses couleurs par *canal* (« In 19 »), alors que la X32 ne connaît que le numéro *EXP* de chaque préampli ; le lien entre les deux, c'est le patch LV1, qu'**aucun message OSC n'expose** (vérifié). Exemple réel : In 19 (stéréo) ← EXP 21 + EXP 22, et EXP 1 → In 2. La 1.8.0 supposait « EXP N → In N » et affichait donc souvent la couleur d'un autre canal.
 

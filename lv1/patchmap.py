@@ -39,7 +39,8 @@ import sqlite3
 import threading
 import time
 
-from .session_patch import DEFAULT_DEVICES, LIVE_DB, extract_patch, file_signature, newest_emo, parse_devices  # noqa: F401 (LIVE_DB re-exporte)
+from .channelinfo import display_name
+from .session_patch import DEFAULT_DEVICES, LIVE_DB, file_signature, newest_emo, parse_devices, pick_sources, read_session  # noqa: F401 (LIVE_DB re-exporte)
 MANUAL_FILENAME = "lv1_patch_map.json"
 
 
@@ -101,6 +102,7 @@ class PatchMap:
         self._session_sig = None   # (chemin, signature fichier + -wal) de la derniere session lue
         self._session_file = None
         self.session_read_at = None    # date de la derniere relecture reussie de la session
+        self._info = {}                # {canal: {"name", "color"}} lus dans la session (lv1/channelinfo.py)
         self.errors = {}           # "manual" / "session" -> message
         self._exp_to_ch, self._conflicts = {}, []
         self._lock = threading.Lock()
@@ -144,7 +146,8 @@ class PatchMap:
         if sig == self._session_sig:
             return False
         try:
-            chans = extract_patch(f, self.devices)
+            routes, info = read_session(f)
+            chans = pick_sources(routes, self.devices)
         except (sqlite3.Error, OSError) as e:
             # souvent : copie prise pendant une écriture de la LV1 - on garde le résultat précédent et on
             # réessaie au prochain contrôle (sig non mémorisée)
@@ -152,7 +155,8 @@ class PatchMap:
             return False
         self._session_sig, self._session_file = sig, f
         self._session = {ch: list(info["sources"]) for ch, info in chans.items()}
-        self._session_ranks = {ch: info.get("rank", 0) for ch, info in chans.items()}
+        self._session_ranks = {ch: c.get("rank", 0) for ch, c in chans.items()}
+        self._info = info
         self.session_read_at = time.time()
         if self._session:
             self.errors.pop("session", None)
@@ -192,6 +196,17 @@ class PatchMap:
         """{numéro EXP: canal LV1} (copie)."""
         with self._lock:
             return dict(self._exp_to_ch)
+
+    def channel_info(self, channels=None):
+        """{canal: {"color", "name", "label"}} d'après la session LV1 (sans Companion), pour les canaux
+        demandés (tous si None). Canal absent de la session : couleur inconnue, libellé « In N »."""
+        info = self._info
+        chans = info.keys() if channels is None else channels
+        out = {}
+        for ch in chans:
+            i = info.get(ch, {})
+            out[ch] = {"color": i.get("color"), "name": i.get("name"), "label": display_name(ch, i.get("name"))}
+        return out
 
     def status(self):
         with self._lock:

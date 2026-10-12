@@ -46,12 +46,31 @@ from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 
 APP_NAME = "X32 Gain Recall"
-APP_VERSION = "1.9.0"
+APP_VERSION = "2.0.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
 LV1 = None            # lv1.patchmap.PatchMap (table EXP -> canal LV1), creee dans main() ou par le float en --direct
 LV1_COMPANION = None  # lv1.companion.CompanionPoller (couleur + nom des canaux LV1), idem
+
+
+LV1_NO_COLORS = False  # --no-colors : ni couleurs ni noms LV1
+
+
+def lv1_channels_snapshot(client):
+    """{canal LV1: {"color", "name", "label"}} pour les canaux qui recoivent un preampli X32 : lus dans la
+    base de la LV1 (lv1/channelinfo.py, sans Companion) ; si Companion est active (--companion), ses
+    valeurs passent en priorite."""
+    if not LV1 or LV1_NO_COLORS:
+        return {}
+    out = LV1.channel_info(lv1_channels_in_use(client))
+    if LV1_COMPANION:
+        for ch, v in LV1_COMPANION.snapshot().items():
+            if ch in out:
+                for k in ("color", "name", "label"):
+                    if v.get(k):
+                        out[ch][k] = v[k]
+    return out
 
 
 def lv1_channels_in_use(client):
@@ -415,9 +434,9 @@ class X32Client:
                 # Vide si rien n'est configure - jamais de correspondance devinee.
                 "lv1_map": LV1.exp_to_channel() if LV1 else {},
                 "lv1": LV1.status() if LV1 else None,
-                # couleur / nom / libelle a afficher par canal LV1 (Companion), partages par le navigateur
-                # et le float - voir lv1/companion.py
-                "lv1_channels": LV1_COMPANION.snapshot() if LV1_COMPANION else {},
+                # couleur / nom / libelle a afficher par canal LV1, partages par le navigateur et le float
+                # (base LV1, + Companion si active) - voir lv1_channels_snapshot()
+                "lv1_channels": lv1_channels_snapshot(self),
                 "companion_ok": LV1_COMPANION.reachable if LV1_COMPANION else None,
             }
 
@@ -2364,11 +2383,11 @@ def main():
     )
     ap.add_argument(
         "--companion",
-        default=COMPANION_URL,
-        help="URL de l'API HTTP de Bitfocus Companion (module companion-module-waves-lv1) pour la couleur et le "
-             "nom des canaux LV1, affiches dans le navigateur et le float (defaut %(default)s)",
+        nargs="?", const=COMPANION_URL, default=None, metavar="URL",
+        help="FACULTATIF : interroge aussi Bitfocus Companion (module companion-module-waves-lv1) pour la couleur et "
+             "le nom des canaux LV1 (sinon lus directement dans la LV1). Sans URL : %s" % COMPANION_URL,
     )
-    ap.add_argument("--no-colors", action="store_true", help="n'interroge pas Companion (ni couleurs ni noms LV1)")
+    ap.add_argument("--no-colors", action="store_true", help="n'affiche ni la couleur ni le nom des canaux LV1")
     ap.add_argument("--color-poll", type=float, default=1.0, help="intervalle (s) d'interrogation de Companion (defaut 1.0)")
     ap.add_argument(
         "--lv1-device",
@@ -2393,8 +2412,9 @@ def main():
         session_path=None if a.lv1_sans_session else a.lv1_session,
         devices=a.lv1_device,
     ).start()
-    global LV1_COMPANION
-    if not a.no_colors:
+    global LV1_COMPANION, LV1_NO_COLORS
+    LV1_NO_COLORS = a.no_colors
+    if a.companion and not a.no_colors:
         LV1_COMPANION = CompanionPoller(a.companion, lambda: lv1_channels_in_use(CLIENT), a.color_poll).start()
 
     code_path = None

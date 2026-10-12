@@ -1,6 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-lv1/companion.py — Couleur et nom des canaux LV1, lus EN DIRECT via l'API HTTP de Bitfocus Companion
+lv1/companion.py — FACULTATIF depuis la 2.0.0 : couleur et nom des canaux LV1 sont lus directement dans la
+base de la LV1 (lv1/channelinfo.py). Companion ne sert que si on le demande (--companion URL), par
+exemple pour une réactivité un peu meilleure ; ses valeurs passent alors en priorité.
+
+Couleur et nom des canaux LV1, lus EN DIRECT via l'API HTTP de Bitfocus Companion
 (module communautaire companion-module-waves-lv1 : variables in<N>_color et in<N>_name de la connexion
 "LV1"). Protocole LV1 rétro-ingénié par ce module, pas une spec Waves officielle.
 
@@ -17,19 +21,9 @@ import time
 import urllib.error
 import urllib.request
 
+from .channelinfo import display_name  # noqa: F401 (re-exporte)
+
 DEFAULT_URL = "http://127.0.0.1:8000"   # port HTTP par défaut de Companion v5.0
-
-
-def display_name(channel, name):
-    """Nom à afficher pour le canal LV1 ``channel`` : son nom s'il a été renommé, sinon « In N » (nom par
-    défaut « Channel N » de la LV1, ou nom inconnu : le numéro vient de la table de patch, pas de
-    Companion). "" si la voie n'arrive sur aucun canal."""
-    if not channel:
-        return ""
-    name = (name or "").strip()
-    if not name or re.fullmatch(r"Channel\s*%d" % int(channel), name, re.I):
-        return "In %d" % int(channel)
-    return name
 
 
 class CompanionPoller:

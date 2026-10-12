@@ -35,17 +35,12 @@ REPLIER / DEPLIER : bouton ▾/▸ dans la barre de titre, replie toute la fenê
 titre (pour libérer de la place sur l'écran de la LV1), la redéplie à l'identique (banque, taille,
 position mémorisées).
 
-COULEURS DE CANAUX (depuis la 2.5.0) : une fine pastille en haut de chaque voie affiche la couleur du
-canal LV1 correspondant : numéro EXP lu en direct sur la console (voir set_exp()), puis canal LV1 qui
-reçoit cet EXP d'après la table de patch LV1 (lv1/patchmap.py : base LV1 en direct, table manuelle,
-depuis la 2.6.0 — avant, "EXP N" était supposé alimenter "In N", ce qui est faux dès que le patch LV1
-n'est pas 1:1). Couleur lue EN DIRECT via l'API HTTP de Bitfocus Companion (module communautaire non officiel
-companion-module-waves-lv1, protocole natif LV1 rétro-ingénié — pas une spec Waves officielle). Suppose
-Companion déjà lancé en continu à côté (`--companion http://IP:PORT`, défaut 127.0.0.1:8000 — le port
-HTTP par défaut de Companion v5.0) ; interrogé sur un thread séparé, pas la boucle de gains à 200ms, pour
-ne pas bloquer l'interface sur 16 requêtes HTTP à chaque cycle. `--no-colors` désactive complètement
-cette fonction. Grise/neutre si Companion est injoignable, si le canal n'est pas patché, si l'EXP n'est
-pas dans la table de patch LV1, ou si la lecture a échoué — jamais une couleur inventée.
+COULEURS ET NOMS DE CANAUX : une fine pastille en haut de chaque voie prend la couleur du canal LV1 qui
+reçoit ce préampli, et son nom s'affiche sous la ligne « L 15 = EXP 15 ». Numéro EXP lu en direct sur la
+console (set_exp()), canal LV1 d'après le patch LV1 (lv1/patchmap.py), couleur et nom lus dans la base de
+la LV1 (lv1/channelinfo.py) — Companion seulement en option (--companion). Tout est fourni par l'appli
+principale via /api/state (lv1_channels) ; en --direct, DirectBackend installe les mêmes sources. Grise si
+la voie n'arrive sur aucun canal LV1 ou si la couleur est inconnue — jamais une couleur inventée.
 
 A SAVOIR (limites assumees, pas de source fiable pour faire mieux depuis cette session) :
   - Pas d'alignement pixel-perfect automatique avec la fenetre LV1 reelle (impossible a deviner sans
@@ -613,10 +608,12 @@ class FloatApp:
         # couleurs par canal, et EXP N n'alimente pas forcement In N (ex. In 19 <- EXP 21 + 22).
         self.exp_map = {}
         self.lv1_map = {}                # {numero EXP: canal LV1} (cles str en mode serveur, int en --direct)
-        # Couleur et nom des canaux LV1 : depuis la 2.6.0 c'est l'appli principale qui interroge Companion
-        # (lv1/companion.py) et les partage avec le navigateur via /api/state (lv1_channels) ; en --direct,
-        # DirectBackend lance le meme interrogateur. Plus de thread Companion propre au float.
+        # Couleur et nom des canaux LV1 : lus dans la base de la LV1 par l'appli principale (lv1/channelinfo.py)
+        # et partages avec le navigateur via /api/state (lv1_channels) ; Companion seulement si --companion.
+        # En --direct, DirectBackend installe les memes sources. Plus d'interrogation propre au float.
         companion_url = None if args.no_colors else args.companion
+        if args.direct and args.no_colors:
+            x32_gain_recall.LV1_NO_COLORS = True
 
         if args.direct:
             self.backend = DirectBackend(companion_url, args.color_poll)
@@ -1235,11 +1232,10 @@ def main():
     ap.add_argument("--sensitivity", type=float, default=GAIN_DB_PER_PX,
                      help="sensibilité du glisser sur le potard, en dB par pixel (défaut %.2f : plus petit = "
                           "glisser plus doux/précis, plus grand = glisser plus rapide/nerveux)" % GAIN_DB_PER_PX)
-    ap.add_argument("--companion", default=COMPANION_URL,
-                     help="avec --direct : URL de l'API HTTP de Bitfocus Companion (module communautaire "
-                          "companion-module-waves-lv1), pour la couleur et le nom LV1 de chaque voie "
-                          "(défaut http://127.0.0.1:8000). En mode normal, c'est l'appli principale qui "
-                          "interroge Companion (son option --companion).")
+    ap.add_argument("--companion", nargs="?", const=COMPANION_URL, default=None, metavar="URL",
+                     help="avec --direct, FACULTATIF : interroge aussi Bitfocus Companion pour la couleur et "
+                          "le nom LV1 (sinon lus directement dans la LV1). En mode normal, c'est l'appli "
+                          "principale qui s'en charge (son option --companion).")
     ap.add_argument("--no-colors", action="store_true",
                      help="désactive la lecture des couleurs de canaux LV1 via Companion (activée par défaut)")
     ap.add_argument("--color-poll", type=float, default=1.0,

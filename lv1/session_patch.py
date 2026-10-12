@@ -55,6 +55,8 @@ import sys
 import tempfile
 import time
 
+from .channelinfo import read_channel_info
+
 DEFAULT_DEVICES = ("X32RACK",)
 INPUT_NAMES = {0: "A", 1: "B"}
 
@@ -135,7 +137,14 @@ def load_channel_widths(con):
 
 
 def extract_routes(db_path):
-    """{canal LV1 (1-based): [{"input": "A"/"B", "device": libellé, "sources": [voie 1-based, ...],
+    """Voir read_session() ; ne renvoie que les routes."""
+    return read_session(db_path)[0]
+
+
+def read_session(db_path):
+    """(routes, infos) lus sur UNE copie de la session :
+    infos = {canal: {"name", "color"}} (lv1/channelinfo.py) ;
+    routes = {canal LV1 (1-based): [{"input": "A"/"B", "device": libellé, "sources": [voie 1-based, ...],
     "active": bool}, ...]} — toutes les routes vers les canaux, entrées A et B, quel que soit le status
     ("active" = au moins une voie en status 1). Les voies au-delà de la largeur du canal (voie droite
     d'un canal mono, restes d'un ancien patch stéréo) sont ignorées."""
@@ -144,6 +153,7 @@ def extract_routes(db_path):
         cur = con.cursor()
         device_labels = load_device_labels(con)
         widths = load_channel_widths(con)
+        info = read_channel_info(con)
         cur.execute("""
             SELECT id, dst_cluster_type_index, dst_section_index, dst_channel_index,
                    src_cluster_type_index, src_channel_index, status
@@ -176,7 +186,7 @@ def extract_routes(db_path):
     channels = {}
     for (ch, section, assign), g in sorted(groups.items()):
         channels.setdefault(ch, []).append(g)
-    return channels
+    return channels, info
 
 
 def _matches(spec, group):
@@ -189,8 +199,13 @@ def extract_patch(db_path, devices=DEFAULT_DEVICES):
     """{canal LV1: {"device", "input", "sources"}} : pour chaque canal, la source du premier device de
     `devices` (voir _matches, par ordre de priorité) qui l'alimente, entrée A avant B. Canal absent si
     aucun de ces devices ne l'alimente. devices=None : n'importe quel device, l'entrée active d'abord."""
+    return pick_sources(extract_routes(db_path), devices)
+
+
+def pick_sources(routes, devices=DEFAULT_DEVICES):
+    """Comme extract_patch(), à partir de routes déjà lues (read_session)."""
     out = {}
-    for ch, groups in extract_routes(db_path).items():
+    for ch, groups in routes.items():
         rank = 0
         if devices:
             pick = next(((r, g) for r, d in enumerate(devices) for g in groups if _matches(d, g)), None)
