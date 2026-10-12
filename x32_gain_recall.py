@@ -2623,6 +2623,30 @@ def save_settings(s):
     os.replace(tmp, path)
 
 
+def _first_connect(tries=12, every=10.0):
+    """Premier lancement (aucune console connue) : on cherche les X32/M32 du reseau ; une seule trouvee -> on
+    s'y connecte (et elle est retenue). Plusieurs : rien, on choisit dans la barre de connexion. Aucune : on
+    recommence toutes les 10 s pendant 2 min (console allumee apres l'appli), sauf connexion faite a la main."""
+    found = []
+    for n in range(tries):
+        if CLIENT.ip:
+            return
+        found = scan_network()
+        if found:
+            break
+        if n == 0:
+            print("Aucune console trouvee sur le reseau pour l'instant : nouvel essai toutes les %d s." % every)
+        time.sleep(every)
+    if len(found) == 1 and not CLIENT.ip:
+        ip = found[0]["ip"]
+        print("Console trouvee sur le reseau : %s (%s), connexion." % (found[0].get("name") or "?", ip))
+        if CLIENT.connect(ip):
+            threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
+            remember_console(ip)
+    elif len(found) > 1:
+        print("%d consoles trouvees sur le reseau : choisir dans la barre de connexion." % len(found))
+
+
 def remember_console(ip):
     """Derniere console demandee, reconnectee au prochain lancement (x32_gain_recall_settings.json)."""
     s = load_settings()
@@ -2860,6 +2884,8 @@ def main():
         # derniere console : connect() ne bloque pas et retente tout seul, la console peut arriver plus tard
         CLIENT.connect(load_settings()["last_ip"])
         threading.Thread(target=CLIENT.refresh_exp_map, daemon=True).start()
+    else:
+        threading.Thread(target=_first_connect, daemon=True).start()
 
     print("%s v%s  -  by %s  -  interface : %s" % (APP_NAME, APP_VERSION, APP_AUTHOR, url))
     if a.lan:

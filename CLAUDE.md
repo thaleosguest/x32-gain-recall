@@ -251,6 +251,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   sélectionnée (autres : 17), lignes 800/880/960 sur 1080, 1re tranche x=143/1920, pas 96, largeur 92 ;
   ~5 ms. Réglage posé dans le cadre vide du bloc Input (`SEL_BOX` : x 32, y 183, 92x133 sur 1920x1080),
   fenêtre `sel_win` du float. Canal -> colonne par `lv1_layers[surface].channels`.
+- **Calage auto du float** (`auto_place`, défaut) : `AUTO_X0/Y0` = 142/1920, 184/1080, pas 96/1920, hauteur
+  133/1080 (cadres vides des tranches en SndChk ; Setup a la même section du haut, type 0 dans
+  `ovv_modes_presets`). Mesuré = calage manuel de Joseph au pixel près. Geste manuel -> `auto_place` False.
+- **1re connexion** : `_first_connect()` (pas de `last_ip`) : `scan_network()` toutes les 10 s / 2 min, une
+  seule console -> connexion + `remember_console`. Testé avec la X32 de Joseph (X32RACK-JS, 192.168.1.201).
 - Captures d'écran sans Pillow : BitBlt + PNG en Python pur (script `grab.py` refait dans le scratchpad).
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.

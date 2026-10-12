@@ -341,6 +341,10 @@ def lv1_tab(hwnd):
 SEL_GREY = (120, 120, 120)                  # fond de la zone de fader de la tranche sélectionnée (autres : 17)
 SEL_ROWS = (800 / 1080.0, 880 / 1080.0, 960 / 1080.0)   # lignes lues (une suffit ; plusieurs si l'une est couverte)
 SEL_X0, SEL_PITCH, SEL_W = 143 / 1920.0, 96 / 1920.0, 92 / 1920.0   # 1re tranche, pas, largeur du fond gris
+# Calage automatique du float (modes SndChk / Setup : section « Input » en haut) : les cadres vides « Preamp /
+# Gain / 48 » des 16 tranches, relevés le 2026-10-12 (1920x1080) ; identiques au calage fait à la main par Joseph.
+AUTO_X0, AUTO_Y0 = 142 / 1920.0, 184 / 1080.0      # coin haut-gauche du cadre de la 1re tranche
+AUTO_PITCH, AUTO_H = 96 / 1920.0, 133 / 1080.0     # pas des tranches, hauteur des cadres
 # Cadre vide du bloc « Input » (sous A/B) de la page Edit, où se pose le réglage de la tranche sélectionnée
 SEL_BOX = (32 / 1920.0, 183 / 1080.0, 92 / 1920.0, 133 / 1080.0)   # x, y, largeur, hauteur
 
@@ -1025,6 +1029,9 @@ class FloatApp:
         self.strip_w = float(cfg.get("strip_w", 46))
         # hauteur des colonnes (2.1.0, réglable avec le coin bas-droit) ; défaut : largeur + STRIP_EXTRA_H
         self.strip_h = int(cfg.get("strip_h") or round(self.strip_w) + STRIP_EXTRA_H)
+        # calé tout seul sur les tranches de la LV1 (défaut) ; un déplacement / redimensionnement à la main
+        # repasse en calage manuel (menu ⋯ pour revenir à l'automatique)
+        self.auto_place = cfg.get("auto_place", True)
         self.console_open = False      # barre de connexion (IP, Connecter...) : sous les voies, à la demande
         self._console_auto = None      # True si ouverte automatiquement (pas connecté) : refermée à la connexion
         self.locked = False
@@ -1059,6 +1066,7 @@ class FloatApp:
             self.backend = ServerBackend(args.port, session_token=args.session_token)
 
         self.root = tk.Tk()
+        self.auto_var = tk.BooleanVar(value=self.auto_place)
         self.root.title(APP_SHORT + " — Float")
         try:  # logo dans la barre des tâches / Alt+Tab (au lieu de la plume de Tk)
             self._icons = [tk.PhotoImage(data=d) for d in ICON_PNG_B64]
@@ -1182,6 +1190,8 @@ class FloatApp:
             banks.add_radiobutton(label=name, value=name, variable=self.bank_var,
                                   command=lambda n=name: self._select_bank(n))
         m.add_cascade(label="Banque : %s" % self._bank_name(), menu=banks)
+        m.add_checkbutton(label="Caler sur la LV1 (auto)", variable=self.auto_var,
+                          command=lambda: self._set_auto_place(self.auto_var.get()))
         m.add_command(label="Plus large  (+)", command=lambda: self._resize_strips(2))
         m.add_command(label="Plus étroit  (−)", command=lambda: self._resize_strips(-2))
         m.add_separator()
@@ -1395,6 +1405,7 @@ class FloatApp:
         self._drag_oy = e.y_root - self.root.winfo_y()
 
     def _win_drag_move(self, e):
+        self._set_auto_place(False)
         self.root.geometry("+%d+%d" % (e.x_root - self._drag_ox, e.y_root - self._drag_oy))
         self._save_soon()
 
@@ -1409,6 +1420,7 @@ class FloatApp:
         """Coin bas-droit : la largeur TOTALE suit la souris au pixel près (répartie sur les 16 colonnes),
         pour caler le bord droit du float sur le bord droit de la 16e tranche de la LV1."""
         x0, y0, w0, h0 = getattr(self, "_grip0", (e.x_root, e.y_root, self.strip_w, self.strip_h))
+        self._set_auto_place(False)
         n = max(1, len(self.strips))
         self._set_strip_w(w0 + (e.x_root - x0) / n, h0 + (e.y_root - y0))
 
@@ -1421,7 +1433,7 @@ class FloatApp:
 
     def _set_strip_w(self, w, h=None):
         w = max(28.0, min(140.0, w))
-        h = self.strip_h if h is None else int(max(110, min(700, h)))
+        h = self.strip_h if h is None else int(max(70, min(700, h)))
         if abs(w - self.strip_w) < 0.01 and h == self.strip_h:
             return
         self.strip_w, self.strip_h = w, h
@@ -1434,7 +1446,31 @@ class FloatApp:
 
     def _resize_strips(self, delta):
         """Boutons −/+ : un quart de pixel par colonne (4 px sur la largeur totale), pour le réglage fin."""
+        self._set_auto_place(False)
         self._set_strip_w(self.strip_w + delta / 8.0)
+
+    # -- calage automatique sur la LV1 ----------------------------------------
+    def _set_auto_place(self, on):
+        if on == self.auto_place:
+            return
+        self.auto_place = on
+        self.auto_var.set(on)
+        self._auto_geom = None
+        self._save_soon()
+
+    def _auto_fit(self, lv1):
+        """Calage automatique : colonnes posées sur les cadres « Preamp / Gain / 48 » des 16 tranches de la LV1,
+        en proportion de sa fenêtre (suit un changement de taille ou de place de la fenêtre LV1)."""
+        rect = client_rect(lv1)
+        if not rect or rect[2] < 400:
+            return
+        if rect == getattr(self, "_auto_geom", None):
+            return
+        self._auto_geom = rect
+        x, y, w, h = rect
+        self._set_strip_w(w * AUTO_PITCH, round(h * AUTO_H))
+        self.root.geometry("+%d+%d" % (x + round(w * AUTO_X0) - TAB_W, y + round(h * AUTO_Y0)))
+        self._save_soon()
 
     # -- calage par écran -----------------------------------------------------
     @staticmethod
@@ -1540,6 +1576,8 @@ class FloatApp:
             else:
                 self.root.withdraw()
             self._sync_dock()
+        if shown and lv1 and self.auto_place and not window_iconic(lv1):
+            self._auto_fit(lv1)
         self._sync_sel_win(shown and lv1 and not window_iconic(lv1))
         if shown:
             self._sync_dock()
@@ -1574,7 +1612,8 @@ class FloatApp:
                              "strip_h": self.strip_h}
         self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
                     "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
-                    "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION}
+                    "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION,
+                    "auto_place": self.auto_place}
         save_cfg(self.cfg)
 
     def _toggle_lock(self):
