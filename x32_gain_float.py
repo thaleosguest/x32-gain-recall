@@ -103,7 +103,57 @@ BANKS = [("Local 1-16", 0), ("Local 17-32", 16), ("AES50-A 1-16", 32), ("AES50-A
 
 BG, PANEL, LINE, LINE2 = "#08090a", "#111213", "#2c2f33", "#3a3e43"
 TEAL, CYAN, WARN, MUT, TXT, OK, AMBER = "#13a9af", "#3fd0ff", "#ff5b4d", "#8c939a", "#e9edf0", "#3ddc84", "#f2b63b"
-BLUE = "#31b6f7"   # meme bleu "action primaire" que le navigateur (.pill.on), pour une identite visuelle coherente
+BLUE = "#31b6f7"
+
+# Fonds au choix (depuis la 2.6.0, demande de Joseph : le noir d'origine se confondait avec le fond de la
+# LV1). Le code construit toute la fenetre avec les gris fonces du theme d'origine ("Noir") ; un theme
+# est une correspondance de ces gris vers ses propres teintes, appliquee a tous les widgets par
+# apply_theme() (et via tc() pour les couleurs posees en cours de route : 48V, boutons actifs...).
+_CANON = ("#08090a", "#111213", "#0d0e0f", "#1c1e20", "#2a2c2e", "#15171a", "#25282b", "#33383c", "#2c2f33", "#3a3e43")
+_THEME_TONES = {
+    "Anthracite": ("#2b2e33", "#383c42", "#24272b", "#4a4e56", "#5a5f68", "#30343a", "#454a51", "#555a62", "#4d5259", "#5d636b"),
+    "Noir":       _CANON,
+    "Or":         ("#4d3d0e", "#614d13", "#433509", "#7a601a", "#8c6f1f", "#564410", "#705816", "#82671c", "#8f7222", "#a17f27"),
+    "Bleu nuit":  ("#0b1424", "#132036", "#09111f", "#1f2e4a", "#2a3c5c", "#101a2c", "#223250", "#2e4064", "#2a3b5a", "#37496e"),
+}
+THEMES = tuple(_THEME_TONES)               # ordre du menu
+DEFAULT_THEME = "Anthracite"
+_REV = {c.lower(): _CANON[i] for tones in _THEME_TONES.values() for i, c in enumerate(tones)}
+_theme_map = {}                            # canonique -> couleur du theme courant
+
+
+def set_theme_map(name):
+    global _theme_map
+    tones = _THEME_TONES.get(name, _THEME_TONES[DEFAULT_THEME])
+    _theme_map = {c: tones[i] for i, c in enumerate(_CANON)}
+
+
+def tc(color):
+    """Couleur du theme courant pour une teinte du theme d'origine (les autres couleurs sont inchangees)."""
+    return _theme_map.get(color.lower(), color) if isinstance(color, str) else color
+
+
+def apply_theme(widget):
+    """Repeint recursivement widget et ses enfants : toute teinte connue d'UN des themes est remplacee par
+    son equivalent dans le theme courant (on peut donc passer de n'importe quel theme a n'importe quel autre)."""
+    for opt in ("bg", "activebackground", "highlightbackground", "highlightcolor", "selectcolor", "fg"):
+        try:
+            v = str(widget.cget(opt))
+        except (tk.TclError, ValueError):
+            continue
+        canon = _REV.get(v.lower())
+        if canon:
+            new = _theme_map.get(canon, canon)
+            if new.lower() != v.lower():
+                try:
+                    widget.configure({opt: new})
+                except tk.TclError:
+                    pass
+    for child in widget.winfo_children():
+        apply_theme(child)
+
+
+set_theme_map(DEFAULT_THEME)   # meme bleu "action primaire" que le navigateur (.pill.on), pour une identite visuelle coherente
 
 
 def strip_tag(idx):
@@ -471,7 +521,7 @@ class Strip(tk.Frame):
         c.delete("all")
         w = int(c["width"]); h = int(c["height"])
         cx, cy, r = w / 2, h / 2, min(w, h) / 2 - 3
-        c.create_oval(cx - r, cy - r, cx + r, cy + r, outline=LINE2, width=2)
+        c.create_oval(cx - r, cy - r, cx + r, cy + r, outline=tc(LINE2), width=2)
         if self.db is None:
             c.create_text(cx, cy, text="?", fill=MUT, font=("Segoe UI", 9))
             return
@@ -492,7 +542,7 @@ class Strip(tk.Frame):
         if on:
             self.ph.config(bg="#1668e6", fg="#ffffff")
         else:
-            self.ph.config(bg="#25282b", fg="#aeb6bd")
+            self.ph.config(bg=tc("#25282b"), fg="#aeb6bd")
 
     def set_led(self, lvl_db, clip_threshold):
         color = "#333333"
@@ -536,7 +586,7 @@ class Strip(tk.Frame):
         (lv1/companion.py, via lv1_channels), ou None si inconnue (Companion desactive/injoignable, canal non
         patche, ou pas encore interroge) - jamais une couleur inventee, voir la pastille en haut de la
         voie dans __init__."""
-        bg = hex_color or PANEL
+        bg = hex_color or tc(PANEL)
         if self.swatch.cget("bg") != bg:
             self.swatch.config(bg=bg)
 
@@ -602,6 +652,8 @@ class FloatApp:
         self.collapsed = False
         self.panel_mode = None
         self.active_scene_id = None   # id de la derniere scene chargee/renommee/ecrasee - pour la surligner dans le panneau
+        self.theme = cfg.get("theme") if cfg.get("theme") in THEMES else DEFAULT_THEME
+        set_theme_map(self.theme)
 
         # Couleurs de canaux LV1 (depuis la 2.5.0), lues via l'API HTTP de Bitfocus Companion. exp_map
         # (numero EXP par preampli) est mis a jour par le thread principal a chaque _poll() ; le thread
@@ -662,6 +714,8 @@ class FloatApp:
         if args.direct:
             self.ip_var.set(args.ip or "127.0.0.1")
 
+        apply_theme(self.root)
+        self.root.after(1000, self._theme_pass)
         self._poll()
 
     # -- construction de l'UI -------------------------------------------
@@ -720,6 +774,13 @@ class FloatApp:
         tk.Button(bar, text="✕", bd=0, bg="#1c1e20", fg=MUT, font=("Segoe UI", 10), activebackground=WARN,
                   relief="flat", padx=7, pady=5, highlightthickness=1, highlightbackground=LINE2,
                   cursor="hand2", command=self.quit).pack(side="right", padx=4, pady=2)
+        # Choix du fond (Anthracite par defaut, Noir = celui d'origine, Or, Bleu nuit), memorise
+        self.theme_var = tk.StringVar(value=self.theme)
+        self.btn_theme = tk.Button(bar, text="◐", bd=0, bg="#1c1e20", fg=TXT, font=("Segoe UI", 10),
+                                    activebackground="#2a2c2e", relief="flat", padx=7, pady=5,
+                                    highlightthickness=1, highlightbackground=LINE2, cursor="hand2",
+                                    command=self._theme_menu)
+        self.btn_theme.pack(side="right", padx=4, pady=2)
 
         # Poignee de glisser : prend tout l'espace restant entre les boutons de gauche et de droite.
         # Memes bindings que la barre elle-meme, mais garantie d'etre toujours presente et large, meme
@@ -786,6 +847,7 @@ class FloatApp:
             s = Strip(self.strips_frame, self, start + k, self.strip_w)
             s.pack(side="left")
             self.strips.append(s)
+        apply_theme(self.strips_frame)
         self.bank_var.set(BANKS[self.bank][0])
 
     def _build_resize_grip(self):
@@ -827,10 +889,40 @@ class FloatApp:
                 self._build_strips()
                 return
 
+    def _theme_menu(self):
+        m = tk.Menu(self.root, tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032",
+                    selectcolor=TXT)
+        m.add_command(label="Fond de la fenêtre", state="disabled")
+        for name in THEMES:
+            m.add_radiobutton(label=name + ("  (défaut)" if name == DEFAULT_THEME else ""), value=name,
+                              variable=self.theme_var, command=lambda n=name: self._set_theme(n))
+        apply_theme(m)
+        b = self.btn_theme
+        m.tk_popup(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
+
+    def _set_theme(self, name):
+        self.theme = name
+        self.theme_var.set(name)
+        set_theme_map(name)
+        apply_theme(self.root)
+        for s in self.strips:
+            s._draw_knob()
+        self._save_cfg()
+
+    def _theme_pass(self):
+        """Passe reguliere (1 s) : rattrape les widgets crees en cours de route avec les teintes d'origine
+        (lignes du panneau Scenes reconstruites apres une sauvegarde, etc.)."""
+        apply_theme(self.root)
+        self.root.after(1000, self._theme_pass)
+
+    def _save_cfg(self):
+        save_cfg({"bank": self.bank, "strip_w": self.strip_w, "theme": self.theme,
+                  "x": self.root.winfo_x(), "y": self.root.winfo_y()})
+
     def _toggle_lock(self):
         self.locked = not self.locked
         self.btn_lock.config(text="🔒" if self.locked else "🔓",
-                              bg=(WARN if self.locked else "#1c1e20"),
+                              bg=(WARN if self.locked else tc("#1c1e20")),
                               fg=("#fff" if self.locked else MUT))
 
     def _toggle_collapse(self):
@@ -857,21 +949,22 @@ class FloatApp:
         if self.panel_mode == mode or mode is None:
             self.panel.pack_forget()
             self.panel_mode = None
-            self.btn_scenes.config(bg="#1c1e20", fg=TXT)
-            self.btn_routing.config(bg="#1c1e20", fg=TXT)
+            self.btn_scenes.config(bg=tc("#1c1e20"), fg=TXT)
+            self.btn_routing.config(bg=tc("#1c1e20"), fg=TXT)
             return
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
-        self.btn_scenes.config(bg=(TEAL if mode == "scenes" else "#1c1e20"),
+        self.btn_scenes.config(bg=(TEAL if mode == "scenes" else tc("#1c1e20")),
                                 fg=("#032" if mode == "scenes" else TXT))
-        self.btn_routing.config(bg=(TEAL if mode == "routing" else "#1c1e20"),
+        self.btn_routing.config(bg=(TEAL if mode == "routing" else tc("#1c1e20")),
                                  fg=("#032" if mode == "routing" else TXT))
         if mode == "scenes":
             self._fill_scenes_panel()
         else:
             self._fill_routing_panel()
         self.panel.pack(side="top", fill="x", after=self.strips_frame)
+        apply_theme(self.panel)
         self.root.update_idletasks()
 
     def _panel_row(self, text, sub, on_click):
@@ -1171,8 +1264,7 @@ class FloatApp:
         return lm.get(str(exp), lm.get(exp))
 
     def quit(self):
-        save_cfg({"bank": self.bank, "strip_w": self.strip_w,
-                   "x": self.root.winfo_x(), "y": self.root.winfo_y()})
+        self._save_cfg()
         self.backend.close()
         self.root.destroy()
 
