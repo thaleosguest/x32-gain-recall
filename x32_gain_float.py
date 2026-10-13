@@ -2146,6 +2146,10 @@ class FloatApp:
                   activebackground="#2a2c2e", relief="flat", padx=11, pady=6, highlightthickness=1,
                   highlightbackground=AMBER, cursor="hand2", command=self._demo).pack(side="left", padx=(2, 6), pady=4)
 
+        # croix pour refermer la barre (2.7.0, demande de Joseph : seulement par le menu ⋮ avant)
+        tk.Button(bar, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
+                  width=3, cursor="hand2", command=lambda: self._toggle_console(False)).pack(
+            side="right", padx=4, pady=4)
         self.status_lbl = tk.Label(bar, text="", bg="#111213", fg=MUT, font=("Segoe UI", 8))
         self.status_lbl.pack(side="left", padx=6)
 
@@ -2648,12 +2652,7 @@ class FloatApp:
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
-        # croix de fermeture, assez grosse pour le doigt (le « clic ailleurs » ne se voit pas toujours :
-        # Windows cache la souris à cette appli quand on touche la LV1, qui tourne en administrateur)
-        head = tk.Frame(self.panel, bg=PANEL)
-        head.pack(fill="x")
-        tk.Button(head, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
-                  width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
+        self._panel_head()
         if mode == "scenes":
             self._fill_scenes_panel()
         elif mode == "consoles":
@@ -2667,6 +2666,16 @@ class FloatApp:
         # Fermeture : croix ✕ seulement (2026-10-14, Joseph). La fermeture automatique « quand une autre fenêtre
         # devient active » fermait le panneau pendant qu'on tapait un nom de scène : le clavier tactile de
         # Windows est une autre appli. _watch_outside n'est plus lancé.
+
+    def _panel_head(self):
+        """Croix de fermeture du panneau, assez grosse pour le doigt (le « clic ailleurs » ne se voit pas
+        toujours : Windows cache la souris à cette appli quand on touche la LV1, qui tourne en administrateur).
+        À remettre à chaque fois que le contenu du panneau est refait (2.7.0 : elle disparaissait après avoir
+        chargé / sauvegardé une scène)."""
+        head = tk.Frame(self.panel, bg=PANEL)
+        head.pack(fill="x")
+        tk.Button(head, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
+                  width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
 
     def _watch_outside(self):
         """Panneau ouvert : toutes les 30 ms (un tapotement au doigt est bref), un clic ailleurs que dans
@@ -3007,7 +3016,9 @@ class FloatApp:
         if self.panel_mode == "scenes":
             for w in self.panel.winfo_children():
                 w.destroy()
+            self._panel_head()
             self._fill_scenes_panel()
+            apply_theme(self.panel_win)
 
     def _recall_scene(self, pid, name):
         if not messagebox.askyesno("Rappeler la scène ?",
