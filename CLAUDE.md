@@ -14,10 +14,13 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.4.0 publiée (2026-10-13)
+## État actuel : v2.5.0 publiée (2026-10-14)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.4.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.4.0 (branche `dev-2.4`) fusionnée dans `main` ; avant : #6 (v2.3.0), #5 (v2.2.0), #4 (v2.1.0), #1, #2, #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.5.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.5.0 (branche `dev-2.4.1`) fusionnée dans `main` ; avant : #7 (v2.4.0), #6 (v2.3.0), #5 (v2.2.0), #4, #1-#3.
+2.5.0 = pages détachées (un float par Mixer détaché, onglets lus avec la liste réduite), page Channel (canal lu à
+l'écran, chiffres relevés par taille, vérifié contre le patch), 48V au style du float, bulle des dB, lectures
+d'écran sur un fil à part (potards fluides). Ressources mesurées : ~0,3 % CPU de la machine, ~100 Mo en tout.
 2.4.0 = routing : profils X32R + S16 A + S16 B et M32C + S16 A + S16 B, éditeur libre (page + float) en
 matrice avec aide à la visée ou en listes ; float plus tactile (⋮, menu 13 pt, panneau fermé par ✕ ou en
 touchant la LV1) (détails : section « Routing (2.4.0) »).
@@ -297,6 +300,44 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   en administrateur ; mon 1er test sur une fenêtre ordinaire passait, chez Joseph non). Ce qui marche : la fenêtre
   active change d'appli (`_watch_outside`, 30 ms, après `focus_force` du panneau) + croix ✕.
 
+## Mixer détaché (2026-10-14)
+
+- LV1 V17 : une page détachée = fenêtre top-level du même processus, titre = nom de la page en majuscules
+  (relevés : **« MIXER1 »**, **« MIXER2 »**, **« CHANNEL »**). Joseph : jamais plus de 4 pages détachées.
+  Avec les deux Mixers détachés, la fenêtre principale n'a plus que « All, Show, Patch, Setup » (vérifié) :
+  son float reste caché, chaque Mixer a le sien. Mixer détaché : même disposition que la page
+  Mixer (mêmes fractions AUTO_*/SEL_*/SEL_ROWS), une seule touche d'onglet. La fenêtre principale perd les
+  onglets détachés (vu : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 + Channel détachés) ->
+  `lv1_tab(hwnd, names)` avec la liste réduite (`_detached_now` = toutes les pages détachées). Relevé : écran 1 fenêtre principale 1728x970, écran 2
+  MIXER2 1728x972 (bureau virtuel 3840x1080).
+- `lv1_windows()` -> {"main", "MIXER1", "MIXER2"}. Serveur : `_watch_detached_mixers()` (2 s) lance un float
+  `--lv1-window MIXER2` par fenêtre détachée (`FLOAT_PROCS[clé]`) ; ce float a une surface fixe, ne lit pas
+  d'onglet, se ferme 4 s après la disparition de sa fenêtre, config `x32_float_config_MIXER2.json`.
+
+## Page Channel et sélection (2026-10-14)
+
+- Canal affiché par la page Channel : PAS dans la base (surfaces 0-5 : Common, Setup, OVV1, OVV2, FIT, OVVAll ;
+  aucune propriété de sélection), PAS dans l'accessibilité Windows (UIA : 5 panneaux vides, interface dessinée).
+- 1er essai (écarté par Joseph) : apprendre la case « canal sélectionné » sur une page Mixer -> avec « > » on
+  tombe sur un canal jamais vu, plus d'accès au préampli.
+- Solution retenue : **lecture des chiffres à l'écran** (`lv1_channel_page`, fil `_screen_reader`) :
+  « Channel N: » (bandeau du bas, texte (17,17,17) sur la couleur du canal, `CH_REG_BAS`) et « … EXP N »
+  (source, texte clair, `CH_REG_SRC`). Découpe en caractères (masque strict : sépare les chiffres collés),
+  image en gris normalisée 8x12, comparée aux modèles de `lv1/digits.py` PAR TAILLE d'interface
+  (`ui_scale_key` = min(w/1920, h/1080) x 100 : 100 et 90 relevés le 2026-10-14 en faisant défiler les canaux
+  1→12/23 avec « > ») ; un chiffre n'est retenu que s'il est quasi identique (écart ≤ 3/96, 2e ≥ +6) : d'une
+  taille à l'autre la LV1 dessine autrement (testé : inutilisable). `_resolve_channel` : canal+EXP lus ->
+  EXP ∈ sources(canal) ; un seul lu -> patch + couleur du bandeau (exacte) ; sinon rien. Chiffres manquants
+  appris (`x32_digits_learned.json`) quand l'autre numéro est lu (ex. « 8 » d'EXP 18 en fenêtre). Testé :
+  canaux 1→24 et retour, tous justes (14/15 sans X32 : vides).
+- Tranche sélectionnée sur une page Mixer : **liseré jaune pur (255,242,0)** en haut de sa case de source
+  (y 100/1080, tous les modes ; canaux jaunes = (243,250,29)) -> `lv1_selected_column_top` (cadre Edit).
+- Captures d'écran : 15-45 ms CHACUNE (GDI) -> une seule capture par lecture (`screen_rows`, `screen_bytes`),
+  sur le fil `_screen_reader`, suspendu pendant un glisser de potard (`_dragging`) : c'était la cause des
+  « potards moins précis ». Zone Channel `CH_BOX` (7..213/1728, 27 %..52 %).
+- `PreampBox` (cadre Edit + cadre Channel), `confirm_float` (48V), `ValuePop` (bulle des dB au glisser, se place
+  une fois puis ne change que le chiffre ; option `value_pop` du menu ⋮).
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
@@ -305,7 +346,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `CurrentLV1.dat`, paramètre couleur 592 et palette.
 - Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
 - À revérifier aussi après une mise à jour LV1 : couches / modes (`lv1/layers.py`).
-- Non traité : deux cartes X32 dans le même rack (deux consoles) ; vue « Mixer 2 » (surface 3) non suivie.
+- Non traité : deux cartes X32 dans le même rack (deux consoles).
 
 ## Environnement cible
 

@@ -92,6 +92,8 @@ par résolution d'écran. **⋮ → Caler sur la LV1 (auto)** le remet en place 
 - **Se déplie** en mode **SndChk** ou **Setup**, **se replie** dans les autres modes
   (il ne reste que le point vert et la flèche).
 - **Disparaît** quand la LV1 est fermée, réduite, ou affiche un autre onglet que Mixer 1 / Mixer 2.
+- **Mixer détaché** (Mixer 1 ou 2 ouvert dans sa propre fenêtre, sur un 2e écran par exemple) : un
+  **2e float** s'ouvre tout seul pour cette fenêtre et s'y cale ; il disparaît quand vous la refermez.
 - Reste **devant la LV1 mais derrière les autres applis** (il ne vous gêne pas dans le navigateur).
 - **Suit l'entrée A/B** de chaque canal : un canal basculé sur B (TracksLive, virtual soundcheck)
   n'a pas de préampli X32 à afficher.
@@ -105,10 +107,18 @@ cadre vide du bloc **Input** de la LV1 (sous les boutons A / B) : potard de gain
 canal stéréo. Sélectionnez une autre tranche : il suit. Le cadre reste vide si la tranche ne reçoit
 aucun préampli X32 (entrée B, TracksLive, groupe…).
 
+### Sur la page Channel
+Sur la page **Channel** de la LV1, le réglage du préampli X32 du canal affiché apparaît dans la zone grisée
+« Preamp / Gain / 48V » du bloc **Channel Input**, et suit « < » / « > ». L'appli lit à l'écran le numéro
+du canal et de son EXP, et vérifie qu'ils concordent avec le patch de la LV1 : en cas de doute, la zone reste
+vide (l'appli n'affiche jamais le préampli d'un autre canal). Canal sans préampli X32 : zone vide.
+Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille de fenêtre LV1 n'est pas lue.
+
 ### Régler un gain
-- **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien.
+- **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien. La
+  valeur s'affiche en gros au-dessus du potard pendant qu'on le tourne (visible même avec le doigt dessus).
 - **Cliquer sur la valeur en dB** pour taper un chiffre exact.
-- **48 V** : bouton sous le potard, avec confirmation avant d'allumer.
+- **48 V** : bouton sous le potard, avec confirmation (voyant rouge) avant d'allumer.
 
 ### Le menu ⋮ (dans la languette)
 | Entrée | Rôle |

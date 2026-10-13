@@ -91,7 +91,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.11.0"
+FLOAT_VERSION = "2.12.0"
 GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
                           # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
@@ -221,13 +221,17 @@ def _user32():
         return None, None
 
 
-def find_lv1_window():
-    """HWND de la fenêtre principale de la LV1 (titre « eMotion LV1 … », visible), ou None."""
+
+
+def lv1_windows():
+    """Fenêtres visibles de la LV1 : {"main": fenêtre principale (« eMotion LV1 … »), "MIXER1" / "MIXER2" :
+    Mixer détaché dans sa propre fenêtre (relevé le 2026-10-13, LV1 V17 : titre « MIXER2 », même disposition
+    que la page Mixer de la fenêtre principale, une seule touche d'onglet)}."""
     ctypes, u32 = _user32()
     if not u32:
-        return None
+        return {}
     from ctypes import wintypes
-    found = []
+    wins = []
     proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def cb(hwnd, _l):
@@ -236,11 +240,27 @@ def find_lv1_window():
             if n:
                 buf = ctypes.create_unicode_buffer(n + 1)
                 u32.GetWindowTextW(hwnd, buf, n + 1)
-                if buf.value.startswith("eMotion LV1"):
-                    found.append(hwnd)
+                wins.append((hwnd, buf.value))
         return True
     u32.EnumWindows(proto(cb), 0)
-    return found[0] if found else None
+    out = {}
+    for hwnd, title in wins:
+        if title.startswith("eMotion LV1") and "main" not in out:
+            out["main"] = hwnd
+    pid = window_pid(out["main"]) if "main" in out else None
+    tab_keys = {t.upper().replace(" ", "") for t in LV1_TABS}
+    for hwnd, title in wins:
+        key = title.upper().replace(" ", "")
+        # page de la LV1 détachée dans sa propre fenêtre : Mixer 1 / 2, mais aussi Channel, Show, Patch...
+        # (titre = nom de la page en majuscules, relevé « MIXER2 »)
+        if key in tab_keys and key not in out and (pid is None or window_pid(hwnd) == pid):
+            out[key] = hwnd
+    return out
+
+
+def find_lv1_window(title=None):
+    """HWND de la fenêtre principale de la LV1 (title None), ou de son Mixer détaché « MIXER1 » / « MIXER2 »."""
+    return lv1_windows().get(title or "main")
 
 
 def float_hwnd(root):
@@ -275,6 +295,11 @@ def client_rect(hwnd):
     if not u32.GetClientRect(hwnd, ctypes.byref(r)) or not u32.ClientToScreen(hwnd, ctypes.byref(pt)):
         return None
     return pt.x, pt.y, r.right - r.left, r.bottom - r.top
+
+
+def screen_rect(x, y, w, h):
+    """Pixels (r, g, b) d'un rectangle d'écran, ligne par ligne (liste de lignes)."""
+    return [screen_row(x, y + k, w) for k in range(h)]
 
 
 def screen_row(x, y, w):
@@ -313,7 +338,7 @@ def screen_row(x, y, w):
         u32.ReleaseDC(None, hdc)
 
 
-def lv1_tab(hwnd):
+def lv1_tab(hwnd, names=LV1_TABS):
     """Onglet du haut affiché par la LV1 (« Mixer 1 », « Mixer 2 », « All »…), ou None si illisible.
     La LV1 ne l'écrit pas dans sa base (vérifié le 2026-10-12) : on le LIT À L'ÉCRAN. Sur une ligne en
     haut de la fenêtre (14 px sur 1080), les 7 onglets sont 7 boutons de même largeur (~4,7 % de la
@@ -332,9 +357,9 @@ def lv1_tab(hwnd):
                 runs.append((cur, start, i - start))
             cur, start = k, i
     tabs = [k for k, s, n in runs if 0.035 * w <= n <= 0.06 * w]
-    if len(tabs) < len(LV1_TABS) or tabs[:len(LV1_TABS)].count("C") != 1:
+    if len(tabs) < len(names) or tabs[:len(names)].count("C") != 1:
         return None
-    return LV1_TABS[tabs.index("C")]
+    return names[tabs.index("C")]
 
 
 # Tranche sélectionnée (mode Edit) : relevés du 2026-10-12 sur la LV1 plein écran 1920x1080, en fractions de
@@ -342,12 +367,323 @@ def lv1_tab(hwnd):
 SEL_GREY = (120, 120, 120)                  # fond de la zone de fader de la tranche sélectionnée (autres : 17)
 SEL_ROWS = (800 / 1080.0, 880 / 1080.0, 960 / 1080.0)   # lignes lues (une suffit ; plusieurs si l'une est couverte)
 SEL_X0, SEL_PITCH, SEL_W = 143 / 1920.0, 96 / 1920.0, 92 / 1920.0   # 1re tranche, pas, largeur du fond gris
+# Page Channel (2026-10-14, demande de Joseph) : réglage du préampli X32 du canal affiché, posé dans la zone
+# grisée « Preamp / Gain / 48V » du bloc « Channel Input » (fractions de la zone client, relevées en 1728x970).
+# x, y, largeur, hauteur : sous la ligne « Left / lien / Right » d'un canal stéréo (y 302/1080), au-dessus des
+# valeurs des vumètres (y 585/1080)
+CH_BOX = (7 / 1728.0, 306 / 1080.0, 206 / 1728.0, 269 / 1080.0)
+# Canal affiché par la page Channel : la LV1 ne le dit nulle part (ni base, ni accessibilité Windows). On LIT les
+# chiffres à l'écran : « Channel N: » (bandeau du bas, fond = couleur du canal) et « … EXP N » (source de
+# l'entrée), et on n'affiche rien si ce n'est pas cohérent avec le patch de la LV1 (voir _resolve_channel).
+CH_REG_BAS = (0.0, 925 / 970.0, 230 / 1728.0, 40 / 970.0)
+CH_REG_SRC = (10 / 1728.0, 168 / 970.0, 205 / 1728.0, 40 / 970.0)
+# Modèles des chiffres (par taille d'interface) : lv1/digits.py ; chiffres appris en plus : DIGITS_LEARNED_FILE.
+DIGITS_LEARNED_FILE = os.path.join(x32_gain_recall.app_data_dir(), "x32_digits_learned.json")
+
 # Calage automatique du float (modes SndChk / Setup : section « Input » en haut) : les cadres vides « Preamp /
 # Gain / 48 » des 16 tranches, relevés le 2026-10-12 (1920x1080) ; identiques au calage fait à la main par Joseph.
 AUTO_X0, AUTO_Y0 = 142 / 1920.0, 184 / 1080.0      # coin haut-gauche du cadre de la 1re tranche
 AUTO_PITCH, AUTO_H = 96 / 1920.0, 133 / 1080.0     # pas des tranches, hauteur des cadres
 # Cadre vide du bloc « Input » (sous A/B) de la page Edit, où se pose le réglage de la tranche sélectionnée
 SEL_BOX = (32 / 1920.0, 183 / 1080.0, 92 / 1920.0, 133 / 1080.0)   # x, y, largeur, hauteur
+
+
+def _hex_rgb(h):
+    try:
+        return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _close(a, b, tol=8):
+    return a is not None and b is not None and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def screen_rows(x, y, w, ys):
+    """Lignes d'écran ys (absolues) de largeur w, prises dans une seule capture : {y: [(r, g, b)...]}."""
+    if not ys:
+        return {}
+    y0, y1 = min(ys), max(ys)
+    b = screen_bytes(x, y0, w, y1 - y0 + 1)
+    if not b:
+        return {}
+    out = {}
+    for yy in ys:
+        o = 4 * (yy - y0) * w
+        out[yy] = [(b[o + 4 * i + 2], b[o + 4 * i + 1], b[o + 4 * i]) for i in range(w)]
+    return out
+
+
+def screen_block(x, y, w, h):
+    """Pixels (r, g, b) d'un rectangle d'écran, en lignes."""
+    b = screen_bytes(x, y, w, h)
+    return [[(b[4 * (j * w + i) + 2], b[4 * (j * w + i) + 1], b[4 * (j * w + i)]) for i in range(w)]
+            for j in range(h)] if b else []
+
+
+def screen_bytes(x, y, w, h):
+    """Rectangle d'écran brut (BGRA), en une seule capture GDI."""
+    ctypes, u32 = _user32()
+    if not u32 or w <= 0 or h <= 0:
+        return b""
+    g32 = ctypes.windll.gdi32
+    for fn in (u32.GetDC, g32.CreateCompatibleDC, g32.CreateCompatibleBitmap, g32.SelectObject):
+        fn.restype = ctypes.c_void_p
+    u32.GetDC.argtypes = [ctypes.c_void_p]
+    u32.ReleaseDC.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    g32.CreateCompatibleDC.argtypes = [ctypes.c_void_p]
+    g32.CreateCompatibleBitmap.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+    g32.SelectObject.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    g32.BitBlt.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                           ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    g32.GetDIBits.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+                              ctypes.c_void_p, ctypes.c_uint]
+    g32.DeleteObject.argtypes = [ctypes.c_void_p]
+    g32.DeleteDC.argtypes = [ctypes.c_void_p]
+    hdc = u32.GetDC(None)
+    mem = g32.CreateCompatibleDC(hdc)
+    bmp = g32.CreateCompatibleBitmap(hdc, w, h)
+    old = g32.SelectObject(mem, bmp)
+    try:
+        g32.BitBlt(mem, 0, 0, w, h, hdc, x, y, 0x00CC0020)
+        bmi = (ctypes.c_uint32 * 10)(40, w, (-h) & 0xFFFFFFFF, 1 | (32 << 16), 0, 0, 0, 0, 0, 0)
+        buf = (ctypes.c_ubyte * (4 * w * h))()
+        g32.GetDIBits(mem, bmp, 0, h, buf, bmi, 0)
+        return bytes(buf)
+    finally:
+        g32.SelectObject(mem, old)
+        g32.DeleteObject(bmp)
+        g32.DeleteDC(mem)
+        u32.ReleaseDC(None, hdc)
+
+
+from lv1.digits import DIGITS as _DIGITS_SHIPPED  # noqa: E402
+
+
+def ui_scale_key(w, h):
+    """Taille de l'interface de la LV1 : 100 = plein écran 1920x1080, 90 = fenêtre 1728x970."""
+    return str(int(round(min(w / 1920.0, h / 1080.0) * 100)))
+
+
+def load_learned_digits():
+    try:
+        with open(DIGITS_LEARNED_FILE, "r", encoding="utf-8-sig") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def digit_templates(key, learned):
+    """Modèles pour cette taille (relevés + appris), ou {} si cette taille n'a jamais été relevée."""
+    out = {}
+    for src in (_DIGITS_SHIPPED.get(key) or {}, (learned or {}).get(key) or {}):
+        for kind, digits in src.items():
+            out.setdefault(kind, {}).update(digits)
+    return out
+
+
+def _lum(c):
+    return 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+
+
+def _dist(a, b):
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def _mask_bas(px):
+    """Texte sombre sur le bandeau couleur du canal ; renvoie (masque, couleur du bandeau)."""
+    h, w = len(px), len(px[0])
+    counts = {}
+    for row in px:
+        for c in row:
+            counts[c] = counts.get(c, 0) + 1
+    bg = max(counts, key=counts.get)
+    txt = (17, 17, 17)
+    isbg = [[_dist(c, bg) < 30 for c in row] for row in px]
+    rows = [j for j in range(h) if sum(isbg[j]) > 0.5 * w]
+    if not rows:
+        return None, bg
+    r0, r1 = rows[0], rows[-1]
+    cols = [i for i in range(w) if sum(isbg[j][i] for j in range(r0, r1 + 1)) > 0.3 * (r1 - r0 + 1)]
+    c0, c1 = cols[0], cols[-1]
+    lim = 0.35 * _dist(txt, bg)
+    return [[1 if (r0 < j < r1 and c0 + 2 < i < c1 - 2 and _dist(c, txt) < lim) else 0
+             for i, c in enumerate(row)] for j, row in enumerate(px)], bg
+
+
+def _mask_src(px):
+    """Texte clair dans la case de source (sous son bord du haut)."""
+    h, w = len(px), len(px[0])
+    soft = [[_lum(c) > 150 for c in row] for row in px]
+    top = next((j for j in range(h) if sum(soft[j]) > 0.5 * w), None)
+    if top is None:
+        return None
+    left = min((i for j in range(top + 2, h) for i in range(w) if soft[j][i]), default=0)
+    return [[1 if (j > top + 2 and i > left + 4 and _lum(px[j][i]) > 190) else 0 for i in range(w)]
+            for j in range(h)]
+
+
+def _glyph_words(m):
+    """Caractères (colonnes vides entre eux) regroupés en mots ; écarte bords et chevrons (hauteur atypique)."""
+    h, w = len(m), len(m[0])
+    cols = [any(m[j][i] for j in range(h)) for i in range(w)]
+    gl, st = [], None
+    for i, c in enumerate(cols + [False]):
+        if c and st is None:
+            st = i
+        elif not c and st is not None:
+            rows = [j for j in range(h) if any(m[j][k] for k in range(st, i))]
+            gl.append((st, i, rows[0], rows[-1] + 1))
+            st = None
+    if not gl:
+        return []
+    hs = sorted(g[3] - g[2] for g in gl)
+    med = hs[len(hs) // 2]
+    gl = [g for g in gl if 0.7 * med <= g[3] - g[2] <= 1.4 * med]
+    if not gl:
+        return []
+    ws = [[gl[0]]]
+    for p, g in zip(gl, gl[1:]):
+        if g[0] - p[1] > 0.45 * med:
+            ws.append([g])
+        else:
+            ws[-1].append(g)
+    return ws
+
+
+def _glyph_gray(wt, g, W=8, H=12):
+    """Image d'un caractère en niveaux de gris (wt : 0-1 par pixel), normalisée W x H (moyenne par zone)."""
+    a, b, t, u = g[0] - 1, g[1] + 1, g[2] - 1, g[3] + 1
+    gw, gh = b - a, u - t
+    hgt, wid = len(wt), len(wt[0])
+    v = []
+    for y in range(H):
+        for x in range(W):
+            x0, x1 = a + x * gw / W, a + (x + 1) * gw / W
+            y0, y1 = t + y * gh / H, t + (y + 1) * gh / H
+            tot = area = 0.0
+            yy = y0
+            while yy < y1 - 1e-9:
+                ny = min(y1, int(yy) + 1)
+                xx = x0
+                while xx < x1 - 1e-9:
+                    nx = min(x1, int(xx) + 1)
+                    iy, ix = int(yy), int(xx)
+                    val = wt[iy][ix] if 0 <= iy < hgt and 0 <= ix < wid else 0.0
+                    tot += val * (nx - xx) * (ny - yy)
+                    area += (nx - xx) * (ny - yy)
+                    xx = nx
+                yy = ny
+            v.append(tot / area if area else 0.0)
+    mx = max(v) or 1.0
+    return [x / mx for x in v]
+
+
+def _read_digits(vecs, tpl):
+    """[chiffre ou None] pour chaque image : un chiffre n'est retenu que s'il est quasi identique à son modèle
+    (écart <= 3 sur 96) et nettement loin des autres (>= 6 de plus). Taille non relevée : tout à None."""
+    out = []
+    for v in vecs:
+        d = sorted((sum(abs(x - y) for x, y in zip(v, t)), dg) for dg, t in tpl.items())
+        if d and d[0][0] <= 3.0 and (len(d) == 1 or d[1][0] >= d[0][0] + 6):
+            out.append(d[0][1])
+        else:
+            out.append(None)
+    return out
+
+
+def _number(digits):
+    return int("".join(digits)) if digits and all(digits) and len(digits) <= 3 else None
+
+
+def lv1_channel_page(hwnd, cache=None, learned=None):
+    """Page Channel : {"ch": numéro lu dans « Channel N: », "exp": numéro lu dans « … EXP N », "bg": couleur du
+    bandeau, "src_vecs" / "bas_vecs": images des chiffres, "key": taille d'interface}. ch / exp à None quand la
+    lecture n'est pas nette. Relu seulement si l'image a changé."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    zones = [(x + round(w * r[0]), y + round(h * r[1]), round(w * r[2]), round(h * r[3])) for r in (CH_REG_BAS, CH_REG_SRC)]
+    bx0, by0 = min(z[0] for z in zones), min(z[1] for z in zones)
+    bx1, by1 = max(z[0] + z[2] for z in zones), max(z[1] + z[3] for z in zones)
+    big = screen_bytes(bx0, by0, bx1 - bx0, by1 - by0)          # une seule capture pour les deux zones
+    bw = bx1 - bx0
+
+    def cut(z):
+        if not big:
+            return b""
+        return b"".join(big[4 * ((z[1] - by0 + j) * bw + (z[0] - bx0)):4 * ((z[1] - by0 + j) * bw + (z[0] - bx0) + z[2])]
+                        for j in range(z[3]))
+    raws = [cut(z) for z in zones]
+    key = ui_scale_key(w, h)
+    learned_sig = repr((learned or {}).get(key))
+    if cache is not None and cache.get("key") == (raws, learned_sig):   # image inchangée : pas de relecture
+        return cache["res"]
+
+    def pixels(i):
+        zw, zh, b = zones[i][2], zones[i][3], raws[i]
+        return [[(b[4 * (j * zw + k) + 2], b[4 * (j * zw + k) + 1], b[4 * (j * zw + k)]) for k in range(zw)]
+                for j in range(zh)] if b else []
+    tpl = digit_templates(key, learned)
+    res = {"ch": None, "exp": None, "bg": None, "bas_vecs": [], "src_vecs": [], "key": key}
+    px = pixels(0)
+    if px:
+        m, bg = _mask_bas(px)
+        res["bg"] = bg
+        ws = _glyph_words(m) if m else []
+        if len(ws) >= 2:
+            word = ws[1]
+            if word and word[-1][1] - word[-1][0] <= 3:      # deux-points final
+                word = word[:-1]
+            txt = (17, 17, 17)
+            dd = _dist(txt, bg) or 1.0
+            wt = [[max(0.0, min(1.0, 1 - _dist(c, txt) / dd)) for c in row] for row in px]
+            res["bas_vecs"] = [_glyph_gray(wt, g) for g in word]
+            res["ch"] = _number(_read_digits(res["bas_vecs"], tpl.get("bas") or {}))
+    px = pixels(1)
+    if px:
+        m = _mask_src(px)
+        ws = _glyph_words(m) if m else []
+        if len(ws) >= 2:
+            wt = [[max(0.0, min(1.0, (_lum(c) - 60) / 170.0)) for c in row] for row in px]
+            res["src_vecs"] = [_glyph_gray(wt, g) for g in ws[-1]]
+            res["exp"] = _number(_read_digits(res["src_vecs"], tpl.get("src") or {}))
+    if cache is not None:
+        cache["key"], cache["res"] = (raws, learned_sig), res
+    return res
+
+
+SEL_TOP_ROWS = (99, 100, 101)        # /1080 : liseré jaune du haut de la case de la tranche sélectionnée
+SEL_TOP_YELLOW = (255, 242, 0)      # jaune pur (un canal de couleur jaune est (243, 250, 29) : distinct)
+
+
+def lv1_selected_column_top(hwnd):
+    """Colonne (0-15) de la tranche sélectionnée, d'après le liseré jaune en haut de sa case de source
+    (« 1- EX 12 ») : présent dans TOUS les modes (Setup n'a pas de faders, donc pas de fond gris). None sinon."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    fys = sorted({round(h * r / 1080.0) for r in SEL_TOP_ROWS} | {round(h * 100 / 1080.0) + d for d in (-2, 2)})
+    rows = screen_rows(x, None, w, [y + fy for fy in fys])
+    for fy in fys:
+        row = rows.get(y + fy) or []
+        cols, start = set(), None
+        for i, c in enumerate(row + [(0, 0, 0)]):
+            yel = _close(c, SEL_TOP_YELLOW, 6)
+            if yel and start is None:
+                start = i
+            elif not yel and start is not None:
+                if i - start >= 0.03 * w:
+                    k = int((start / float(w) - SEL_X0) / SEL_PITCH + 0.02)
+                    if 0 <= k < 16:
+                        cols.add(k)
+                start = None
+        if len(cols) == 1:
+            return cols.pop()
+    return None
 
 
 def lv1_selected_column(hwnd):
@@ -357,8 +693,9 @@ def lv1_selected_column(hwnd):
     if not rect or rect[2] < 400:
         return None
     x, y, w, h = rect
+    rows = screen_rows(x, None, w, [y + round(h * fy) for fy in SEL_ROWS])
     for fy in SEL_ROWS:
-        row = screen_row(x, y + round(h * fy), w)
+        row = rows.get(y + round(h * fy)) or []
         runs, start = [], None
         for i, (r, g, b) in enumerate(row + [(0, 0, 0)]):
             grey = abs(r - SEL_GREY[0]) <= 6 and abs(g - SEL_GREY[1]) <= 6 and abs(b - SEL_GREY[2]) <= 6
@@ -762,6 +1099,7 @@ class Unit(tk.Frame):
         self.compact = compact
         self.db = None
         self.phantom_state = None
+        self.max_knob = None           # potard plafonné (grands cadres de la page Channel)
 
         self.led = tk.Canvas(self, width=max(8, width - 10), height=7, bg=PANEL, highlightthickness=0)
         self.led.pack(pady=(4, 3))
@@ -775,6 +1113,7 @@ class Unit(tk.Frame):
         for w in (self.knob, self.led, self):
             w.bind("<ButtonPress-1>", self._drag_start)
             w.bind("<B1-Motion>", self._drag_move)
+            w.bind("<ButtonRelease-1>", lambda e: (setattr(self.owner, "_dragging", False), self._pop("hide")))
             w.configure(cursor="sb_v_double_arrow")
 
         self._val_font = tkfont.Font(family="Consolas", size=8 if compact else 10, weight="bold")
@@ -805,6 +1144,11 @@ class Unit(tk.Frame):
             ksz = max(14, min(width - 6, room))
         else:
             ksz = max(16, min(width - 12, room))
+        if self.max_knob:
+            ksz = min(ksz, self.max_knob)
+            pad = max(4, (width - ksz) // 2)      # valeur et 48V à la largeur du potard
+            self.val.pack_configure(padx=pad)
+            self.ph.pack_configure(padx=pad)
         self.knob.config(width=ksz, height=ksz)
         self.led.config(width=max(8, width - 10))
         self._draw_knob()
@@ -864,9 +1208,16 @@ class Unit(tk.Frame):
         self.led.itemconfig(self._led_id, fill=color)
 
     # -- interaction ----------------------------------------------------
+    def _pop(self, what):
+        pop = getattr(self.owner, "value_pop", None)
+        if pop:
+            pop.show(self) if what == "show" else pop.hide_soon()
+
     def _drag_start(self, e):
         self._drag_y0 = e.y_root
         self._drag_db0 = self.db if self.db is not None else 0.0
+        self.owner._dragging = True
+        self._pop("show")
 
     def _drag_move(self, e):
         if self._drag_y0 is None or self.owner.locked:
@@ -876,6 +1227,7 @@ class Unit(tk.Frame):
         if new_db != self.db:
             self.set_gain(new_db)
             self.owner.send_gain(self.idx, new_db)
+            self._pop("show")
 
     def _edit_value(self, _e=None):
         """Clic sur la valeur en dB : saisie directe au clavier plutôt que de glisser."""
@@ -893,6 +1245,8 @@ class Unit(tk.Frame):
             return
         self.set_gain(db)
         self.owner.send_gain(self.idx, db)
+        self._pop("show")
+        self._pop("hide")
 
     def _phantom_click(self):
         if self.owner.locked:
@@ -900,12 +1254,10 @@ class Unit(tk.Frame):
         if self.phantom_state:
             self.owner.send_phantom(self.idx, False)
         else:
-            if messagebox.askyesno(
-                "Activer le +48 V ?",
+            if confirm_float(
+                self.owner, "Activer le +48 V ?",
                 "Voie %s : vérifiez qu'aucun micro ruban / dynamique non protégé n'est branché avant d'activer "
-                "l'alimentation fantôme." % self.owner.label(self.idx),
-                parent=self.owner.root,
-            ):
+                "l'alimentation fantôme." % self.owner.label(self.idx), "Activer +48 V"):
                 self.owner.send_phantom(self.idx, True)
 
 
@@ -1038,6 +1390,178 @@ def join_tags(idxs):
     if len(tags) == 2 and tags[0].split()[0] == tags[1].split()[0]:
         return "%s/%s" % (tags[0], tags[1].split()[1])
     return " + ".join(tags)
+
+
+def confirm_float(owner, title, text, ok_text, danger=True):
+    """Confirmation au style du float (2026-10-14, demande de Joseph : à la place de la boîte Windows) : fond
+    sombre, voyant d'avertissement qui clignote, gros boutons pour le doigt. Renvoie True si confirmé."""
+    root = owner.root
+    w = tk.Toplevel(root)
+    w.overrideredirect(True)
+    w.attributes("-topmost", True)
+    w.configure(bg=WARN if danger else LINE2)
+    inner = tk.Frame(w, bg=PANEL)
+    inner.pack(fill="both", expand=True, padx=2, pady=2)
+    head = tk.Frame(inner, bg=PANEL)
+    head.pack(fill="x", padx=14, pady=(12, 4))
+    led = tk.Canvas(head, width=26, height=26, bg=PANEL, highlightthickness=0)
+    led.pack(side="left")
+    dot = led.create_oval(3, 3, 23, 23, fill=WARN if danger else AMBER, outline="")
+    tk.Label(head, text=title, bg=PANEL, fg=WARN if danger else AMBER, font=("Segoe UI", 14, "bold")).pack(
+        side="left", padx=(10, 0))
+    tk.Label(inner, text=text, bg=PANEL, fg=TXT, font=("Segoe UI", 11), wraplength=380, justify="left").pack(
+        fill="x", padx=14, pady=(4, 12))
+    res = {"ok": False}
+
+    def close(ok):
+        res["ok"] = ok
+        w.destroy()
+    bar = tk.Frame(inner, bg=PANEL)
+    bar.pack(fill="x", padx=14, pady=(0, 14))
+    tk.Button(bar, text="Annuler", bd=0, bg="#25282b", fg=TXT, activebackground="#33383c",
+              font=("Segoe UI", 13, "bold"), padx=18, pady=10, command=lambda: close(False)).pack(side="left")
+    tk.Button(bar, text=ok_text, bd=0, bg=WARN if danger else TEAL, fg="#ffffff" if danger else "#032",
+              activebackground=WARN, font=("Segoe UI", 13, "bold"), padx=18, pady=10,
+              command=lambda: close(True)).pack(side="right")
+    w.bind("<Escape>", lambda e: close(False))
+    blink = {"on": True}
+
+    def tick():
+        if not w.winfo_exists():
+            return
+        blink["on"] = not blink["on"]
+        led.itemconfig(dot, fill=(WARN if danger else AMBER) if blink["on"] else "#3a1d1b")
+        w.after(450, tick)
+    w.update_idletasks()
+    # au centre de l'écran où se trouve le float
+    mx, my = root.winfo_rootx() + root.winfo_width() // 2, root.winfo_rooty() + root.winfo_height() // 2
+    w.geometry("+%d+%d" % (max(0, mx - w.winfo_reqwidth() // 2), max(0, my - w.winfo_reqheight() // 2)))
+    tick()
+    try:
+        w.grab_set()
+        w.focus_force()
+    except tk.TclError:
+        pass
+    root.wait_window(w)
+    return res["ok"]
+
+
+class ValuePop:
+    """Bulle « +32.5 dB » en gros, décalée au-dessus du potard qu'on tourne : le doigt ne la cache pas
+    (demande de Joseph, tactile). Se cache peu après le relâcher."""
+
+    def __init__(self, owner):
+        self.owner = owner
+        w = tk.Toplevel(owner.root)
+        w.overrideredirect(True)
+        w.withdraw()
+        w.attributes("-topmost", True)
+        w.configure(bg=AMBER)
+        self.lbl = tk.Label(w, text="", bg="#000000", fg=CYAN, font=("Consolas", 24, "bold"), padx=12, pady=4)
+        self.lbl.pack(padx=2, pady=2)
+        self.sub = tk.Label(w, text="", bg="#000000", fg=MUT, font=("Segoe UI", 9, "bold"))
+        self.sub.pack(fill="x", padx=2, pady=(0, 2))
+        self.win = w
+        self._job = None
+
+    def show(self, unit):
+        if not self.owner.cfg.get("value_pop", True):          # coupée dans le menu ⋮
+            return
+        if self._job:
+            self.owner.root.after_cancel(self._job)
+            self._job = None
+        db = unit.db
+        text = ("%+.1f dB" % db) if db is not None else "— dB"
+        if self.win.state() != "withdrawn" and getattr(self, "_unit", None) is unit:
+            # pendant le glisser : seulement le chiffre (rien à replacer : le potard ne doit pas ralentir)
+            if self.lbl.cget("text") != text:
+                self.lbl.config(text=text)
+            return
+        self._unit = unit
+        self.lbl.config(text=text)
+        self.sub.config(text="Gain " + self.owner.label(unit.idx))
+        w = self.win
+        w.update_idletasks()
+        pw, ph = w.winfo_reqwidth(), w.winfo_reqheight()
+        x = unit.winfo_rootx() + unit.winfo_width() // 2 - pw // 2
+        y = unit.winfo_rooty() - ph - 70                 # bien au-dessus du doigt
+        if y < 0:
+            y = unit.winfo_rooty() + unit.winfo_height() + 70
+        w.geometry("+%d+%d" % (max(0, x), max(0, y)))
+        if w.state() == "withdrawn":
+            w.deiconify()
+        w.lift()
+
+    def hide_soon(self, ms=700):
+        if self._job:
+            self.owner.root.after_cancel(self._job)
+        self._job = self.owner.root.after(ms, self._hide)
+
+    def _hide(self):
+        self._job = None
+        self._unit = None
+        self.win.withdraw()
+
+
+class PreampBox:
+    """Petite fenêtre posée dans une zone de la LV1 (fractions de sa zone client) : gain et 48V du ou des
+    préamplis X32 d'un canal. Sert au cadre « Input » de la page Edit et à la zone Preamp de la page Channel."""
+
+    def __init__(self, owner, big=False):
+        self.big = big                 # page Channel : potards grand format (un seul sur toute la largeur en mono)
+        self.owner = owner
+        w = tk.Toplevel(owner.root)
+        w.overrideredirect(True)
+        w.withdraw()
+        w.attributes("-topmost", True)
+        w.configure(bg=PANEL)
+        self.win = w
+        self.tag = tk.Label(w, text="", bg=PANEL, fg=MUT, font=("Segoe UI", 7, "bold"))
+        self.tag.pack(side="top", pady=(2, 0))
+        self.body = tk.Frame(w, bg=PANEL)
+        self.body.pack(side="top", fill="both", expand=True)
+        self.key = None
+        self.geom = None
+        self.units = []
+
+    def sync(self, sel, hwnd, box):
+        """sel = (canal, [préamplis]) ou None (cadre caché) ; hwnd = fenêtre LV1 où se poser ; box = fractions."""
+        rect = client_rect(hwnd) if (sel and hwnd) else None
+        if not rect:
+            if self.win.state() != "withdrawn":
+                self.win.withdraw()
+            return
+        x, y, w, h = rect
+        bx, by = x + round(w * box[0]), y + round(h * box[1])
+        bw, bh = max(40, round(w * box[2])), max(60, round(h * box[3]))
+        if sel != self.key or (bw, bh) != (self.geom or (0, 0, 0, 0))[2:]:
+            self.key = sel
+            for c in self.body.winfo_children():
+                c.destroy()
+            self.units = []
+            ch, idxs = sel
+            self.tag.config(text=join_tags(idxs))
+            avail = bh - self.tag.winfo_reqheight() - 4
+            n = len(idxs[:2])
+            if self.big:
+                uw = (bw - 8) // n
+            else:
+                uw = min((bw - 4) // 2, 70)       # comme les colonnes du float : un mono est un demi-stéréo
+            for i in idxs[:2]:
+                u = Unit(self.body, self.owner, i, uw, compact=not self.big)
+                if self.big:
+                    u.max_knob = 130 if n == 1 else 96
+                u.resize(uw, avail)
+                u.pack(side="left", expand=True)
+                self.units.append(u)
+            apply_theme(self.win)
+        geom = (bx, by, bw, bh)
+        if geom != self.geom:
+            self.geom = geom
+            self.win.geometry("%dx%d+%d+%d" % (bw, bh, bx, by))
+        if self.win.state() == "withdrawn":
+            self.win.deiconify()
+            self.owner._z_state = None
 
 
 class RoutingMatrix:
@@ -1256,7 +1780,8 @@ class FloatApp:
         self.root = tk.Tk()
         self.auto_var = tk.BooleanVar(value=self.auto_place)
         self.autostart_var = tk.BooleanVar(value=False)
-        self.root.title(APP_SHORT + " — Float")
+        self.pop_var = tk.BooleanVar(value=True)
+        self.root.title(APP_SHORT + " — Float" + (" (%s)" % args.lv1_window if getattr(args, "lv1_window", None) else ""))
         try:  # logo dans la barre des tâches / Alt+Tab (au lieu de la plume de Tk)
             self._icons = [tk.PhotoImage(data=d) for d in ICON_PNG_B64]
             self.root.iconphoto(True, *self._icons)
@@ -1274,7 +1799,14 @@ class FloatApp:
         self._lv1_tab = None           # onglet du haut de la LV1 (« Mixer 1 »…), lu à l'écran
         self._tab_tick = 0
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
+        # float d'un Mixer détaché dans sa propre fenêtre (« MIXER2 »...) : surface fixe, pas d'onglet à lire
+        self.detached = getattr(args, "lv1_window", None)
+        self._detached_now = ()        # Mixers détachés en ce moment (onglets absents de la fenêtre principale)
+        self._gone_since = None
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
+        if self.detached:
+            self._lv1_tab = "Mixer 2" if self.detached == "MIXER2" else "Mixer 1"
+            self._surface = "mixer2" if self.detached == "MIXER2" else "mixer1"
         # caché tant qu'il n'y a pas de LV1 : dès qu'elle a été vue une fois (LV1 fermée -> le float disparaît
         # au lieu de rester seul au milieu de l'écran, demande de Joseph), ou d'emblée au lancement à
         # l'ouverture de session (Lancer avec Windows). Lancé sans LV1 à la main : visible, comme avant.
@@ -1284,7 +1816,10 @@ class FloatApp:
         self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
         self._sel_col = None           # mode Edit : colonne de la tranche sélectionnée, lue à l'écran
         self._sel_key = None           # (canal, préamplis) affichés dans la fenêtre de la tranche sélectionnée
-        self._sel_units = []
+        self._lv1_found = {}           # fenêtres de la LV1 (principale, Mixers / Channel détachés)
+        self._lv1_layers_all = {}      # couches des deux Mixers (lv1_layers de /api/state)
+        self._lv1_channels = {}        # noms / couleurs des canaux LV1
+        self._ch_hwnd = None
         self.root.attributes("-topmost", True)
         self.root.configure(bg=BG)        # opaque (2.2.0 ; 0,97 avant)
         try:
@@ -1311,6 +1846,7 @@ class FloatApp:
         self._build_dock()
         self._build_resize_grip()
         self._build_sel_win()
+        self.value_pop = ValuePop(self)
 
         self.root.bind("<Escape>", lambda e: self.quit())
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -1327,6 +1863,7 @@ class FloatApp:
         apply_theme(self.root)
         self.root.after(1000, self._theme_pass)
         self.root.after(300, self._follow_lv1)
+        threading.Thread(target=self._screen_reader, name="lecture-ecran", daemon=True).start()
         if getattr(args, "lv1_front", False):
             self.root.after(500, self._lv1_front)
         self._poll()
@@ -1391,6 +1928,9 @@ class FloatApp:
         m.add_cascade(label="Banque : %s" % self._bank_name(), menu=banks)
         m.add_checkbutton(label="Caler sur la LV1 (auto)", variable=self.auto_var,
                           command=lambda: self._set_auto_place(self.auto_var.get()))
+        self.pop_var.set(self.cfg.get("value_pop", True))
+        m.add_checkbutton(label="Bulle des dB en réglant", variable=self.pop_var,
+                          command=lambda: (self.cfg.__setitem__("value_pop", self.pop_var.get()), self._save_soon()))
         m.add_command(label="Plus large  (+)", command=lambda: self._resize_strips(2))
         m.add_command(label="Plus étroit  (−)", command=lambda: self._resize_strips(-2))
         m.add_separator()
@@ -1533,69 +2073,123 @@ class FloatApp:
 
     # -- tranche sélectionnée (mode Edit) ----------------------------------
     def _build_sel_win(self):
-        """Petite fenêtre posée dans le cadre vide du bloc « Input » de la page Edit de la LV1 : gain et 48V
-        du ou des préamplis X32 de la tranche sélectionnée (demande de Joseph). Placée en proportion de la
-        fenêtre de la LV1 (SEL_BOX) : rien à caler."""
-        w = tk.Toplevel(self.root)
-        w.overrideredirect(True)
-        w.withdraw()
-        w.attributes("-topmost", True)
-        w.configure(bg=PANEL)
-        self.sel_win = w
-        self.sel_tag = tk.Label(w, text="", bg=PANEL, fg=MUT, font=("Segoe UI", 7, "bold"))
-        self.sel_tag.pack(side="top", pady=(2, 0))
-        self.sel_body = tk.Frame(w, bg=PANEL)
-        self.sel_body.pack(side="top", fill="both", expand=True)
-        self._sel_geom = None
+        """Cadres posés sur la LV1 : tranche sélectionnée en mode Edit (cadre « Input ») et canal de la page
+        Channel (zone Preamp). Placés en proportion de la fenêtre de la LV1 : rien à caler."""
+        self.sel_box = PreampBox(self)
+        self.sel_win = self.sel_box.win
+        self.ch_box = PreampBox(self, big=True)
+        self._ch_page = None            # (canal, préamplis) de la page Channel, ou None
+        self._ch_cache = {}             # dernière lecture de la page Channel (refaite si l'image change)
+        self._digits_learned = load_learned_digits()
+        self._dragging = False          # un potard est en train d'être tourné
+        self._reader_args = None        # lecture d'écran demandée au fil _screen_reader
+        self._reader_res = None         # son dernier résultat
+
+    def _preamps(self, ch):
+        exp_to_idx = {int(e): int(k) for k, e in (self.exp_map or {}).items() if e}
+        idxs = [exp_to_idx[e] for e in self.lv1_sources.get(ch, []) if e in exp_to_idx]
+        return (ch, idxs) if idxs else None
 
     def _sel_channel(self):
         """(canal LV1, [préamplis X32]) de la tranche sélectionnée, ou None."""
         chans = self._lv1_lay.get("channels") or []
         if self._sel_col is None or self._sel_col >= len(chans) or not chans[self._sel_col]:
             return None
-        ch = chans[self._sel_col]
-        exp_to_idx = {int(e): int(k) for k, e in (self.exp_map or {}).items() if e}
-        idxs = [exp_to_idx[e] for e in self.lv1_sources.get(ch, []) if e in exp_to_idx]
-        return (ch, idxs) if idxs else None
+        return self._preamps(chans[self._sel_col])
 
     def _sync_sel_win(self, lv1_shown):
-        """Affiche la fenêtre de la tranche sélectionnée en mode Edit (onglet Mixer 1 / 2), si la tranche a
-        un préampli X32 ; la reconstruit quand la tranche change ; la suit si la fenêtre de la LV1 bouge."""
         sel = None
         if lv1_shown and self._lv1_tab in MIXER_TABS and self._lv1_lay.get("preset_name") == "Edit":
             sel = self._sel_channel()
-        if not sel:
-            if self.sel_win.state() != "withdrawn":
-                self.sel_win.withdraw()
+        self.sel_box.sync(sel, self._lv1_hwnd, SEL_BOX)
+
+    def _channel_color(self, ch):
+        info = self._lv1_channels.get(str(ch)) or self._lv1_channels.get(ch) or {}
+        return _hex_rgb(info.get("color"))
+
+    def _screen_reader(self):
+        """Fil des lectures d'écran (toutes les 300 ms au plus) : ne touche jamais à Tk, dépose ses résultats
+        dans _reader_res (appliqués par _follow_lv1)."""
+        cache = {}
+        while True:
+            args, self._reader_args = self._reader_args, None
+            if args:
+                try:
+                    lv1, res = args["hwnd"], {}
+                    # Mixer détaché : sa fenêtre n'affiche que lui, pas d'onglet à lire
+                    tab = None if args["detached"] else lv1_tab(lv1, args["names"])
+                    res["tab"] = tab
+                    if args["edit"]:
+                        col = lv1_selected_column_top(lv1)
+                        res["sel"] = col if col is not None else lv1_selected_column(lv1)
+                    if not args["detached"]:
+                        found = args["found"]
+                        page = found.get("CHANNEL") or (found.get("main") if (tab or args["tab"]) == "Channel" else None)
+                        res["page"] = page
+                        res["ch"] = (lv1_channel_page(page, cache, self._digits_learned)
+                                     if page and not window_iconic(page) else None)
+                    self._reader_res = res
+                except Exception as e:          # une lecture ratée ne doit pas arrêter le fil
+                    print("Lecture d'écran : %s" % e)
+            time.sleep(0.3)
+
+    def _read_channel_page(self):
+        """Page Channel (onglet de la fenêtre principale, ou fenêtre CHANNEL détachée) : canal affiché, lu à l'écran
+        (voir lv1_channel_page) puis vérifié contre le patch (voir _resolve_channel)."""
+        found = self._lv1_found
+        page = found.get("CHANNEL") or (found.get("main") if self._lv1_tab == "Channel" else None)
+        self._ch_hwnd = page
+        if not page or window_iconic(page):
+            self._ch_page = None
             return
-        rect = client_rect(self._lv1_hwnd)
-        if not rect:
+        self._ch_page = self._resolve_channel(*lv1_channel_page(page, self._ch_cache))
+
+    def _resolve_channel(self, res):
+        """Jamais deviné. Les numéros lus (à l'identique d'un modèle relevé) doivent concorder avec le patch de la
+        LV1 (entrée A/B sélectionnée) et avec la couleur du bandeau :
+        - canal ET EXP lus : l'EXP doit alimenter ce canal ;
+        - canal seul : il doit recevoir un préampli X32 et avoir cette couleur ;
+        - EXP seul : un seul canal le reçoit avec cette couleur.
+        Canal lu sans EXP lisible : on apprend les chiffres de l'EXP qu'affiche la source (taille de fenêtre
+        nouvelle, ou chiffre jamais vu : le « 8 » d'EXP 18 en fenêtre)."""
+        ch, exp, bg = res.get("ch"), res.get("exp"), res.get("bg")
+        src = self.lv1_sources
+        if ch is not None:
+            if not src.get(ch) or not _close(bg, self._channel_color(ch)):
+                return None
+            if exp is not None and exp not in src[ch]:
+                return None
+            if exp is None:
+                self._learn_digits(res, "src", src[ch][0])
+            return self._preamps(ch)
+        if exp is not None:
+            cands = [c for c, exps in src.items() if exp in exps and _close(bg, self._channel_color(c))]
+            if len(cands) == 1:
+                self._learn_digits(res, "bas", cands[0])
+                return self._preamps(cands[0])
+        return None
+
+    def _learn_digits(self, res, kind, number):
+        """Mémorise les chiffres inconnus d'un numéro dont on connaît la valeur par le patch (seulement si le
+        nombre de caractères correspond et qu'aucun chiffre déjà connu ne le contredit)."""
+        vecs, text = res.get(kind + "_vecs") or [], str(number)
+        if len(vecs) != len(text) or number <= 0:
             return
-        x, y, w, h = rect
-        bx, by = x + round(w * SEL_BOX[0]), y + round(h * SEL_BOX[1])
-        bw, bh = max(40, round(w * SEL_BOX[2])), max(60, round(h * SEL_BOX[3]))
-        if sel != self._sel_key or (bw, bh) != (self._sel_geom or (0, 0, 0, 0))[2:]:
-            self._sel_key = sel
-            for c in self.sel_body.winfo_children():
-                c.destroy()
-            self._sel_units = []
-            ch, idxs = sel
-            self.sel_tag.config(text=join_tags(idxs))
-            avail = bh - self.sel_tag.winfo_reqheight() - 4
-            uw = (bw - 4) // 2                    # comme les colonnes du float : un mono est un demi-stéréo
-            for i in idxs[:2]:
-                u = Unit(self.sel_body, self, i, uw, compact=True)
-                u.resize(uw, avail)
-                u.pack(side="left", expand=True)
-                self._sel_units.append(u)
-            apply_theme(self.sel_win)
-        geom = (bx, by, bw, bh)
-        if geom != self._sel_geom:
-            self._sel_geom = geom
-            self.sel_win.geometry("%dx%d+%d+%d" % (bw, bh, bx, by))
-        if self.sel_win.state() == "withdrawn":
-            self.sel_win.deiconify()
-            self._z_state = None
+        tpl = digit_templates(res["key"], self._digits_learned).get(kind) or {}
+        known = _read_digits(vecs, tpl)
+        if any(k is not None and k != d for k, d in zip(known, text)):
+            return                                      # contradiction : on n'apprend rien
+        new = {d: [round(x, 2) for x in v] for v, d, k in zip(vecs, text, known) if k is None and d not in tpl}
+        if not new:
+            return
+        learned = json.loads(json.dumps(self._digits_learned))
+        learned.setdefault(res["key"], {}).setdefault(kind, {}).update(new)
+        self._digits_learned = learned
+        try:
+            with open(DIGITS_LEARNED_FILE, "w", encoding="utf-8") as f:
+                json.dump(learned, f)
+        except OSError:
+            pass
 
     def _build_resize_grip(self):
         grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0,
@@ -1758,23 +2352,52 @@ class FloatApp:
         now = time.time()
         if self._lv1_hwnd and not window_alive(self._lv1_hwnd):
             self._lv1_hwnd = None
-        if not self._lv1_hwnd and now >= self._lv1_seek:
+        if now >= self._lv1_seek:
             self._lv1_seek = now + 2.0
-            self._lv1_hwnd = find_lv1_window()
-            self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
+            found = lv1_windows()
+            self._lv1_found = found
+            # onglets absents de la fenêtre principale : pages détachées dans leur propre fenêtre (Mixer 2,
+            # Channel... : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 et Channel détachés)
+            self._detached_now = tuple(k for k in found if k != "main")
+            if not self._lv1_hwnd:
+                self._lv1_hwnd = found.get(self.detached or "main")
+                self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
         lv1 = self._lv1_hwnd
+        if self.detached:
+            # fenêtre du Mixer refermée / rattachée : ce float n'a plus lieu d'être (l'appli en relancera un
+            # si elle réapparaît)
+            if lv1:
+                self._gone_since = None
+            else:
+                self._gone_since = self._gone_since or now
+                if now - self._gone_since > 4:
+                    self.quit()
+                    return
         fg = foreground_window()
         front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
         self._tab_tick += 1
-        if lv1 and not window_iconic(lv1) and front and self._tab_tick % 3 == 0:
-            tab = lv1_tab(lv1)          # illisible (fenêtre couverte...) : on garde le dernier connu
+        # rien n'est lu à l'écran pendant qu'on tourne un potard : chaque capture bloque l'appli 15-25 ms et
+        # rendait le glisser saccadé (« potards moins précis », 2026-10-14)
+        # Lectures d'écran (onglet, tranche sélectionnée, page Channel) sur un fil à part (_screen_reader) :
+        # chaque capture prend 15-45 ms, et sur le fil de l'interface elle rendait les potards saccadés
+        # (2026-10-14). Ici : on applique le dernier résultat et on demande la lecture suivante.
+        res, self._reader_res = self._reader_res, None
+        if res:
+            tab = res.get("tab")                  # illisible : on garde le dernier connu
             if tab:
                 self._lv1_tab = tab
                 if tab in MIXER_TABS:
                     self._surface = "mixer2" if tab == "Mixer 2" else "mixer1"
-            if self._lv1_lay.get("preset_name") == "Edit":
-                # pas de « dernier connu » ici : une tranche désélectionnée (ou hors couche) vide le cadre
-                self._sel_col = lv1_selected_column(lv1)
+            if "sel" in res:                      # pas de « dernier connu » : tranche désélectionnée -> cadre vide
+                self._sel_col = res["sel"]
+            if "page" in res:
+                self._ch_hwnd = res["page"]
+                self._ch_page = self._resolve_channel(res["ch"]) if res.get("ch") else None
+        if lv1 and not window_iconic(lv1) and front and not self._dragging and self._reader_args is None:
+            self._reader_args = {
+                "hwnd": lv1, "detached": self.detached, "tab": self._lv1_tab, "found": dict(self._lv1_found),
+                "names": tuple(t for t in LV1_TABS if t.replace(" ", "").upper() not in self._detached_now),
+                "edit": self._lv1_lay.get("preset_name") == "Edit"}
         if lv1:
             self._wait_lv1 = True          # LV1 vue : désormais, plus de LV1 = float caché
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
@@ -1791,9 +2414,13 @@ class FloatApp:
         if shown and lv1 and self.auto_place and not window_iconic(lv1):
             self._auto_fit(lv1)
         self._sync_sel_win(shown and lv1 and not window_iconic(lv1))
+        lv1_up = bool(lv1) and not window_iconic(lv1)
+        self.ch_box.sync(self._ch_page if (lv1_up and not self.detached) else None, self._ch_hwnd, CH_BOX)
         if shown:
             self._sync_dock()
-            wins = [w for w in (self.root, self.panel_win, self.sel_win) if w.state() != "withdrawn"]
+        wins = [w for w in ((self.root, self.panel_win) if shown else ()) + (self.sel_win, self.ch_box.win)
+                if w.state() != "withdrawn"]
+        if wins:
             hwnds = [h for h in (float_hwnd(w) for w in wins) if h]
             if front:
                 if self._z_state != ("top", len(hwnds)):    # une fenêtre de plus (tranche sélectionnée) : refaire
@@ -1825,7 +2452,8 @@ class FloatApp:
         self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
                     "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
                     "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION,
-                    "auto_place": self.auto_place, "routing_view": self.cfg.get("routing_view", "mx")}
+                    "auto_place": self.auto_place, "routing_view": self.cfg.get("routing_view", "mx"),
+                    "value_pop": self.cfg.get("value_pop", True)}
         save_cfg(self.cfg)
 
     def _toggle_lock(self):
@@ -2356,6 +2984,8 @@ class FloatApp:
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
         self._lv1_lay = lay
+        self._lv1_layers_all = snap.get("lv1_layers") or {}
+        self._lv1_channels = snap.get("lv1_channels") or {}
         if self._surface != getattr(self, "_surface_seen", None):
             self._surface_seen = self._surface        # Mixer 1 <-> Mixer 2 : tout réappliquer
             self._lv1_layer_seen = self._lv1_preset_seen = None
@@ -2386,7 +3016,7 @@ class FloatApp:
                 self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
-        for u in self._sel_units:
+        for u in self.sel_box.units + self.ch_box.units:
             u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
             u.set_phantom(snap["phantom"][u.idx] if snap.get("phantom") else None)
             u.set_led(m["v"][u.idx] if m.get("live") else None, self.clip_db)
@@ -2521,7 +3151,8 @@ def main():
                      help=argparse.SUPPRESS)  # usage interne : passe par le bouton "Float" du navigateur
                      # pour eviter de retaper le code d'acces --lan ; non documente pour la saisie manuelle
     ap.add_argument("--lv1-front", action="store_true", help=argparse.SUPPRESS)  # lancement auto : LV1 devant
-    ap.add_argument("--wait-lv1", action="store_true", help=argparse.SUPPRESS)   # ouverture de session : caché sans LV1
+    ap.add_argument("--wait-lv1", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--lv1-window", default=None, help=argparse.SUPPRESS)   # Mixer détaché suivi (« MIXER2 »)   # ouverture de session : caché sans LV1
     ap.add_argument("--direct", action="store_true",
                      help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
     ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")
@@ -2543,6 +3174,14 @@ def main():
                      help="intervalle (s) d'interrogation de Companion pour les couleurs (défaut 1.0 ; "
                           "pas la boucle de gains à 200ms, pour ne pas bloquer l'UI sur 16 requêtes HTTP)")
     args = ap.parse_args()
+    if args.lv1_window:
+        # réglages propres au float de ce Mixer détaché (position, banque...) ; au 1er lancement, ceux du
+        # float principal (fond, vue...)
+        global CFG_PATH
+        main_cfg = load_cfg()
+        CFG_PATH = os.path.join(os.path.dirname(CFG_PATH), "x32_float_config_%s.json" % args.lv1_window)
+        if not os.path.exists(CFG_PATH):
+            save_cfg({k: v for k, v in main_cfg.items() if k in ("theme", "view", "routing_view")})
     try:
         app = FloatApp(args)
         app.run()
