@@ -91,7 +91,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.12.0"
+FLOAT_VERSION = "2.13.0"
 GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
                           # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
@@ -180,7 +180,9 @@ set_theme_map(DEFAULT_THEME)   # meme bleu "action primaire" que le navigateur (
 
 def strip_tag(idx):
     """Repere de voie avec la source : 'L 15' (Local 15), 'A 1' / 'B 3' (AES50-A/B), comme demande
-    pour la ligne « L 15 = EXP 15 » du float."""
+    pour la ligne « L 15 = EXP 15 » du float. Console 2, 3... (plusieurs consoles) : '2·A 5'."""
+    if idx >= N_HA:
+        return "%d·%s" % (idx // N_HA + 1, strip_tag(idx % N_HA))
     if idx < 32:
         return "L %d" % (idx + 1)
     if idx < 80:
@@ -944,11 +946,21 @@ class ServerBackend:
         return self._post("/api/routings/save", {"id": pid, "name": name, "model": model}) or \
             {"ok": False, "error": self.last_error}
 
-    def apply_routing(self, pid):
-        return self._post("/api/routings/apply", {"id": pid, "groups": ["io"]}) or {"ok": False, "error": self.last_error}
+    def apply_routing(self, pid, target=0):
+        return (self._post("/api/routings/apply", {"id": pid, "groups": ["io"], "target": target})
+                or {"ok": False, "error": self.last_error})
 
     def quit_app(self):
         return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
+
+    def consoles_add(self, ip):
+        return self._post("/api/consoles/add", {"ip": ip}) or {"ok": False, "error": self.last_error}
+
+    def consoles_remove(self, n):
+        return self._post("/api/consoles/remove", {"n": n}) or {"ok": False, "error": self.last_error}
+
+    def consoles_card(self, n, card):
+        return self._post("/api/consoles/card", {"n": n, "card": card}) or {"ok": False, "error": self.last_error}
 
     def set_autostart(self, on):
         return self._post("/api/autostart", {"on": on}) or {"ok": False, "error": self.last_error}
@@ -1382,6 +1394,12 @@ class Strip(tk.Frame):
         bg = hex_color or tc(PANEL)
         if self.swatch.cget("bg") != bg:
             self.swatch.config(bg=bg)
+
+
+def exp_txt(e):
+    """Numéro EXP affiché : « 15 », ou « 2·15 » pour la voie 15 de la carte de la console 2."""
+    e = int(e)
+    return str(e) if e < 1000 else "%d·%d" % (e // 1000 + 1, e % 1000)
 
 
 def join_tags(idxs):
@@ -1936,6 +1954,8 @@ class FloatApp:
         m.add_separator()
         m.add_command(label="Scènes…", command=lambda: self._toggle_panel("scenes"))
         m.add_command(label="Routing…", command=lambda: self._toggle_panel("routing"))
+        if hasattr(self.backend, "consoles_add"):
+            m.add_command(label="Consoles…", command=lambda: self._toggle_panel("consoles"))
         m.add_checkbutton(label="Console (IP, connexion)", variable=self.console_var,
                           command=lambda: self._toggle_console(self.console_var.get()))
         m.add_checkbutton(label="Verrouiller l'édition", variable=self.lock_var, command=self._toggle_lock)
@@ -2157,13 +2177,14 @@ class FloatApp:
         if ch is not None:
             if not src.get(ch) or not _close(bg, self._channel_color(ch)):
                 return None
-            if exp is not None and exp not in src[ch]:
+            if exp is not None and exp not in [e % 1000 for e in src[ch]]:
                 return None
             if exp is None:
-                self._learn_digits(res, "src", src[ch][0])
+                self._learn_digits(res, "src", src[ch][0] % 1000)
             return self._preamps(ch)
         if exp is not None:
-            cands = [c for c, exps in src.items() if exp in exps and _close(bg, self._channel_color(c))]
+            cands = [c for c, exps in src.items()
+                     if exp in [e % 1000 for e in exps] and _close(bg, self._channel_color(c))]
             if len(cands) == 1:
                 self._learn_digits(res, "bas", cands[0])
                 return self._preamps(cands[0])
@@ -2522,22 +2543,17 @@ class FloatApp:
                   width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
         if mode == "scenes":
             self._fill_scenes_panel()
+        elif mode == "consoles":
+            self._fill_consoles_panel()
         else:
             self._fill_routing_panel()
         apply_theme(self.panel_win)
         self._place_dock()
         self.panel_win.deiconify()
         self._z_state = None
-        self._outside_down = True          # le clic qui vient d'ouvrir le panneau ne compte pas
-        try:
-            self.panel_win.focus_force()   # le panneau devient la fenêtre active : toucher ailleurs la change
-        except tk.TclError:
-            pass
-        fg = foreground_window()
-        self._panel_focus = bool(fg) and window_pid(fg) == os.getpid()
-        if not getattr(self, "_watching_outside", False):
-            self._watching_outside = True
-            self.root.after(30, self._watch_outside)
+        # Fermeture : croix ✕ seulement (2026-10-14, Joseph). La fermeture automatique « quand une autre fenêtre
+        # devient active » fermait le panneau pendant qu'on tapait un nom de scène : le clavier tactile de
+        # Windows est une autre appli. _watch_outside n'est plus lancé.
 
     def _watch_outside(self):
         """Panneau ouvert : toutes les 30 ms (un tapotement au doigt est bref), un clic ailleurs que dans
@@ -2657,8 +2673,12 @@ class FloatApp:
             self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n),
                             (lambda pid=p["id"]: self._edit_routing({"id": pid})) if editable else None)
         if editable:
+            def from_console():
+                t = self._pick_console("Partir du routing de quelle console ?")
+                if t is not None:
+                    self._edit_routing({"console": True, "target": t})
             tk.Button(self.panel, text="✎ Nouveau routing perso, depuis la console…", bd=0, bg="#25282b", fg=TXT,
-                      font=("Segoe UI", 8, "bold"), command=lambda: self._edit_routing({"console": True})).pack(
+                      font=("Segoe UI", 8, "bold"), command=from_console).pack(
                 fill="x", padx=6, pady=(4, 6))
 
     def _edit_routing(self, src):
@@ -2777,6 +2797,80 @@ class FloatApp:
                   command=close).pack(side="right")
         w.protocol("WM_DELETE_WINDOW", close)
 
+    def _fill_consoles_panel(self):
+        """Plusieurs consoles (chacune avec sa carte dans le rack de la LV1) : carte de chaque console, ajout
+        (adresse IP ou Scanner), retrait. La console 1 est celle de la barre de connexion."""
+        tk.Label(self.panel, text="CONSOLES", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
+            anchor="w", padx=6, pady=(6, 2))
+        cards = getattr(self, "_lv1_cards", []) or []
+        labels = ["(automatique / non choisie)"] + ["%d - %s" % (c["slot"], c["name"]) for c in cards]
+        slot_of = dict(zip(labels, [None] + [c["slot"] for c in cards]))
+
+        def refresh():
+            self.root.after(400, lambda: (self._toggle_panel("consoles"), self._toggle_panel("consoles")))
+
+        for c in getattr(self, "_consoles", []) or []:
+            row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
+            row.pack(fill="x", padx=6, pady=3)
+            dot = OK if c.get("connected") else (AMBER if c.get("trying") else "#555555")
+            head = tk.Frame(row, bg="#0d0e0f")
+            head.pack(fill="x", padx=6, pady=(4, 0))
+            tk.Label(head, text="●", bg="#0d0e0f", fg=dot, font=("Segoe UI", 10)).pack(side="left")
+            tk.Label(head, text=" Console %d — %s (%s)" % (c["n"] + 1, c.get("name") or "?", c.get("ip") or "—"),
+                     bg="#0d0e0f", fg=TXT, font=("Segoe UI", 9, "bold")).pack(side="left")
+            if c["n"] > 0:
+                tk.Button(head, text="Retirer", bd=0, bg="#25282b", fg=WARN, font=("Segoe UI", 8, "bold"),
+                          command=lambda n=c["n"]: (self.backend.consoles_remove(n), refresh())).pack(side="right")
+            line = tk.Frame(row, bg="#0d0e0f")
+            line.pack(fill="x", padx=6, pady=(2, 6))
+            tk.Label(line, text="Carte LV1 :", bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8)).pack(side="left")
+            var = tk.StringVar(value=next((l for l, sl in slot_of.items() if sl and sl == c.get("card")), labels[0]))
+
+            def choose(_v=None, n=c["n"], var=var):
+                r = self.backend.consoles_card(n, slot_of.get(var.get()))
+                if not r.get("ok"):
+                    messagebox.showerror("Consoles", r.get("error") or "Impossible", parent=self.root)
+                refresh()
+            om = tk.OptionMenu(line, var, *labels, command=choose)
+            om.config(bg="#25282b", fg=TXT, bd=0, highlightthickness=0, font=("Segoe UI", 9),
+                      activebackground="#33383c")
+            om["menu"].config(font=("Segoe UI", 11))
+            om.pack(side="left", padx=4, fill="x", expand=True)
+        add = tk.Frame(self.panel, bg=PANEL)
+        add.pack(fill="x", padx=6, pady=(6, 2))
+        tk.Label(add, text="Ajouter une console :", bg=PANEL, fg=MUT, font=("Segoe UI", 8)).pack(side="left")
+        ip_var = tk.StringVar()
+        tk.Entry(add, textvariable=ip_var, width=15, bg="#000000", fg=TXT, insertbackground=TXT,
+                 relief="flat").pack(side="left", padx=4)
+
+        def do_add(ip):
+            r = self.backend.consoles_add(ip.strip())
+            if not r.get("ok"):
+                messagebox.showerror("Consoles", r.get("error") or "Impossible", parent=self.root)
+            refresh()
+        tk.Button(add, text="Ajouter", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
+                  command=lambda: do_add(ip_var.get())).pack(side="left")
+        found = tk.Frame(self.panel, bg=PANEL)
+        found.pack(fill="x", padx=6, pady=(2, 6))
+
+        def scan():
+            known = {c.get("ip") for c in getattr(self, "_consoles", []) or []}
+            for w in found.winfo_children():
+                w.destroy()
+            res = [c for c in (self.backend.scan() or []) if c.get("ip") not in known]
+            if not res:
+                tk.Label(found, text="Aucune autre console trouvée sur le réseau.", bg=PANEL, fg=MUT,
+                         font=("Segoe UI", 8)).pack(anchor="w")
+            for c in res:
+                self._panel_row("%s (%s)" % (c.get("name", "?"), c["ip"]), c.get("model", ""),
+                                lambda ip=c["ip"]: do_add(ip))
+        tk.Button(found, text="Scanner le réseau", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 8, "bold"),
+                  command=scan).pack(anchor="w")
+        tk.Label(self.panel, text="Chaque console règle les préamplis de SA carte (position dans le rack de la LV1, "
+                 "le « 2- » de « 2-EX 1 »). Carte choisie automatiquement si son nom dans la LV1 reprend celui de "
+                 "la console.", bg=PANEL, fg=MUT, font=("Segoe UI", 8), wraplength=self._panel_width() - 20,
+                 justify="left").pack(fill="x", padx=8, pady=(0, 6))
+
     def _panel_width(self):
         return 300
 
@@ -2863,13 +2957,54 @@ class FloatApp:
             self._fill_scenes_panel_refresh()
             self._fill_scenes_panel_refresh()
 
+    def _pick_console(self, title):
+        """Plusieurs consoles : n° (0-based) de la console choisie, ou None (annulé). Une seule : 0."""
+        cs = [c for c in (getattr(self, "_consoles", []) or [])]
+        if len(cs) <= 1:
+            return 0
+        w = tk.Toplevel(self.root)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        w.configure(bg=LINE2)
+        inner = tk.Frame(w, bg=PANEL)
+        inner.pack(fill="both", expand=True, padx=2, pady=2)
+        tk.Label(inner, text=title, bg=PANEL, fg=TXT, font=("Segoe UI", 12, "bold")).pack(padx=14, pady=(12, 8))
+        res = {"n": None}
+
+        def pick(n):
+            res["n"] = n
+            w.destroy()
+        for c in cs:
+            st = "" if c.get("connected") else "  (non connectée)"
+            tk.Button(inner, text="Console %d — %s%s" % (c["n"] + 1, c.get("name") or c.get("ip") or "?", st),
+                      bd=0, bg=TEAL if c.get("connected") else "#25282b", fg="#032" if c.get("connected") else MUT,
+                      font=("Segoe UI", 12, "bold"), padx=16, pady=8, anchor="w",
+                      state="normal" if c.get("connected") else "disabled",
+                      command=lambda n=c["n"]: pick(n)).pack(fill="x", padx=14, pady=3)
+        tk.Button(inner, text="Annuler", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 11, "bold"), padx=16, pady=6,
+                  command=lambda: pick(None)).pack(padx=14, pady=(8, 12))
+        w.update_idletasks()
+        r = self.root
+        w.geometry("+%d+%d" % (r.winfo_rootx() + r.winfo_width() // 2 - w.winfo_reqwidth() // 2,
+                               max(0, r.winfo_rooty() + r.winfo_height() // 2 - w.winfo_reqheight() // 2)))
+        try:
+            w.grab_set()
+        except tk.TclError:
+            pass
+        r.wait_window(w)
+        return res["n"]
+
     def _apply_routing(self, pid, name):
+        target = self._pick_console("Charger « %s » sur quelle console ?" % name)
+        if target is None:
+            return
+        where = " sur la console %d" % (target + 1) if len(getattr(self, "_consoles", []) or []) > 1 else ""
         if not messagebox.askyesno("Charger ce routing ?",
-                                    "Charger « %s » ? Seul le routing E/S est touché (pas le patch de sortie). "
-                                    "À faire de préférence hors signal : ça peut couper l'audio en cours." % name,
+                                    "Charger « %s »%s ? Seul le routing E/S est touché (pas le patch de sortie). "
+                                    "À faire de préférence hors signal : ça peut couper l'audio en cours." % (name, where),
                                     parent=self.root):
             return
-        r = self.backend.apply_routing(pid)
+        r = self.backend.apply_routing(pid, target)
         if not r.get("ok"):
             messagebox.showerror("Routing", r.get("error", "Échec"), parent=self.root)
         else:
@@ -2984,6 +3119,8 @@ class FloatApp:
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
         self._lv1_lay = lay
+        self._consoles = snap.get("consoles") or []
+        self._lv1_cards = snap.get("lv1_cards") or []
         self._lv1_layers_all = snap.get("lv1_layers") or {}
         self._lv1_channels = snap.get("lv1_channels") or {}
         if self._surface != getattr(self, "_surface_seen", None):
@@ -3037,12 +3174,12 @@ class FloatApp:
                 exps = self.lv1_sources.get(ch, [])
                 tag = ""
                 if s.idxs:
-                    tag = "%s = EXP %s" % (join_tags(s.idxs), "/".join(str(e) for e in exps))
+                    tag = "%s = EXP %s" % (join_tags(s.idxs), "/".join(exp_txt(e) for e in exps))
                 elif exps:
-                    tag = "EXP %s" % "/".join(str(e) for e in exps)
+                    tag = "EXP %s" % "/".join(exp_txt(e) for e in exps)
             else:
                 exp = em.get(str(s.idxs[0]), em.get(s.idxs[0]))
-                tag = strip_tag(s.idxs[0]) + (" = EXP %d" % exp if exp else "")
+                tag = strip_tag(s.idxs[0]) + (" = EXP %s" % exp_txt(exp) if exp else "")
                 ch = self._lv1_channel(exp)
             s.set_tag(tag)
             info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}

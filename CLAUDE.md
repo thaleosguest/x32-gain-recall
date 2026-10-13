@@ -14,10 +14,12 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.5.0 publiée (2026-10-14)
+## État actuel : v2.6.0 publiée (2026-10-14)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.5.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.5.0 (branche `dev-2.4.1`) fusionnée dans `main` ; avant : #7 (v2.4.0), #6 (v2.3.0), #5 (v2.2.0), #4, #1-#3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.6.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.6.0 (branche `dev-2.6`) fusionnée dans `main` ; avant : #8 (v2.5.0), #7 (v2.4.0), #6 (v2.3.0), #5, #4, #1-#3.
+2.6.0 = plusieurs consoles (une carte LV1 chacune : float, routing par console, scènes multi-consoles, panneau
+⋮ → Consoles…), profils M32C + X32 stage box (AES50 A / B), panneau du float fermé par ✕ seulement.
 2.5.0 = pages détachées (un float par Mixer détaché, onglets lus avec la liste réduite), page Channel (canal lu à
 l'écran, chiffres relevés par taille, vérifié contre le patch), 48V au style du float, bulle des dB, lectures
 d'écran sur un fil à part (potards fluides). Ressources mesurées : ~0,3 % CPU de la machine, ~100 Mo en tout.
@@ -182,8 +184,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   relié au bloc ambre `#F2B63B` LV1 (vumètre), fond anthracite `#2B2E33`. Pas de teal (= couleur de canal LV1).
   Source unique : `tools/make_icon.py` (Python pur, pas de Pillow sur ce PC) → `assets/logo.svg`,
   `assets/icon.ico` (`--icon` de PyInstaller), `brand_icon.py` (généré : `LOGO_SVG`, `ICON_PNG_B64`).
-- Une seule carte X32 par rack LV1 supportée (choix de Joseph) : avec deux cartes (X-WSG-1/-2 = deux
-  consoles), la voie N de chacune serait prise pour l'EXP N de la console connectée. Pas traité.
+- Plusieurs cartes / consoles : traité le 2026-10-14 (voir « Plusieurs consoles »).
 
 ## Données de l'appli (depuis la 2.0.0)
 
@@ -338,6 +339,39 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - `PreampBox` (cadre Edit + cadre Channel), `confirm_float` (48V), `ValuePop` (bulle des dB au glisser, se place
   une fois puis ne change que le chiffre ; option `value_pop` du menu ⋮).
 
+## X32 en stage box d'une Core (2026-10-14)
+
+- X32 pleine taille reliée en AES50 A à une X32/M32 Core (carte DN32-WSG) : sur la X32 de scène, *Setup →
+  Preamps* « HA REMOTE : AES50 Port A » (photo de Joseph) -> la Core pilote ses préamplis comme ceux d'une S16
+  (AES50-A 1-32) : pas besoin de connecter l'appli aux deux consoles. « HA Gain Split » décoché.
+- Correction de Joseph : rien à charger sur la X32 de scène ; tout se règle sur la M32C (maître, carte), port A
+  OU B. Profils `m32c_x32stage_a` / `_b` (A|B 1-32 -> EXP 1-32, EXP 1-16 -> A|B 1-16). Les profils de la version
+  de test (« Core + X32 stage box », « Stage box — X32 vers Core ») sont retirés des listes (`RETIRED_BUILTINS`).
+  `_builtin_nodes()` (profils en lignes brutes) reste disponible, vide. Pas encore testé sur le matériel.
+
+## Plusieurs consoles (2026-10-14)
+
+- Chaque route LV1 porte la position de sa carte (`slot` = `device.assign` + 1, le « 2- » de « 2-EX 1 ») ;
+  `session_patch.load_cards()` liste les appareils du rack (transportés dans `layer["_cards"]`).
+  `pick_sources(card_map={slot: console k})` : seules les cartes associées comptent, EXP global = k*1000 + voie.
+- Serveur : `CLIENT` = console 1 ; `EXTRA` = consoles 2.. ({client, ip, card}) ; `PRIMARY["card"]`. Préampli
+  global = k*N_HA + i ; `merged_snapshot()` / `merged_meters()` concatènent ; `/api/gain|phantom` -> `console_for`.
+  `/api/consoles/add|remove|card`. Settings : `card`, `consoles`. `auto_assign_cards()` (2 s) : carte dont le nom
+  LV1 (sans « (IOBox) ») est contenu dans le nom de la console ou l'inverse, si unique. Carte map vide (une
+  console, pas de carte choisie) = comportement d'origine.
+- Float : `strip_tag` « 2·A 5 », `exp_txt` « 2·15 », panneau ⋮ → Consoles… ; page Channel : EXP lu = voie (% 1000).
+- Testé : console 1 = X32 de Joseph (carte 1, auto par le nom), console 2 = simulateur (carte 2) : tranche 64 ->
+  préamplis 128/129 « 2·1/2·2 », gain envoyé à la console 2 seulement. Scènes : console 1 seulement.
+- Routing par console : paramètre `target` (n° 0-based) sur `/api/routings/preview|apply|undo|model` (dans
+  `_routing_route`, `client = console_for(target * N_HA)`) ; `consoles[]` de l'état porte `routing_last` /
+  `routing_can_undo` ; page : sélecteur `#rcons` (si > 1 console) ; float : `_pick_console()`. Testé sur le
+  simulateur en console 2 (envoi, vérification, EXP relus, annulation), console 1 intacte.
+- Scènes multi-consoles : `_capture` via `merged_snapshot` (clés globales, console 1 inchangée, `console.consoles`
+  = consoles de la scène) ; `recall_all` découpe par console (absente -> `skipped`) ; `/api/presets/undo` sur
+  toutes ; `merged_recall_state` fusionne `last_recall` / `can_undo`. Testé sur le simulateur.
+- Panneau du float : fermeture automatique (fenêtre active) SUPPRIMÉE, croix ✕ seulement : le clavier tactile de
+  Windows est une autre appli et fermait le panneau pendant la saisie (Joseph, 2026-10-14).
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
@@ -346,7 +380,6 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `CurrentLV1.dat`, paramètre couleur 592 et palette.
 - Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
 - À revérifier aussi après une mise à jour LV1 : couches / modes (`lv1/layers.py`).
-- Non traité : deux cartes X32 dans le même rack (deux consoles).
 
 ## Environnement cible
 

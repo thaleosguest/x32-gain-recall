@@ -2,6 +2,14 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [2.6.0] — 2026-10-14
+**Plusieurs consoles** : une carte par console dans le rack de la LV1, float, routing et scènes pour toutes ; profils M32C + X32 en stage box.
+- **Plusieurs consoles** (une carte DN32-WSG / X-WSG par console dans le rack de la LV1) : float ⋮ → *Consoles…* pour ajouter les consoles 2, 3… (adresse IP ou Scanner) et choisir la carte de chacune (position dans le rack, le « 2- » de « 2-EX 1 » ; choisie automatiquement si son nom dans la LV1 reprend celui de la console). Le float règle les préamplis de toutes les consoles, chacun sur sa tranche LV1 (repères « 2·A 5 = EXP 2·5 » pour la console 2). Consoles et cartes mémorisées. Une seule console : rien ne change.
+- **Scènes sur toutes les consoles** : une scène enregistre les gains / 48V / noms de toutes les consoles connectées ; le rappel envoie à chacune sa part (console absente : sautée et signalée), vérification et annulation sur toutes. Les anciennes scènes (une console) restent valables.
+- **Panneau Scènes / Routing / Consoles du float** : fermé par sa croix ✕ seulement (la fermeture automatique fermait le panneau pendant la saisie d'un nom au clavier tactile de Windows).
+- **Routing par console** : avec plusieurs consoles, on choisit sur quelle console charger un profil (sélecteur dans l'onglet Routing, choix de la console dans le float) ; aperçu, relecture de vérification, annulation et « Depuis la console… » propres à chaque console ; ses EXP sont relus aussitôt.
+- **Routing : M32C + X32 pleine taille en stage box** : profils *LV1 — M32C + X32 stage box (AES50 A)* et *(AES50 B)*, à charger sur la M32C (maître, avec la carte) : AES50 1-32 → EXP 1-32, EXP 1-16 → AES50 1-16. Avec « HA Remote » sur la X32 de scène, la M32C pilote ses préamplis : le float les règle comme ceux d'une S16.
+
 ## [2.5.0] — 2026-10-14
 **Page Channel, pages détachées, tactile** : préampli du canal affiché sur la page Channel, un float par Mixer détaché, 48V et bulle des dB pour le doigt, potards fluides.
 - **Page Channel** : le gain et le 48V du préampli X32 du canal affiché se posent dans la zone grisée « Preamp / Gain / 48V » du bloc Channel Input (onglet Channel ou fenêtre CHANNEL détachée), et suivent « < » / « > » ; potards grand format (un seul sur toute la largeur en mono), sous la ligne « Left / Right » d'un canal stéréo. La LV1 ne dit nulle part quel canal elle affiche : l'appli lit à l'écran « Channel N: » et « … EXP N », à l'identique de chiffres relevés (plein écran 1920x1080 et fenêtre 1728x970), et n'affiche rien si ce n'est pas cohérent avec le patch de la LV1 et la couleur du canal. Chiffre manquant pour une taille : appris tout seul quand le reste concorde.

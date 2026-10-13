@@ -125,7 +125,7 @@ Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille d
 |---|---|
 | **Banque** | *LV1 Ch 1-16…* (une colonne par tranche LV1, le mode normal) ou *Local / A / B 1-16* (une colonne par préampli X32, pour un préampli qui n'arrive sur aucun canal) |
 | **Plus large / Plus étroit** | Calage fin des colonnes |
-| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se referme avec sa croix ✕ ou en touchant la LV1) |
+| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se ferme avec sa croix ✕) |
 | **Routing…** | Charger un routing X32 (profil « Routing LV1 » fourni) |
 | **Console** | Barre IP / Connecter / Scanner, sous les voies |
 | **Verrouiller l'édition** | Plus aucun gain modifiable (pendant le show) |
@@ -146,6 +146,13 @@ Profils fournis :
 | **Routing LV1** (X32R + S16 sur AES50 A) | X32R 1-16 → EXP 1-16, S16 A 1-16 → EXP 17-32 | EXP 1-16 → X32R OUT, EXP 1-8 / 9-16 → S16 (selon son sélecteur) |
 | **LV1 — X32R + S16 A + S16 B** | S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 | EXP 1-8 → X32R OUT 1-8, EXP 9-16 → S16 A, EXP 17-24 → S16 B |
 | **LV1 — M32C + S16 A + S16 B** | S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 | EXP 1-8 → S16 A, EXP 9-16 → S16 B |
+| **LV1 — M32C + X32 stage box (AES50 A)** | X32 de scène 1-32 (A 1-32) → EXP 1-32 | EXP 1-16 → A 1-16 |
+| **LV1 — M32C + X32 stage box (AES50 B)** | X32 de scène 1-32 (B 1-32) → EXP 1-32 | EXP 1-16 → B 1-16 |
+
+**X32 pleine taille en stage box** d'une M32C (la M32C est maître et a la carte) : sur la X32 de scène,
+*Setup → Preamps*, cocher **HA Remote** sur le port AES50 qui la relie à la M32C (et laisser **HA Gain Split**
+décoché) : la M32C pilote ses préamplis, le float les règle comme ceux d'une S16. Tout le reste se règle sur la
+M32C : chargez le profil du port utilisé (A ou B), l'appli connectée à la M32C.
 
 Pour les deux derniers, les retours sortent des S16 **quelle que soit la position de leur sélecteur de
 sorties** (1-8 ou 9-16).
@@ -162,6 +169,21 @@ ce que vous allez faire (« AES50-A 18 → EXP 2 ») ; dans le float, gardez le 
 au besoin, la case est routée quand vous relevez le doigt. Vue **Listes** : un menu déroulant par EXP et
 par sortie. Pour revenir au standard, rechargez simplement un autre profil. Les couleurs et
 noms LV1 du float suivent tout seuls (EXP 2 affichera le préampli A18).
+
+### Plusieurs consoles (une carte chacune dans le rack de la LV1)
+Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : float **⋮ → Consoles…**.
+- **Ajouter** les consoles 2, 3… (adresse IP, ou *Scanner le réseau*). La console 1 est celle de la barre
+  de connexion.
+- **Carte LV1** de chaque console : sa position dans le rack (le « 2- » de « 2-EX 1 » dans la LV1). Choisie
+  toute seule si le nom de la carte dans la LV1 reprend celui de la console (ex. « X32-FOH »).
+- Le float règle alors les préamplis de **toutes** les consoles, chacun sur sa tranche LV1 ; ceux de la
+  console 2 sont repérés « 2·A 5 = EXP 2·5 ». Une console sans carte choisie : ses tranches restent sans
+  potard (jamais le préampli d'une autre console).
+- **Routing** : avec plusieurs consoles, choisissez la console visée (sélecteur *Console* dans l'onglet
+  Routing de la page ; dans le float, l'appli demande la console au moment de charger). Aperçu, vérification
+  et *Annuler le dernier routing* se font console par console.
+- **Scènes de gains** : une scène enregistre et rappelle les gains des **toutes** les consoles connectées
+  (laissez-les connectées en même temps) ; une console absente au rappel est signalée et laissée de côté.
 
 ## 6. Les scènes de gains
 

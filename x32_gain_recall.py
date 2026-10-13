@@ -51,7 +51,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -488,7 +488,25 @@ def _builtin_models():
         ("m32c_s16a_s16b", "LV1 — M32C + S16 A + S16 B", {
             "in": a16 + b16,
             "out": [0] * 16 + eight(1) * 2 + eight(9) * 2}),
+        # M32C maître (carte vers la LV1) + X32 pleine taille en stage box (2026-10-14, Joseph) : la X32 de scène,
+        # en « HA Remote » sur le port qui la relie, laisse la M32C piloter ses préamplis ; tout se règle sur la
+        # M32C : entrées AES50 1-32 -> EXP 1-32, retours EXP 1-16 -> AES50 1-16 (OUT 1-16 de la X32 de scène)
+        ("m32c_x32stage_a", "LV1 — M32C + X32 stage box (AES50 A)", {
+            "in": [32 + k for k in range(1, 33)],
+            "out": [0] * 16 + [_exp(k) for k in range(1, 17)] + [0] * 16}),
+        ("m32c_x32stage_b", "LV1 — M32C + X32 stage box (AES50 B)", {
+            "in": [80 + k for k in range(1, 33)],
+            "out": [0] * 32 + [_exp(k) for k in range(1, 17)]}),
     ]
+
+
+def _builtin_nodes():
+    """Profils intégrés écrits directement en lignes de routing (hors du modèle de l'éditeur). Aucun pour l'instant."""
+    return []
+
+
+# Profils intégrés retirés (version de test du 2026-10-14, jamais publiés) : supprimés des listes où ils ont été ajoutés
+RETIRED_BUILTINS = ("LV1 — Core + X32 stage box (AES50 A)", "Stage box — X32 vers Core (AES50 A)")
 
 
 # --------------------------------------------------------------------------
@@ -1225,6 +1243,15 @@ class RoutingStore:
                 pr["model"] = model
                 self.seeded_keys.append(key)
                 changed = True
+        n0 = len(self.items)
+        self.items = [x for x in self.items
+                      if not (x.get("name") in RETIRED_BUILTINS and str(x.get("source", "")).startswith("intégré"))]
+        changed = changed or len(self.items) != n0
+        for key, name, nodes in _builtin_nodes():
+            if key not in self.seeded_keys:
+                self._add(name, None, nodes, "intégré (à charger sur la X32 de scène)")
+                self.seeded_keys.append(key)
+                changed = True
         if changed:
             self._write()
 
@@ -1308,6 +1335,221 @@ class RoutingStore:
 #  Serveur HTTP local + API
 # --------------------------------------------------------------------------
 CLIENT = X32Client()
+
+# Plusieurs consoles (2026-10-14, demande de Joseph : 3 consoles, chacune avec sa carte dans le rack de la LV1).
+# La console 1 est CLIENT (inchangé) ; les suivantes sont dans EXTRA. Chaque console est associée à SA carte
+# (position dans le rack LV1, le « 2- » de « 2-EX 1 »). Numéros globaux : préampli k*N_HA + i, EXP k*1000 + v
+# (console 0 = numéros d'origine : rien ne change avec une seule console).
+EXTRA = []                     # [{"client": X32Client, "ip": str, "card": position ou None}]
+PRIMARY = {"card": None}       # carte de la console 1 (None : toute carte DN32-WSG / X-WSG, comme avant)
+CONSOLES_LOCK = threading.RLock()
+
+
+def all_consoles():
+    """[(n° 0-based, client, carte)]."""
+    with CONSOLES_LOCK:
+        return [(0, CLIENT, PRIMARY["card"])] + [(k, e["client"], e["card"]) for k, e in enumerate(EXTRA, 1)]
+
+
+def save_consoles():
+    s = load_settings()
+    s["card"] = PRIMARY["card"]
+    s["consoles"] = [{"ip": e["ip"], "card": e["card"]} for e in EXTRA]
+    try:
+        save_settings(s)
+    except OSError:
+        pass
+
+
+def update_card_map():
+    """Association cartes LV1 -> consoles, transmise à la lecture du patch LV1. Aucune association (une seule
+    console, carte non choisie) : {} = comportement d'origine."""
+    m = {}
+    for k, _c, card in all_consoles():
+        if card:
+            m[int(card)] = k
+    if LV1:
+        LV1.set_card_map(m if (m and (PRIMARY["card"] or EXTRA)) else {})
+
+
+def _norm_name(t):
+    t = re.sub(r"\s*\([^)]*\)\s*$", "", str(t or ""))      # « X32RACK (IOBox) » -> « X32RACK »
+    return re.sub(r"[^a-z0-9]", "", t.lower())
+
+
+def auto_assign_cards():
+    """Console sans carte : celle dont le nom (dans la LV1) correspond au nom de la console (« X32RACK » <->
+    « X32RACK-JS »), si une seule correspond et qu'elle n'est pas déjà prise. Rien sinon (choix dans le float)."""
+    if not LV1:
+        return
+    cards = LV1.cards()
+    changed = False
+    with CONSOLES_LOCK:
+        used = {c for _k, _cl, c in all_consoles() if c}
+        for k, client, card in all_consoles():
+            if card or not EXTRA:            # une seule console : rien à associer
+                continue
+            cname = _norm_name((client.info or {}).get("name"))
+            if not cname:
+                continue
+            cands = [c["slot"] for c in cards if c["slot"] not in used and _norm_name(c["name"])
+                     and (_norm_name(c["name"]) in cname or cname in _norm_name(c["name"]))]
+            if len(cands) == 1:
+                if k == 0:
+                    PRIMARY["card"] = cands[0]
+                else:
+                    EXTRA[k - 1]["card"] = cands[0]
+                used.add(cands[0])
+                changed = True
+    if changed:
+        save_consoles()
+        update_card_map()
+
+
+def add_console(ip, card=None, save=True):
+    client = X32Client()
+    with CONSOLES_LOCK:
+        if any(e["ip"] == ip for e in EXTRA) or CLIENT.ip == ip:
+            return False, "Console déjà ajoutée"
+        EXTRA.append({"client": client, "ip": ip, "card": card})
+    client.connect(ip)
+    threading.Thread(target=lambda: (time.sleep(1.5), client.refresh_exp_map()), daemon=True).start()
+    if save:
+        save_consoles()
+    update_card_map()
+    return True, ""
+
+
+def remove_console(n):
+    with CONSOLES_LOCK:
+        if not 1 <= n <= len(EXTRA):
+            return False
+        e = EXTRA.pop(n - 1)
+    e["client"].disconnect()
+    save_consoles()
+    update_card_map()
+    return True
+
+
+def set_console_card(n, card):
+    card = int(card) if card else None
+    with CONSOLES_LOCK:
+        for k, _c, c in all_consoles():
+            if card and c == card and k != n:
+                return False, "Carte déjà associée à la console %d" % (k + 1)
+        if n == 0:
+            PRIMARY["card"] = card
+        elif 1 <= n <= len(EXTRA):
+            EXTRA[n - 1]["card"] = card
+        else:
+            return False, "Console introuvable"
+    save_consoles()
+    update_card_map()
+    return True, ""
+
+
+def console_for(idx):
+    """(client, index local) d'un préampli global."""
+    k, i = divmod(int(idx), N_HA)
+    with CONSOLES_LOCK:
+        if k == 0:
+            return CLIENT, i
+        if 1 <= k <= len(EXTRA):
+            return EXTRA[k - 1]["client"], i
+    return None, i
+
+
+def merged_snapshot():
+    """État de la console 1, complété des préamplis / EXP des consoles suivantes (numéros globaux) et de la liste
+    des consoles et des cartes LV1."""
+    snap = CLIENT.snapshot()
+    consoles = []
+    for k, client, card in all_consoles():
+        cs = snap if k == 0 else client.snapshot()
+        if k:
+            snap["gains"] = snap["gains"] + cs["gains"]
+            snap["phantom"] = snap["phantom"] + cs["phantom"]
+            snap["names"] = snap["names"] + cs["names"]
+            for i, e in (cs.get("exp_map") or {}).items():
+                snap["exp_map"][k * N_HA + int(i)] = k * 1000 + int(e)
+        consoles.append({"n": k, "ip": client.ip, "name": (client.info or {}).get("name"), "card": card,
+                         "connected": cs["connected"], "trying": cs["trying"],
+                         "routing_last": cs["routing_last"], "routing_can_undo": cs["routing_can_undo"]})
+    snap["consoles"] = consoles
+    snap["lv1_cards"] = LV1.cards() if LV1 else []
+    if len(consoles) > 1:
+        merged_recall_state(snap)
+    return snap
+
+
+def recall_all(preset, indices=None, with_phantom=False):
+    """Rappel d'une scène sur toutes les consoles : chaque console reçoit sa part (préampli global k*N_HA + i).
+    Console absente ou déconnectée : sautée et signalée (« skipped », numéros 1-based)."""
+    parts = {}
+    for key in ("gains", "phantom"):
+        for gi, v in (preset.get(key) or {}).items():
+            gi = int(gi)
+            if indices is not None and gi not in indices:
+                continue
+            parts.setdefault(gi // N_HA, {"gains": {}, "phantom": {}, "name": preset.get("name", "")})[key][str(gi % N_HA)] = v
+    res = {"t": time.time(), "name": preset.get("name", ""), "sent_gain": 0, "sent_phantom": 0, "verified": None,
+           "bad": [], "skipped": []}
+    for k in sorted(parts):
+        client, _i = console_for(k * N_HA)
+        if client is None or not client.snapshot()["connected"]:
+            res["skipped"].append(k + 1)
+            continue
+        r = client.recall(parts[k], None, with_phantom)
+        res["sent_gain"] += r["sent_gain"]
+        res["sent_phantom"] += r["sent_phantom"]
+    return res
+
+
+def merged_recall_state(snap):
+    """Dernier rappel / annulation possible, toutes consoles confondues (affichage de la page et du float)."""
+    lrs, can_undo = [], False
+    for k, client, _card in all_consoles():
+        cs = client.snapshot() if k else snap
+        can_undo = can_undo or cs["can_undo"]
+        lr = cs.get("last_recall")
+        if lr:
+            lrs.append((k, lr))
+    if lrs:
+        t0 = max(lr["t"] for _k, lr in lrs)
+        recent = [(k, lr) for k, lr in lrs if t0 - lr["t"] < 5]          # le même rappel, sur plusieurs consoles
+        snap["last_recall"] = {
+            "t": t0, "name": recent[-1][1]["name"],
+            "sent_gain": sum(lr["sent_gain"] for _k, lr in recent),
+            "sent_phantom": sum(lr["sent_phantom"] for _k, lr in recent),
+            "verified": (None if any(lr["verified"] is None for _k, lr in recent)
+                         else all(lr["verified"] for _k, lr in recent)),
+            "bad": [k * N_HA + i for k, lr in recent for i in lr["bad"]]}
+    snap["can_undo"] = can_undo
+
+
+def merged_meters():
+    m = CLIENT.meters_snapshot()
+    for k, client, _card in all_consoles():
+        if k:
+            mk = client.meters_snapshot()
+            m["v"] = m["v"] + mk["v"]
+            m["live"] = m["live"] or mk["live"]
+    return m
+
+
+def consoles_loop():
+    """Toutes les 2 s : association automatique des cartes par le nom (les noms des consoles arrivent après la
+    connexion)."""
+    while True:
+        try:
+            auto_assign_cards()
+            for k, client, _card in all_consoles():
+                # console ajoutée avant d'être joignable : son routing (EXP) est relu dès qu'elle répond
+                if k and client.snapshot()["connected"] and not client.exp_map:
+                    client.refresh_exp_map()
+        except Exception as e:
+            print("Consoles : %s" % e)
+        time.sleep(2)
 STORE = None
 ROUTINGS = None
 SIM = None
@@ -1832,7 +2074,7 @@ class Handler(BaseHTTPRequestHandler):
         if needs_login:
             return self._reject_auth_api()
         if path == "/api/state":
-            snap = CLIENT.snapshot()
+            snap = merged_snapshot()
             # Affiche dans l'UI (deja protege par needs_login ci-dessus) : code, adresses, et si le
             # code peut etre change a chaud depuis cette page (seulement en --lan avec code actif).
             snap["lan_code"] = LAN_CODE
@@ -1844,7 +2086,7 @@ class Handler(BaseHTTPRequestHandler):
             snap["autostart_ok"] = autostart_command() is not None
             self._json(snap)
         elif path == "/api/meters":
-            self._json(CLIENT.meters_snapshot())
+            self._json(merged_meters())
         elif path == "/api/routings":
             self._json({"profiles": ROUTINGS.summaries(), "groups": ROUTING_GROUPS, "path": ROUTINGS.path,
                         "choices": routing_choices(), "slots_out": ROUT_SLOTS_OUT})
@@ -1897,13 +2139,17 @@ class Handler(BaseHTTPRequestHandler):
         return pr, nodes
 
     def _routing_route(self, p, d):
+        # console visée (plusieurs consoles) : « target » = n° 0-based, 0 = console 1 (défaut)
+        client, _i = console_for(int(d.get("target") or 0) * N_HA)
+        if client is None:
+            return self._json({"ok": False, "error": "Console introuvable"})
         if p == "/api/routings/model":
             # modèle d'un profil (id) pour l'éditeur, ou du routing actuel de la console (console: true)
             if d.get("console"):
-                if not CLIENT.snapshot()["connected"]:
+                if not client.snapshot()["connected"]:
                     return self._json({"ok": False, "error": "Non connecte a la console"})
                 paths = ["/config/userrout/in", "/config/userrout/out"] + ["/config/routing/" + k for k in _BLOCKS]
-                cur = CLIENT.get_nodes(paths)
+                cur = client.get_nodes(paths)
                 if any(v is None for v in cur.values()):
                     return self._json({"ok": False, "error": "Lecture du routing de la console incomplete"})
                 return self._json({"ok": True, "name": "Routing console", "model": routing_model_from_nodes(cur)})
@@ -1931,36 +2177,41 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/routings/delete":
             return self._json({"ok": ROUTINGS.delete(d["id"])})
         if p == "/api/routings/undo":
-            if not CLIENT.snapshot()["connected"]:
+            if not client.snapshot()["connected"]:
                 return self._json({"ok": False, "error": "Non connecte a la console"})
-            ok = CLIENT.undo_routing()
+            ok = client.undo_routing()
             if ok:
                 # petite pause : laisse la console digerer les ecritures OSC qui viennent de partir
                 # avant de relire le routing, sinon on risque de lire un etat transitoire
-                threading.Thread(target=lambda: (time.sleep(0.7), CLIENT.refresh_exp_map()), daemon=True).start()
+                threading.Thread(target=lambda: (time.sleep(0.7), client.refresh_exp_map()), daemon=True).start()
             return self._json({"ok": ok})
         pr, nodes = self._routing_nodes(d)
         if not pr or not nodes:
             return self._json({"ok": False, "error": "Profil introuvable ou aucun groupe selectionne"})
-        if not CLIENT.snapshot()["connected"]:
+        if not client.snapshot()["connected"]:
             return self._json({"ok": False, "error": "Non connecte a la console"})
         if p == "/api/routings/preview":
-            rows = CLIENT.routing_diff(nodes)
+            rows = client.routing_diff(nodes)
             return self._json({"ok": True, "name": pr["name"], "rows": rows,
                                "changed": sum(1 for r in rows if not r["same"]),
                                "unreadable": sum(1 for r in rows if r["current"] is None)})
         if p == "/api/routings/apply":
-            result = CLIENT.apply_routing(nodes, pr["name"])
-            threading.Thread(target=lambda: (time.sleep(0.7), CLIENT.refresh_exp_map()), daemon=True).start()
+            result = client.apply_routing(nodes, pr["name"])
+            threading.Thread(target=lambda: (time.sleep(0.7), client.refresh_exp_map()), daemon=True).start()
             return self._json({"ok": True, "result": result})
         self._json({"error": "introuvable"}, 404)
 
     def _capture(self):
-        s = CLIENT.snapshot()
+        """Scène = gains / 48V / noms de TOUTES les consoles connectées (préampli global k*N_HA + i : la console 1
+        garde ses numéros d'origine)."""
+        s = merged_snapshot()
         gains = {str(i): g for i, g in enumerate(s["gains"]) if g is not None}
         phantom = {str(i): p for i, p in enumerate(s["phantom"]) if p is not None}
         names = {str(i): n for i, n in enumerate(s["names"]) if n}
-        return gains, phantom, names, s["info"]
+        info = dict(s["info"] or {})
+        if len(s["consoles"]) > 1:
+            info["consoles"] = [{"n": c["n"], "ip": c["ip"], "name": c["name"]} for c in s["consoles"]]
+        return gains, phantom, names, info
 
     def _route(self, p, d):
         if p == "/api/connect":
@@ -2031,11 +2282,27 @@ class Handler(BaseHTTPRequestHandler):
                 SESSIONS.add(keep)
             return self._json({"ok": True, "code": LAN_CODE})
         if p == "/api/gain":
-            v = CLIENT.set_gain(int(d["idx"]), float(d["db"]))
+            client, i = console_for(d["idx"])
+            v = client.set_gain(i, float(d["db"])) if client else None
             return self._json({"ok": v is not None, "db": v})
         if p == "/api/phantom":
-            CLIENT.set_phantom(int(d["idx"]), bool(d["on"]))
-            return self._json({"ok": True})
+            client, i = console_for(d["idx"])
+            if client:
+                client.set_phantom(i, bool(d["on"]))
+            return self._json({"ok": client is not None})
+        if p == "/api/consoles/add":
+            ip = str(d["ip"]).strip()
+            try:
+                socket.inet_aton(ip)
+            except OSError:
+                return self._json({"ok": False, "error": "Adresse IP invalide"})
+            ok, err = add_console(ip, d.get("card") or None)
+            return self._json({"ok": ok, "error": err})
+        if p == "/api/consoles/remove":
+            return self._json({"ok": remove_console(int(d["n"]))})
+        if p == "/api/consoles/card":
+            ok, err = set_console_card(int(d["n"]), d.get("card"))
+            return self._json({"ok": ok, "error": err})
         if p == "/api/presets/save":
             gains, phantom, names, info = self._capture()
             if not gains:
@@ -2050,13 +2317,16 @@ class Handler(BaseHTTPRequestHandler):
             pr = STORE.get(d["id"])
             if not pr:
                 return self._json({"ok": False, "error": "Scene introuvable"})
-            if not CLIENT.snapshot()["connected"]:
+            if not any(c.snapshot()["connected"] for _k, c, _card in all_consoles()):
                 return self._json({"ok": False, "error": "Non connecte a la console"})
             idx = set(int(i) for i in d["indices"]) if d.get("indices") else None
-            r = CLIENT.recall(pr, idx, bool(d.get("phantom")))
+            r = recall_all(pr, idx, bool(d.get("phantom")))
+            if r["skipped"] and not (r["sent_gain"] or r["sent_phantom"]):
+                return self._json({"ok": False, "error": "Console(s) %s non connectée(s)" % ", ".join(map(str, r["skipped"]))})
             return self._json({"ok": True, "result": r})
         if p == "/api/presets/undo":
-            return self._json({"ok": CLIENT.do_undo()})
+            done = [c.do_undo() for _k, c, _card in all_consoles()]
+            return self._json({"ok": any(done)})
         if p == "/api/presets/rename":
             return self._json({"ok": STORE.rename(d["id"], str(d["name"]).strip()[:60] or "Sans nom")})
         if p == "/api/presets/delete":
@@ -2421,6 +2691,7 @@ table.mx th.chg{color:var(--amber)}
         <div class="h">Charger sur la console</div>
         <label class="opt"><input type="checkbox" id="rio" checked disabled> Routing E/S : blocs + patchs utilisateur</label>
         <label class="opt warn"><input type="checkbox" id="rout"> Patch de sortie console (/outputs)</label>
+        <label class="opt" id="rconsw" style="display:none">Console : <select class="inp" id="rcons" style="width:auto;flex:1"></select></label>
         <button class="btn go" id="rload" disabled>Charger ce routing</button>
         <button class="btn" id="rundo" disabled>&#8630; Annuler le dernier routing</button>
         <div id="rlast"></div>
@@ -2451,9 +2722,10 @@ function label(i){return i<32?String(i+1):(i<80?"A"+(i-31):"B"+(i-79));}
    via /config/routing/CARD + /config/userrout/in), jamais suppose. Vide si non connecte, si la
    lecture a echoue, ou si ce canal n'est pas patche vers la carte en ce moment - jamais un numero
    invente. Se met a jour apres connexion, "Relire", ou l'envoi d'un routing. */
-function expLabel(i){const v=(S.exp_map||{})[i];return v?("EXP "+v):"";}
+function expLabel(i){const v=(S.exp_map||{})[i];return v?("EXP "+expTxt(v)):"";}
 /* Repere avec la source, comme dans le float : "L 15" (Local), "A 1" / "B 3" (AES50-A/B). */
-function tag(i){return i<32?"L "+(i+1):(i<80?"A "+(i-31):"B "+(i-79));}
+function tag(i){if(i>=128)return (Math.floor(i/128)+1)+"·"+tag(i%128);return i<32?"L "+(i+1):(i<80?"A "+(i-31):"B "+(i-79));}
+function expTxt(e){e=+e;return e<1000?String(e):(Math.floor(e/1000)+1)+"·"+(e%1000);}
 function footLabel(i){const e=expLabel(i);return e?tag(i)+" = "+e:tag(i);}
 /* meme texte, en deux morceaux insecables : passe sur 2 lignes (« L 15 » / « = EXP 15 ») si la voie
    est trop etroite, au lieu de couper le numero EXP */
@@ -2544,7 +2816,7 @@ function updateGroups(){
   document.querySelectorAll(".grp").forEach(g=>{
     const ch=+g.dataset.ch,inf=(S.lv1_channels||{})[ch]||{},hd=g.querySelector(".hd"),lb=inf.label||("In "+ch);
     const exps=(S.lv1_sources||{})[ch]||[];
-    hd.textContent=lb;hd.title=lb+" — canal LV1 In "+ch+(exps.length?" · EXP "+exps.join("/"):" · aucune entrée X32");
+    hd.textContent=lb;hd.title=lb+" — canal LV1 In "+ch+(exps.length?" · EXP "+exps.map(expTxt).join("/"):" · aucune entrée X32");
     hd.style.background=inf.color||"#39424a";hd.style.color=inf.color?inkFor(inf.color):"#e9edf0";
   });
 }
@@ -2923,20 +3195,31 @@ function mxBind(t){
   };
 }
 function routingMsg(){
-  const rl=S.routing_last;if(!rl)return"";
+  const rl=rCons().routing_last;if(!rl)return"";
   return ` · Routing « ${esc(rl.name)} » : ${rl.sent}/${rl.total} lignes envoyées — `+(rl.verified===null?"vérification…":(rl.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${rl.bad.length} écart(s) : ${rl.bad.map(esc).join(", ")}</b>`));
 }
+function rTarget(){const e=$("#rcons");return e&&S.consoles&&S.consoles.length>1?(+e.value||0):0;}
+function rCons(){return (S.consoles||[])[rTarget()]||{connected:S.connected,routing_last:S.routing_last,routing_can_undo:S.routing_can_undo};}
+function routingConsoles(){
+  const cs=S.consoles||[],w=$("#rconsw"),sel=$("#rcons");if(!w)return;
+  w.style.display=cs.length>1?"flex":"none";
+  const sig=cs.map(c=>c.n+":"+(c.name||"")+":"+c.ip).join("|");
+  if(sel.dataset.sig!==sig){const v=sel.value;sel.dataset.sig=sig;
+    sel.innerHTML=cs.map(c=>`<option value="${c.n}">Console ${c.n+1} — ${esc(c.name||"?")} (${esc(c.ip||"—")})</option>`).join("");
+    if(v&&cs.find(c=>String(c.n)===v))sel.value=v;}
+}
 function routingButtons(){
-  const has=!!RP.find(x=>x.id===rsel);
-  $("#rren").disabled=!has;$("#rdel").disabled=!has;$("#redit").disabled=!has;$("#rnew").disabled=!S.connected;
-  $("#rload").disabled=!(has&&S.connected&&!locked);$("#rundo").disabled=!(S.routing_can_undo&&S.connected&&!locked);
-  const rl=S.routing_last;
+  routingConsoles();
+  const has=!!RP.find(x=>x.id===rsel),RC0=rCons();
+  $("#rren").disabled=!has;$("#rdel").disabled=!has;$("#redit").disabled=!has;$("#rnew").disabled=!RC0.connected;
+  $("#rload").disabled=!(has&&RC0.connected&&!locked);$("#rundo").disabled=!(RC0.routing_can_undo&&RC0.connected&&!locked);
+  const rl=RC0.routing_last;
   $("#rlast").innerHTML=rl?routingMsg().replace(/^ · /,""):"";
 }
 $("#tgains").onclick=()=>setView("gains");$("#trout").onclick=()=>setView("routing");
 $("#rimp").onclick=()=>$("#rfile").click();
 $("#redit").onclick=()=>{if(rsel)openEditor({id:rsel});};
-$("#rnew").onclick=()=>openEditor({console:true});
+$("#rnew").onclick=()=>openEditor({console:true,target:rTarget()});
 $("#rfile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>api("/api/routings/import",{text:String(rd.result),filename:f.name}).then(r=>{
     if(!r.ok)return toast(r.error,"err");rsel=r.id;toast("Routing importé : "+r.io+" lignes E/S, "+r.out+" lignes de sortie","ok");loadRoutings();});
@@ -2952,16 +3235,17 @@ $("#rload").onclick=async()=>{
   const p=RP.find(x=>x.id===rsel);if(!p||locked)return;
   const groups=["io"].concat($("#rout").checked?["out"]:[]);
   toast("Lecture du routing actuel de la console…");
-  const r=await api("/api/routings/preview",{id:p.id,groups});
+  const target=rTarget(),cname=(S.consoles||[]).length>1?" sur la console "+(target+1):"";
+  const r=await api("/api/routings/preview",{id:p.id,groups,target});
   if(!r.ok)return toast(r.error,"err");
   if(r.changed===0)return toast("Rien à changer : la console a déjà ce routing.","ok");
   const sh=x=>x===null?"<i>non lu</i>":esc(x.length>48?x.slice(0,48)+"…":x);
   const list=r.rows.filter(x=>!x.same).map(x=>`<div class="dif"><code>${esc(x.path)}</code><br>${sh(x.current)} <b>→</b> ${sh(x.target)}</div>`).join("");
-  modal("Charger « "+p.name+" » ?",`<p><b>${r.changed}</b> ligne(s) sur ${r.rows.length} vont changer.`+(r.unreadable?` <span class="bad">${r.unreadable} non lue(s) : pas d'annulation possible pour celles-ci.</span>`:"")+`</p><div class="diflist">${list}</div>
+  modal("Charger « "+p.name+" »"+cname+" ?",`<p><b>${r.changed}</b> ligne(s) sur ${r.rows.length} vont changer.`+(r.unreadable?` <span class="bad">${r.unreadable} non lue(s) : pas d'annulation possible pour celles-ci.</span>`:"")+`</p><div class="diflist">${list}</div>
     <p style="color:var(--amber)">À faire de préférence hors signal : un changement de routing peut couper ou perturber l'audio en cours. « Annuler le dernier routing » remet les valeurs lues à l'instant.</p>`,
-   [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
+   [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups,target}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
 };
-$("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
+$("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{target:rTarget()}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
 
 /* ---------- vumetre (poll leger ~16 Hz, attaque instantanee, retombee 24 dB/s, crete 1,2 s) ---------- */
 const VU={};let vuDead=false,lastLive=performance.now();
@@ -3420,6 +3704,13 @@ def main():
         print("  ! %s" % err)
     print("Quitter : icone pres de l'horloge (clic droit), ou menu ... du float." +
           (" Ou Ctrl+C ici." if sys.stdout and sys.stdout.isatty() else ""))
+    st = load_settings()
+    PRIMARY["card"] = st.get("card") or None
+    for c in st.get("consoles") or []:
+        if c.get("ip"):
+            add_console(c["ip"], c.get("card"), save=False)
+    update_card_map()
+    threading.Thread(target=consoles_loop, daemon=True).start()
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()
