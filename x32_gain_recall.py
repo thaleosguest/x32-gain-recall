@@ -51,7 +51,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.5.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128

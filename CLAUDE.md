@@ -14,10 +14,13 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.4.0 publiée (2026-10-13)
+## État actuel : v2.5.0 publiée (2026-10-14)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.4.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.4.0 (branche `dev-2.4`) fusionnée dans `main` ; avant : #6 (v2.3.0), #5 (v2.2.0), #4 (v2.1.0), #1, #2, #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.5.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.5.0 (branche `dev-2.4.1`) fusionnée dans `main` ; avant : #7 (v2.4.0), #6 (v2.3.0), #5 (v2.2.0), #4, #1-#3.
+2.5.0 = pages détachées (un float par Mixer détaché, onglets lus avec la liste réduite), page Channel (canal lu à
+l'écran, chiffres relevés par taille, vérifié contre le patch), 48V au style du float, bulle des dB, lectures
+d'écran sur un fil à part (potards fluides). Ressources mesurées : ~0,3 % CPU de la machine, ~100 Mo en tout.
 2.4.0 = routing : profils X32R + S16 A + S16 B et M32C + S16 A + S16 B, éditeur libre (page + float) en
 matrice avec aide à la visée ou en listes ; float plus tactile (⋮, menu 13 pt, panneau fermé par ✕ ou en
 touchant la LV1) (détails : section « Routing (2.4.0) »).

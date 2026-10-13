@@ -6,7 +6,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **2.4.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **2.5.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -27,7 +27,7 @@ Première fois ? Voir le **[mode d'emploi pas à pas](MODE_EMPLOI.md)**.
    - **SmartScreen** (« Windows a protégé votre ordinateur ») : l'exe n'est pas signé → *Informations complémentaires* → *Exécuter quand même*. Pour vérifier le fichier, comparer son empreinte avec le `.sha256` de la release.
    - **Pare-feu** : autoriser l'accès sur les réseaux **privés**, nécessaire pour piloter depuis une tablette et pour le bouton *Scanner*.
 3. C'est tout (2.3.0) : l'appli **trouve la console** sur le réseau et s'y connecte (puis s'y reconnecte à chaque lancement), ouvre le **float déjà calé sur les tranches de la LV1**, ouvre la page dans le navigateur **réduite** et remet la LV1 au premier plan. Elle vit dans une **icône près de l'horloge** (plus de fenêtre noire) : Ouvrir la page, Afficher le float, **Lancer avec Windows**, Quitter. Pas de code d'accès sur ce PC (seulement pour les tablettes, bouton 🔑 de la page).
-4. Si la LV1 tourne sur ce PC, chaque voie affiche tout de suite le **canal LV1** qui reçoit ce préampli : nom, couleur, « L 15 = EXP 15 », et suit les repatchs en 1 à 2 s. En mode **Edit** de la LV1, le réglage de la tranche sélectionnée apparaît dans le cadre vide du bloc Input. Une version plus récente publiée est signalée (icône, float, page).
+4. Si la LV1 tourne sur ce PC, chaque voie affiche tout de suite le **canal LV1** qui reçoit ce préampli : nom, couleur, « L 15 = EXP 15 », et suit les repatchs en 1 à 2 s. En mode **Edit** de la LV1, le réglage de la tranche sélectionnée apparaît dans le cadre vide du bloc Input ; sur la page **Channel**, celui du canal affiché (suit « < » / « > »). Un Mixer détaché dans sa propre fenêtre (2e écran) a son propre float. Une version plus récente publiée est signalée (icône, float, page).
 5. **Routing de la X32 / M32** (onglet Routing, ou ⋮ → Routing… du float) : profils prêts à charger (X32R + S16, X32R + 2 S16, M32C + 2 S16) et **éditeur en matrice** pour un routing à soi, EXP par EXP (ex. L1 → EXP 1, A18 → EXP 2).
 
 ### Le donner à quelqu'un d'autre
