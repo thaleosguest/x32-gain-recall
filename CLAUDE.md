@@ -343,8 +343,10 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - X32 pleine taille reliée en AES50 A à une X32/M32 Core (carte DN32-WSG) : sur la X32 de scène, *Setup →
   Preamps* « HA REMOTE : AES50 Port A » (photo de Joseph) -> la Core pilote ses préamplis comme ceux d'une S16
   (AES50-A 1-32) : pas besoin de connecter l'appli aux deux consoles. « HA Gain Split » décoché.
-- Profils : `core_x32stage_a` (modèle) et `x32stage_for_core_a` (`_builtin_nodes()`, lignes brutes : 32 voies
-  AES50 en sortie, hors du modèle de l'éditeur limité à 16). Pas encore testé sur le matériel.
+- Correction de Joseph : rien à charger sur la X32 de scène ; tout se règle sur la M32C (maître, carte), port A
+  OU B. Profils `m32c_x32stage_a` / `_b` (A|B 1-32 -> EXP 1-32, EXP 1-16 -> A|B 1-16). Les profils de la version
+  de test (« Core + X32 stage box », « Stage box — X32 vers Core ») sont retirés des listes (`RETIRED_BUILTINS`).
+  `_builtin_nodes()` (profils en lignes brutes) reste disponible, vide. Pas encore testé sur le matériel.
 
 ## Reste à faire / idées
 

@@ -3,7 +3,7 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
-- **Routing : X32 / M32 Core + X32 pleine taille en stage box** (AES50 A) : profil *LV1 — Core + X32 stage box* pour la Core (AES50-A 1-32 → EXP 1-32, EXP 1-16 → AES50 A) et profil *Stage box — X32 vers Core* à charger sur la X32 de scène (Local 1-32 → AES50 A, AES50-A 1-16 → OUT 1-16). Avec « HA Remote : AES50 Port A » sur la X32 de scène, la Core pilote ses préamplis : le float les règle comme ceux d'une S16.
+- **Routing : M32C + X32 pleine taille en stage box** : profils *LV1 — M32C + X32 stage box (AES50 A)* et *(AES50 B)*, à charger sur la M32C (maître, avec la carte) : AES50 1-32 → EXP 1-32, EXP 1-16 → AES50 1-16. Avec « HA Remote » sur la X32 de scène, la M32C pilote ses préamplis : le float les règle comme ceux d'une S16.
 
 ## [2.5.0] — 2026-10-14
 **Page Channel, pages détachées, tactile** : préampli du canal affiché sur la page Channel, un float par Mixer détaché, 48V et bulle des dB pour le doigt, potards fluides.
