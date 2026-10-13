@@ -3,7 +3,7 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
-- **Mixer détaché dans sa propre fenêtre** (ex. Mixer 2 sur un 2e écran, fenêtre « MIXER2 » de la LV1) : un **float de plus** s'ouvre pour ce Mixer, calé sur sa fenêtre, et suit sa couche, son mode et sa tranche sélectionnée ; il se ferme quand la fenêtre est refermée ou rattachée. La fenêtre principale (5 ou 6 onglets au lieu de 7) est de nouveau reconnue : avant, l'onglet affiché n'y était plus lu. Chaque float garde ses propres réglages.
+- **Mixer détaché dans sa propre fenêtre** (ex. Mixer 2 sur un 2e écran, fenêtre « MIXER2 » de la LV1) : un **float de plus** s'ouvre pour ce Mixer, calé sur sa fenêtre, et suit sa couche, son mode et sa tranche sélectionnée ; il se ferme quand la fenêtre est refermée ou rattachée. La fenêtre principale est de nouveau reconnue quand des pages en sont détachées (Mixer 2, Channel, Show… : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 et Channel détachés) : avant, l'onglet affiché n'y était plus lu. Chaque float garde ses propres réglages.
 
 ## [2.4.0] — 2026-10-13
 **Routing** : configs X32R / M32C + 2 S16 intégrées, éditeur libre en matrice ; float plus tactile.

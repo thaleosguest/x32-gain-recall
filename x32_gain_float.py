@@ -221,7 +221,6 @@ def _user32():
         return None, None
 
 
-DETACHED_TITLES = ("MIXER1", "MIXER2")   # Mixer détaché dans sa propre fenêtre (titre relevé : « MIXER2 »)
 
 
 def lv1_windows():
@@ -249,9 +248,12 @@ def lv1_windows():
         if title.startswith("eMotion LV1") and "main" not in out:
             out["main"] = hwnd
     pid = window_pid(out["main"]) if "main" in out else None
+    tab_keys = {t.upper().replace(" ", "") for t in LV1_TABS}
     for hwnd, title in wins:
         key = title.upper().replace(" ", "")
-        if key in DETACHED_TITLES and key not in out and (pid is None or window_pid(hwnd) == pid):
+        # page de la LV1 détachée dans sa propre fenêtre : Mixer 1 / 2, mais aussi Channel, Show, Patch...
+        # (titre = nom de la page en majuscules, relevé « MIXER2 »)
+        if key in tab_keys and key not in out and (pid is None or window_pid(hwnd) == pid):
             out[key] = hwnd
     return out
 
@@ -1786,8 +1788,9 @@ class FloatApp:
         if now >= self._lv1_seek:
             self._lv1_seek = now + 2.0
             found = lv1_windows()
-            # onglets Mixer absents de la fenêtre principale quand ils sont détachés dans leur propre fenêtre
-            self._detached_now = tuple(k for k in DETACHED_TITLES if k in found)
+            # onglets absents de la fenêtre principale : pages détachées dans leur propre fenêtre (Mixer 2,
+            # Channel... : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 et Channel détachés)
+            self._detached_now = tuple(k for k in found if k != "main")
             if not self._lv1_hwnd:
                 self._lv1_hwnd = found.get(self.detached or "main")
                 self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None

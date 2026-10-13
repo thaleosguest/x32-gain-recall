@@ -299,10 +299,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 
 ## Mixer détaché (2026-10-14)
 
-- LV1 V17 : un Mixer détaché = fenêtre top-level du même processus, titre **« MIXER2 »** (« MIXER1 » supposé,
-  pas encore vu), même disposition que la page Mixer (mêmes fractions AUTO_*/SEL_*/SEL_ROWS), une seule touche
-  d'onglet ; la fenêtre principale n'a plus que 6 onglets (5 si les deux sont détachés) -> `lv1_tab(hwnd,
-  names)` avec la liste réduite (`_detached_now`). Relevé : écran 1 fenêtre principale 1728x970, écran 2
+- LV1 V17 : une page détachée = fenêtre top-level du même processus, titre = nom de la page en majuscules
+  (relevés : **« MIXER2 »**, **« CHANNEL »** ; « MIXER1 » supposé). Mixer détaché : même disposition que la page
+  Mixer (mêmes fractions AUTO_*/SEL_*/SEL_ROWS), une seule touche d'onglet. La fenêtre principale perd les
+  onglets détachés (vu : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 + Channel détachés) ->
+  `lv1_tab(hwnd, names)` avec la liste réduite (`_detached_now` = toutes les pages détachées). Relevé : écran 1 fenêtre principale 1728x970, écran 2
   MIXER2 1728x972 (bureau virtuel 3840x1080).
 - `lv1_windows()` -> {"main", "MIXER1", "MIXER2"}. Serveur : `_watch_detached_mixers()` (2 s) lance un float
   `--lv1-window MIXER2` par fenêtre détachée (`FLOAT_PROCS[clé]`) ; ce float a une surface fixe, ne lit pas
