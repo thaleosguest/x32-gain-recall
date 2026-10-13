@@ -2,6 +2,9 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [2.7.1] — 2026-10-14
+- **Correctif** : en 2.7.0, une fonction des nouveaux potards remplaçait par erreur celle qui lit la couleur d'un canal pour la page Channel ; un canal sans couleur connue pouvait arrêter le suivi de la LV1 par le float (passage devant / derrière, masquage).
+
 ## [2.7.0] — 2026-10-14
 **Nouveau look du float** : potards lisses à la couleur du canal LV1.
 - **Potards redessinés** : bords lissés (anti-crénelage), arc de la couleur du canal LV1 qui suit le gain (on lit le niveau d'un coup d'œil), index blanc. Arc gris tant que la couleur du canal est inconnue. Aussi dans les cadres Edit et Channel.
