@@ -359,7 +359,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   console, pas de carte choisie) = comportement d'origine.
 - Float : `strip_tag` « 2·A 5 », `exp_txt` « 2·15 », panneau ⋮ → Consoles… ; page Channel : EXP lu = voie (% 1000).
 - Testé : console 1 = X32 de Joseph (carte 1, auto par le nom), console 2 = simulateur (carte 2) : tranche 64 ->
-  préamplis 128/129 « 2·1/2·2 », gain envoyé à la console 2 seulement. Scènes / routing : console 1 seulement.
+  préamplis 128/129 « 2·1/2·2 », gain envoyé à la console 2 seulement. Scènes : console 1 seulement.
+- Routing par console : paramètre `target` (n° 0-based) sur `/api/routings/preview|apply|undo|model` (dans
+  `_routing_route`, `client = console_for(target * N_HA)`) ; `consoles[]` de l'état porte `routing_last` /
+  `routing_can_undo` ; page : sélecteur `#rcons` (si > 1 console) ; float : `_pick_console()`. Testé sur le
+  simulateur en console 2 (envoi, vérification, EXP relus, annulation), console 1 intacte.
 
 ## Reste à faire / idées
 

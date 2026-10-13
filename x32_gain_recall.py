@@ -1473,7 +1473,8 @@ def merged_snapshot():
             for i, e in (cs.get("exp_map") or {}).items():
                 snap["exp_map"][k * N_HA + int(i)] = k * 1000 + int(e)
         consoles.append({"n": k, "ip": client.ip, "name": (client.info or {}).get("name"), "card": card,
-                         "connected": cs["connected"], "trying": cs["trying"]})
+                         "connected": cs["connected"], "trying": cs["trying"],
+                         "routing_last": cs["routing_last"], "routing_can_undo": cs["routing_can_undo"]})
     snap["consoles"] = consoles
     snap["lv1_cards"] = LV1.cards() if LV1 else []
     return snap
@@ -2091,13 +2092,17 @@ class Handler(BaseHTTPRequestHandler):
         return pr, nodes
 
     def _routing_route(self, p, d):
+        # console visée (plusieurs consoles) : « target » = n° 0-based, 0 = console 1 (défaut)
+        client, _i = console_for(int(d.get("target") or 0) * N_HA)
+        if client is None:
+            return self._json({"ok": False, "error": "Console introuvable"})
         if p == "/api/routings/model":
             # modèle d'un profil (id) pour l'éditeur, ou du routing actuel de la console (console: true)
             if d.get("console"):
-                if not CLIENT.snapshot()["connected"]:
+                if not client.snapshot()["connected"]:
                     return self._json({"ok": False, "error": "Non connecte a la console"})
                 paths = ["/config/userrout/in", "/config/userrout/out"] + ["/config/routing/" + k for k in _BLOCKS]
-                cur = CLIENT.get_nodes(paths)
+                cur = client.get_nodes(paths)
                 if any(v is None for v in cur.values()):
                     return self._json({"ok": False, "error": "Lecture du routing de la console incomplete"})
                 return self._json({"ok": True, "name": "Routing console", "model": routing_model_from_nodes(cur)})
@@ -2125,27 +2130,27 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/routings/delete":
             return self._json({"ok": ROUTINGS.delete(d["id"])})
         if p == "/api/routings/undo":
-            if not CLIENT.snapshot()["connected"]:
+            if not client.snapshot()["connected"]:
                 return self._json({"ok": False, "error": "Non connecte a la console"})
-            ok = CLIENT.undo_routing()
+            ok = client.undo_routing()
             if ok:
                 # petite pause : laisse la console digerer les ecritures OSC qui viennent de partir
                 # avant de relire le routing, sinon on risque de lire un etat transitoire
-                threading.Thread(target=lambda: (time.sleep(0.7), CLIENT.refresh_exp_map()), daemon=True).start()
+                threading.Thread(target=lambda: (time.sleep(0.7), client.refresh_exp_map()), daemon=True).start()
             return self._json({"ok": ok})
         pr, nodes = self._routing_nodes(d)
         if not pr or not nodes:
             return self._json({"ok": False, "error": "Profil introuvable ou aucun groupe selectionne"})
-        if not CLIENT.snapshot()["connected"]:
+        if not client.snapshot()["connected"]:
             return self._json({"ok": False, "error": "Non connecte a la console"})
         if p == "/api/routings/preview":
-            rows = CLIENT.routing_diff(nodes)
+            rows = client.routing_diff(nodes)
             return self._json({"ok": True, "name": pr["name"], "rows": rows,
                                "changed": sum(1 for r in rows if not r["same"]),
                                "unreadable": sum(1 for r in rows if r["current"] is None)})
         if p == "/api/routings/apply":
-            result = CLIENT.apply_routing(nodes, pr["name"])
-            threading.Thread(target=lambda: (time.sleep(0.7), CLIENT.refresh_exp_map()), daemon=True).start()
+            result = client.apply_routing(nodes, pr["name"])
+            threading.Thread(target=lambda: (time.sleep(0.7), client.refresh_exp_map()), daemon=True).start()
             return self._json({"ok": True, "result": result})
         self._json({"error": "introuvable"}, 404)
 
@@ -2631,6 +2636,7 @@ table.mx th.chg{color:var(--amber)}
         <div class="h">Charger sur la console</div>
         <label class="opt"><input type="checkbox" id="rio" checked disabled> Routing E/S : blocs + patchs utilisateur</label>
         <label class="opt warn"><input type="checkbox" id="rout"> Patch de sortie console (/outputs)</label>
+        <label class="opt" id="rconsw" style="display:none">Console : <select class="inp" id="rcons" style="width:auto;flex:1"></select></label>
         <button class="btn go" id="rload" disabled>Charger ce routing</button>
         <button class="btn" id="rundo" disabled>&#8630; Annuler le dernier routing</button>
         <div id="rlast"></div>
@@ -3134,20 +3140,31 @@ function mxBind(t){
   };
 }
 function routingMsg(){
-  const rl=S.routing_last;if(!rl)return"";
+  const rl=rCons().routing_last;if(!rl)return"";
   return ` · Routing « ${esc(rl.name)} » : ${rl.sent}/${rl.total} lignes envoyées — `+(rl.verified===null?"vérification…":(rl.verified?'<b class="good">confirmé par relecture ✓</b>':`<b class="bad">${rl.bad.length} écart(s) : ${rl.bad.map(esc).join(", ")}</b>`));
 }
+function rTarget(){const e=$("#rcons");return e&&S.consoles&&S.consoles.length>1?(+e.value||0):0;}
+function rCons(){return (S.consoles||[])[rTarget()]||{connected:S.connected,routing_last:S.routing_last,routing_can_undo:S.routing_can_undo};}
+function routingConsoles(){
+  const cs=S.consoles||[],w=$("#rconsw"),sel=$("#rcons");if(!w)return;
+  w.style.display=cs.length>1?"flex":"none";
+  const sig=cs.map(c=>c.n+":"+(c.name||"")+":"+c.ip).join("|");
+  if(sel.dataset.sig!==sig){const v=sel.value;sel.dataset.sig=sig;
+    sel.innerHTML=cs.map(c=>`<option value="${c.n}">Console ${c.n+1} — ${esc(c.name||"?")} (${esc(c.ip||"—")})</option>`).join("");
+    if(v&&cs.find(c=>String(c.n)===v))sel.value=v;}
+}
 function routingButtons(){
-  const has=!!RP.find(x=>x.id===rsel);
-  $("#rren").disabled=!has;$("#rdel").disabled=!has;$("#redit").disabled=!has;$("#rnew").disabled=!S.connected;
-  $("#rload").disabled=!(has&&S.connected&&!locked);$("#rundo").disabled=!(S.routing_can_undo&&S.connected&&!locked);
-  const rl=S.routing_last;
+  routingConsoles();
+  const has=!!RP.find(x=>x.id===rsel),RC0=rCons();
+  $("#rren").disabled=!has;$("#rdel").disabled=!has;$("#redit").disabled=!has;$("#rnew").disabled=!RC0.connected;
+  $("#rload").disabled=!(has&&RC0.connected&&!locked);$("#rundo").disabled=!(RC0.routing_can_undo&&RC0.connected&&!locked);
+  const rl=RC0.routing_last;
   $("#rlast").innerHTML=rl?routingMsg().replace(/^ · /,""):"";
 }
 $("#tgains").onclick=()=>setView("gains");$("#trout").onclick=()=>setView("routing");
 $("#rimp").onclick=()=>$("#rfile").click();
 $("#redit").onclick=()=>{if(rsel)openEditor({id:rsel});};
-$("#rnew").onclick=()=>openEditor({console:true});
+$("#rnew").onclick=()=>openEditor({console:true,target:rTarget()});
 $("#rfile").onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();
   rd.onload=()=>api("/api/routings/import",{text:String(rd.result),filename:f.name}).then(r=>{
     if(!r.ok)return toast(r.error,"err");rsel=r.id;toast("Routing importé : "+r.io+" lignes E/S, "+r.out+" lignes de sortie","ok");loadRoutings();});
@@ -3163,16 +3180,17 @@ $("#rload").onclick=async()=>{
   const p=RP.find(x=>x.id===rsel);if(!p||locked)return;
   const groups=["io"].concat($("#rout").checked?["out"]:[]);
   toast("Lecture du routing actuel de la console…");
-  const r=await api("/api/routings/preview",{id:p.id,groups});
+  const target=rTarget(),cname=(S.consoles||[]).length>1?" sur la console "+(target+1):"";
+  const r=await api("/api/routings/preview",{id:p.id,groups,target});
   if(!r.ok)return toast(r.error,"err");
   if(r.changed===0)return toast("Rien à changer : la console a déjà ce routing.","ok");
   const sh=x=>x===null?"<i>non lu</i>":esc(x.length>48?x.slice(0,48)+"…":x);
   const list=r.rows.filter(x=>!x.same).map(x=>`<div class="dif"><code>${esc(x.path)}</code><br>${sh(x.current)} <b>→</b> ${sh(x.target)}</div>`).join("");
-  modal("Charger « "+p.name+" » ?",`<p><b>${r.changed}</b> ligne(s) sur ${r.rows.length} vont changer.`+(r.unreadable?` <span class="bad">${r.unreadable} non lue(s) : pas d'annulation possible pour celles-ci.</span>`:"")+`</p><div class="diflist">${list}</div>
+  modal("Charger « "+p.name+" »"+cname+" ?",`<p><b>${r.changed}</b> ligne(s) sur ${r.rows.length} vont changer.`+(r.unreadable?` <span class="bad">${r.unreadable} non lue(s) : pas d'annulation possible pour celles-ci.</span>`:"")+`</p><div class="diflist">${list}</div>
     <p style="color:var(--amber)">À faire de préférence hors signal : un changement de routing peut couper ou perturber l'audio en cours. « Annuler le dernier routing » remet les valeurs lues à l'instant.</p>`,
-   [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
+   [{t:"Annuler"},{t:"Charger le routing",go:1,f:()=>api("/api/routings/apply",{id:p.id,groups,target}).then(x=>toast(x.ok?"Routing envoyé — vérification en cours…":x.error,x.ok?"ok":"err"))}]);
 };
-$("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
+$("#rundo").onclick=()=>locked?toast("Verrouillé","err"):api("/api/routings/undo",{target:rTarget()}).then(r=>toast(r.ok?"Routing précédent restauré":(r.error||"Rien à annuler"),r.ok?"ok":"err"));
 
 /* ---------- vumetre (poll leger ~16 Hz, attaque instantanee, retombee 24 dB/s, crete 1,2 s) ---------- */
 const VU={};let vuDead=false,lastLive=performance.now();

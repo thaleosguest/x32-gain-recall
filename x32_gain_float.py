@@ -946,8 +946,9 @@ class ServerBackend:
         return self._post("/api/routings/save", {"id": pid, "name": name, "model": model}) or \
             {"ok": False, "error": self.last_error}
 
-    def apply_routing(self, pid):
-        return self._post("/api/routings/apply", {"id": pid, "groups": ["io"]}) or {"ok": False, "error": self.last_error}
+    def apply_routing(self, pid, target=0):
+        return (self._post("/api/routings/apply", {"id": pid, "groups": ["io"], "target": target})
+                or {"ok": False, "error": self.last_error})
 
     def quit_app(self):
         return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
@@ -2679,8 +2680,12 @@ class FloatApp:
             self._panel_row(p.get("name", "?"), sub, lambda pid=p["id"], n=p.get("name", "?"): self._apply_routing(pid, n),
                             (lambda pid=p["id"]: self._edit_routing({"id": pid})) if editable else None)
         if editable:
+            def from_console():
+                t = self._pick_console("Partir du routing de quelle console ?")
+                if t is not None:
+                    self._edit_routing({"console": True, "target": t})
             tk.Button(self.panel, text="✎ Nouveau routing perso, depuis la console…", bd=0, bg="#25282b", fg=TXT,
-                      font=("Segoe UI", 8, "bold"), command=lambda: self._edit_routing({"console": True})).pack(
+                      font=("Segoe UI", 8, "bold"), command=from_console).pack(
                 fill="x", padx=6, pady=(4, 6))
 
     def _edit_routing(self, src):
@@ -2959,13 +2964,54 @@ class FloatApp:
             self._fill_scenes_panel_refresh()
             self._fill_scenes_panel_refresh()
 
+    def _pick_console(self, title):
+        """Plusieurs consoles : n° (0-based) de la console choisie, ou None (annulé). Une seule : 0."""
+        cs = [c for c in (getattr(self, "_consoles", []) or [])]
+        if len(cs) <= 1:
+            return 0
+        w = tk.Toplevel(self.root)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        w.configure(bg=LINE2)
+        inner = tk.Frame(w, bg=PANEL)
+        inner.pack(fill="both", expand=True, padx=2, pady=2)
+        tk.Label(inner, text=title, bg=PANEL, fg=TXT, font=("Segoe UI", 12, "bold")).pack(padx=14, pady=(12, 8))
+        res = {"n": None}
+
+        def pick(n):
+            res["n"] = n
+            w.destroy()
+        for c in cs:
+            st = "" if c.get("connected") else "  (non connectée)"
+            tk.Button(inner, text="Console %d — %s%s" % (c["n"] + 1, c.get("name") or c.get("ip") or "?", st),
+                      bd=0, bg=TEAL if c.get("connected") else "#25282b", fg="#032" if c.get("connected") else MUT,
+                      font=("Segoe UI", 12, "bold"), padx=16, pady=8, anchor="w",
+                      state="normal" if c.get("connected") else "disabled",
+                      command=lambda n=c["n"]: pick(n)).pack(fill="x", padx=14, pady=3)
+        tk.Button(inner, text="Annuler", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 11, "bold"), padx=16, pady=6,
+                  command=lambda: pick(None)).pack(padx=14, pady=(8, 12))
+        w.update_idletasks()
+        r = self.root
+        w.geometry("+%d+%d" % (r.winfo_rootx() + r.winfo_width() // 2 - w.winfo_reqwidth() // 2,
+                               max(0, r.winfo_rooty() + r.winfo_height() // 2 - w.winfo_reqheight() // 2)))
+        try:
+            w.grab_set()
+        except tk.TclError:
+            pass
+        r.wait_window(w)
+        return res["n"]
+
     def _apply_routing(self, pid, name):
+        target = self._pick_console("Charger « %s » sur quelle console ?" % name)
+        if target is None:
+            return
+        where = " sur la console %d" % (target + 1) if len(getattr(self, "_consoles", []) or []) > 1 else ""
         if not messagebox.askyesno("Charger ce routing ?",
-                                    "Charger « %s » ? Seul le routing E/S est touché (pas le patch de sortie). "
-                                    "À faire de préférence hors signal : ça peut couper l'audio en cours." % name,
+                                    "Charger « %s »%s ? Seul le routing E/S est touché (pas le patch de sortie). "
+                                    "À faire de préférence hors signal : ça peut couper l'audio en cours." % (name, where),
                                     parent=self.root):
             return
-        r = self.backend.apply_routing(pid)
+        r = self.backend.apply_routing(pid, target)
         if not r.get("ok"):
             messagebox.showerror("Routing", r.get("error", "Échec"), parent=self.root)
         else:

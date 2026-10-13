@@ -179,7 +179,10 @@ Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : flo
 - Le float règle alors les préamplis de **toutes** les consoles, chacun sur sa tranche LV1 ; ceux de la
   console 2 sont repérés « 2·A 5 = EXP 2·5 ». Une console sans carte choisie : ses tranches restent sans
   potard (jamais le préampli d'une autre console).
-- Les scènes de gains et le routing concernent la console 1.
+- **Routing** : avec plusieurs consoles, choisissez la console visée (sélecteur *Console* dans l'onglet
+  Routing de la page ; dans le float, l'appli demande la console au moment de charger). Aperçu, vérification
+  et *Annuler le dernier routing* se font console par console.
+- Les scènes de gains concernent la console 1.
 
 ## 6. Les scènes de gains
 
