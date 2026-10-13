@@ -54,7 +54,7 @@ scènes de gains (une par groupe ou par date, par exemple).
    Relancer l'exe alors que l'appli tourne déjà ré-affiche simplement la page et le float.
 2. La première fois, l'appli **cherche la console toute seule** sur le réseau. Si elle en trouve une, elle
    s'y connecte : rien à faire. Si la console n'est pas encore allumée, elle réessaie pendant 2 minutes.
-   - Plusieurs consoles sur le réseau, ou aucune trouvée ? Dans la page (ou ⋯ → Console dans le float) :
+   - Plusieurs consoles sur le réseau, ou aucune trouvée ? Dans la page (ou ⋮ → Console dans le float) :
      **Scanner**, choisissez la console, puis **Connecter**. Ou tapez son IP (sur la X32 :
      *Setup → Network*).
 3. Les potards prennent les gains de la console (point vert dans la languette du float). C'est connecté.
@@ -83,8 +83,8 @@ Dans la LV1, en mode **SndChk** (ou Setup), le float **se cale tout seul** dans 
 « Preamp / Gain / 48 » des 16 tranches, quelle que soit la taille de l'écran ou de la fenêtre de la LV1.
 
 Vous préférez le placer vous-même ? Déplacez-le avec le **point vert** de la languette, ajustez avec le
-**coin en bas à droite** ou **⋯ → Plus large / Plus étroit** : il passe alors en calage manuel, mémorisé
-par résolution d'écran. **⋯ → Caler sur la LV1 (auto)** le remet en place automatiquement.
+**coin en bas à droite** ou **⋮ → Plus large / Plus étroit** : il passe alors en calage manuel, mémorisé
+par résolution d'écran. **⋮ → Caler sur la LV1 (auto)** le remet en place automatiquement.
 
 ### Ce qu'il fait tout seul
 - **Suit la couche** affichée dans la LV1 (Ch 1-16, 17-32…, Custom, Masters pour le Talk Back),
@@ -110,12 +110,12 @@ aucun préampli X32 (entrée B, TracksLive, groupe…).
 - **Cliquer sur la valeur en dB** pour taper un chiffre exact.
 - **48 V** : bouton sous le potard, avec confirmation avant d'allumer.
 
-### Le menu ⋯ (dans la languette)
+### Le menu ⋮ (dans la languette)
 | Entrée | Rôle |
 |---|---|
 | **Banque** | *LV1 Ch 1-16…* (une colonne par tranche LV1, le mode normal) ou *Local / A / B 1-16* (une colonne par préampli X32, pour un préampli qui n'arrive sur aucun canal) |
 | **Plus large / Plus étroit** | Calage fin des colonnes |
-| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains |
+| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se referme en touchant ailleurs) |
 | **Routing…** | Charger un routing X32 (profil « Routing LV1 » fourni) |
 | **Console** | Barre IP / Connecter / Scanner, sous les voies |
 | **Verrouiller l'édition** | Plus aucun gain modifiable (pendant le show) |
@@ -125,7 +125,7 @@ aucun préampli X32 (entrée B, TracksLive, groupe…).
 ## 5. Le routing de la console
 
 L'appli charge sur la X32 / M32 un **routing tout prêt** pour la LV1 : quelles entrées partent vers la
-carte (EXP 1-32), et quels retours de la LV1 sortent où. Page : onglet **Routing** ; float : **⋯ →
+carte (EXP 1-32), et quels retours de la LV1 sortent où. Page : onglet **Routing** ; float : **⋮ →
 Routing…**. Avant l'envoi, l'appli montre ce qui va changer ; après, elle relit la console pour
 confirmer, et **Annuler le dernier routing** remet l'état d'avant. À faire hors signal.
 
@@ -144,7 +144,13 @@ sorties** (1-8 ou 9-16).
 Pour mettre, par exemple, **L1 sur EXP 1 et A18 sur EXP 2** (une source de la scène plus proche du S16) :
 **✎ Modifier…** sur un profil (ou **Depuis la console…** pour partir du routing actuel), choisissez la
 source de chaque EXP et le retour de chaque sortie, puis **Enregistrer** : c'est un profil de plus, qui se
-charge comme les autres. Pour revenir au standard, rechargez simplement un autre profil. Les couleurs et
+charge comme les autres.
+
+Vue **Matrice** (par défaut) : une colonne par EXP, une ligne par source (ou par sortie). Touchez une case
+pour router, retouchez-la pour couper. La ligne et la colonne visées s'allument et le texte au-dessus dit
+ce que vous allez faire (« AES50-A 18 → EXP 2 ») ; dans le float, gardez le doigt posé pour viser, glissez
+au besoin, la case est routée quand vous relevez le doigt. Vue **Listes** : un menu déroulant par EXP et
+par sortie. Pour revenir au standard, rechargez simplement un autre profil. Les couleurs et
 noms LV1 du float suivent tout seuls (EXP 2 affichera le préampli A18).
 
 ## 6. Les scènes de gains
@@ -175,7 +181,7 @@ Connexion non chiffrée : réseau de confiance seulement, pas le Wi-Fi public d'
 
 ## Lancer avec Windows
 
-Clic droit sur l'icône près de l'horloge (ou menu **⋯** du float) → **Lancer avec Windows**. L'appli
+Clic droit sur l'icône près de l'horloge (ou menu **⋮** du float) → **Lancer avec Windows**. L'appli
 démarre alors toute seule à l'ouverture de la session Windows, sans ouvrir le navigateur ; le float
 reste caché jusqu'au lancement de la LV1, puis s'y pose. Décochez pour arrêter.
 
@@ -183,13 +189,13 @@ reste caché jusqu'au lancement de la LV1, puis s'y pose. Décochez pour arrête
 
 Au lancement (puis une fois par jour), l'appli regarde sur GitHub si une version plus récente est
 publiée. Si oui : une bulle près de l'horloge, une entrée **Mise à jour… disponible** dans le menu de
-l'icône et dans le menu **⋯** du float, et un lien **⬆ disponible** en haut de la page. Ils ouvrent la
+l'icône et dans le menu **⋮** du float, et un lien **⬆ disponible** en haut de la page. Ils ouvrent la
 page de téléchargement : rien ne s'installe tout seul. Pour mettre à jour : quitter l'appli, remplacer
 l'exe par le nouveau, relancer (scènes et réglages sont gardés).
 
 ## Quitter l'appli
 
-Clic droit sur l'icône près de l'horloge → **Quitter**, ou menu **⋯** du float → **Quitter l'appli**.
+Clic droit sur l'icône près de l'horloge → **Quitter**, ou menu **⋮** du float → **Quitter l'appli**.
 Le float, la page et la connexion à la console s'arrêtent. (*Fermer le float* ne ferme que le float :
 l'appli continue, l'icône aussi.)
 
@@ -199,7 +205,7 @@ l'appli continue, l'icône aussi.)
 2. Double-clic sur `XM32_Gain_Recall_LV1.exe` (inutile avec *Lancer avec Windows*) : le float s'ouvre à
    sa place et se connecte tout seul à la dernière console.
 3. Rappeler la scène de gains du groupe, si vous en avez une.
-4. **⋯ → Verrouiller l'édition** une fois les balances faites.
+4. **⋮ → Verrouiller l'édition** une fois les balances faites.
 
 ## Quand ça ne marche pas
 
@@ -210,7 +216,7 @@ l'appli continue, l'icône aussi.)
 | Une seule voie grise | Ce préampli n'est patché sur aucun canal LV1, ou le canal est sur l'entrée **B** |
 | Le float a disparu | Normal hors Mixer 1 / Mixer 2, LV1 réduite ou fermée : il revient avec la LV1, sur Mixer 1 |
 | Le float est replié | Normal hors SndChk / Setup. Cliquez la flèche pour le déplier |
-| Colonnes décalées par rapport aux tranches | **⋯ → Caler sur la LV1 (auto)** |
+| Colonnes décalées par rapport aux tranches | **⋮ → Caler sur la LV1 (auto)** |
 | Un correctif « ne change rien » | Un ancien exe est peut-être encore ouvert : icône près de l'horloge → *Quitter* (et vérifiez qu'il n'en reste pas une 2e), relancez |
 | Après une mise à jour de la LV1 | L'appli est testée sur LV1 V17 : si les couleurs ou les couches ne suivent plus, signalez-le (onglet *Issues* du dépôt) |
 

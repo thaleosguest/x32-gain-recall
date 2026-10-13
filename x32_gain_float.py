@@ -405,6 +405,27 @@ def window_pid(hwnd):
     return pid.value
 
 
+def click_outside_app():
+    """Bouton gauche (ou doigt) enfoncé depuis la dernière lecture, sur une fenêtre d'une AUTRE appli (LV1,
+    bureau...) ? Sert à refermer les panneaux du float quand on touche ailleurs. Une fenêtre de cette appli
+    (float, panneau, éditeur, boîte de dialogue) ne compte pas."""
+    ctypes, u32 = _user32()
+    if not u32:
+        return False
+    from ctypes import wintypes
+    if not u32.GetAsyncKeyState(0x01) & 0x8001:          # VK_LBUTTON : enfoncé, ou appuyé depuis la dernière fois
+        return False
+    pt = wintypes.POINT()
+    u32.GetCursorPos(ctypes.byref(pt))
+    u32.WindowFromPoint.argtypes = [wintypes.POINT]
+    u32.WindowFromPoint.restype = ctypes.c_void_p
+    u32.GetAncestor.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+    u32.GetAncestor.restype = ctypes.c_void_p
+    h = u32.WindowFromPoint(pt)
+    root = u32.GetAncestor(h, 2) if h else None           # GA_ROOT
+    return bool(root) and window_pid(root) != os.getpid()
+
+
 _SWP = 0x0001 | 0x0002 | 0x0010 | 0x0200       # NOSIZE | NOMOVE | NOACTIVATE | NOOWNERZORDER
 
 
@@ -1019,6 +1040,155 @@ def join_tags(idxs):
     return " + ".join(tags)
 
 
+class RoutingMatrix:
+    """Éditeur de routing en matrice (2.4.0, demande de Joseph) : lignes = sources (entrées) ou sorties,
+    colonnes = EXP 1-32. Aide à la visée : ligne + colonne de la case visée surlignées, et texte « A 18 → EXP 2 ».
+    Tactile : doigt posé = visée (on peut glisser), la case est routée AU RELÂCHER ; recliquer coupe."""
+
+    CELL, LW, HEAD = 22, 120, 22
+
+    def __init__(self, master, model, orig, choices, slots):
+        self.model, self.orig, self.choices, self.slots = model, orig, choices, slots
+        self.lab = {k: {v: t for v, t in choices[k]} for k in ("in", "out")}
+        self.frame = tk.Frame(master, bg=PANEL)
+        self.info = tk.Label(self.frame, text=" ", bg=PANEL, fg=AMBER, font=("Segoe UI", 10, "bold"), anchor="w")
+        self.info.pack(fill="x")
+        self.show_all = tk.BooleanVar(value=False)
+        tk.Checkbutton(self.frame, text="Toutes les sources (+ AES50 33-48, Aux, Talkback)", variable=self.show_all,
+                       command=self.redraw, bg=PANEL, fg=MUT, selectcolor="#000000", activebackground=PANEL,
+                       font=("Segoe UI", 8)).pack(anchor="w")
+        w = self.LW + 32 * self.CELL + 4
+        # numéros des colonnes (EXP) fixes en haut : ils restent visibles quand on fait défiler
+        self.hcv = tk.Canvas(self.frame, bg="#15171a", highlightthickness=0, width=w, height=self.HEAD)
+        self.hcv.pack(anchor="w")
+        self._hband = self.hcv.create_rectangle(0, 0, 0, 0, fill="#24414d", outline="")
+        self.hcv.create_text(4, self.HEAD / 2, text="EXP →", anchor="w", fill=MUT, font=("Segoe UI", 8, "bold"))
+        self._hnums = [self.hcv.create_text(self.LW + (c - 0.5) * self.CELL, self.HEAD / 2, text=str(c), fill=MUT,
+                                            font=("Segoe UI", 9, "bold")) for c in range(1, 33)]
+        box = tk.Frame(self.frame, bg=PANEL)
+        box.pack(fill="both", expand=True)
+        self.cv = tk.Canvas(box, bg="#0b0c0d", highlightthickness=0, width=w, height=470, cursor="crosshair")
+        sb = tk.Scrollbar(box, orient="vertical", command=self.cv.yview)
+        self.cv.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.cv.pack(side="left", fill="both", expand=True)
+        self.cv.bind("<Motion>", self._aim)
+        self.cv.bind("<ButtonPress-1>", self._press)
+        self.cv.bind("<B1-Motion>", self._aim)
+        self.cv.bind("<ButtonRelease-1>", self._release)
+        self.cv.bind("<Leave>", lambda e: self._clear())
+        self.cv.bind("<MouseWheel>", lambda e: self.cv.yview_scroll(-1 * (e.delta // 120), "units"))
+        self.sections = []
+        self._down = None
+
+    def _rows(self, kind):
+        if kind == "out":
+            return [(i, t) for i, t in enumerate(self.slots)]
+        used = set(self.model["in"])
+        return [(v, t) for v, t in self.choices["in"]
+                if v and (self.show_all.get() or v <= 64 or 80 < v <= 112 or v in used)]
+
+    def _is_on(self, kind, key, c):
+        return self.model["in"][c - 1] == key if kind == "in" else self.model["out"][key] == 128 + c
+
+    def redraw(self):
+        cv, C, LW, H = self.cv, self.CELL, self.LW, self.HEAD
+        cv.delete("all")
+        self.sections = []
+        for c, item in enumerate(self._hnums, 1):
+            self.hcv.itemconfig(item, fill=AMBER if self.model["in"][c - 1] != self.orig["in"][c - 1] else MUT)
+        y = 4
+        for kind, title in (("in", "ENTRÉES → LV1 : une case par EXP (colonne)"),
+                            ("out", "SORTIES ← RETOURS LV1 : une case par sortie (ligne)")):
+            rows = self._rows(kind)
+            cv.create_text(4, y + 8, text=title, anchor="w", fill=MUT, font=("Segoe UI", 8, "bold"))
+            y += 20
+            head = y
+            for c in range(1, 33):
+                chg = kind == "in" and self.model["in"][c - 1] != self.orig["in"][c - 1]
+                cv.create_text(LW + (c - 0.5) * C, y + H / 2, text=str(c), fill=AMBER if chg else MUT,
+                               font=("Segoe UI", 8, "bold"), tags=("txt",))
+            y += H
+            top = y
+            for r, (key, label) in enumerate(rows):
+                chg = kind == "out" and self.model["out"][key] != self.orig["out"][key]
+                v = self.model["out"][key] if kind == "out" else 0
+                if kind == "out" and v and not 128 < v <= 160:
+                    label = "%s (%s)" % (label, self.lab["out"].get(v, "?"))
+                cv.create_text(4, y + C / 2, text=label, anchor="w", fill=AMBER if chg else TXT,
+                               font=("Segoe UI", 8), tags=("txt",))
+                for c in range(1, 33):
+                    x0 = LW + (c - 1) * C
+                    cv.create_rectangle(x0, y, x0 + C, y + C, outline="#23262a", tags=("grid",))
+                    if self._is_on(kind, key, c):
+                        cv.create_rectangle(x0 + 4, y + 4, x0 + C - 4, y + C - 4, fill=CYAN, outline="", tags=("on",))
+                y += C
+            self.sections.append((kind, rows, head, top, y))
+            y += 14
+        self._band_r = cv.create_rectangle(0, 0, 0, 0, fill="#1d2a30", outline="", tags=("band",))
+        self._band_c = cv.create_rectangle(0, 0, 0, 0, fill="#1d2a30", outline="", tags=("band",))
+        self._aimbox = cv.create_rectangle(0, 0, 0, 0, outline=AMBER, width=2, tags=("aim",))
+        cv.tag_lower("band")
+        cv.configure(scrollregion=(0, 0, LW + 32 * C + 4, y))
+
+    def _cell(self, e):
+        x, y = self.cv.canvasx(e.x), self.cv.canvasy(e.y)
+        c = int((x - self.LW) // self.CELL) + 1
+        for kind, rows, head, top, bottom in self.sections:
+            if top <= y < bottom and 1 <= c <= 32:
+                r = int((y - top) // self.CELL)
+                return kind, rows, head, top, bottom, r, c
+        return None
+
+    def _clear(self):
+        for item in (getattr(self, "_band_r", None), getattr(self, "_band_c", None), getattr(self, "_aimbox", None)):
+            if item:
+                self.cv.coords(item, 0, 0, 0, 0)
+        self.hcv.coords(self._hband, 0, 0, 0, 0)
+        self.info.config(text=" ")
+
+    def _aim(self, e):
+        hit = self._cell(e)
+        if not hit:
+            self._clear()
+            return
+        kind, rows, head, top, bottom, r, c = hit
+        C, LW = self.CELL, self.LW
+        y0, x0 = top + r * C, LW + (c - 1) * C
+        self.cv.coords(self._band_r, 0, y0, LW + 32 * C, y0 + C)
+        self.cv.coords(self._band_c, x0, head, x0 + C, bottom)
+        self.cv.coords(self._aimbox, x0 + 1, y0 + 1, x0 + C - 1, y0 + C - 1)
+        self.hcv.coords(self._hband, x0, 0, x0 + C, self.HEAD)
+        self.cv.tag_raise("aim")
+        key, label = rows[r]
+        if kind == "in":
+            cur = self.lab["in"].get(self.model["in"][c - 1], "OFF")
+            self.info.config(text="%s → EXP %d     (EXP %d reçoit aujourd'hui : %s)" % (label, c, c, cur))
+        else:
+            cur = self.lab["out"].get(self.model["out"][key], "OFF")
+            self.info.config(text="EXP %d → %s     (%s reçoit aujourd'hui : %s)" % (c, label, label, cur))
+
+    def _press(self, e):
+        self._aim(e)
+        hit = self._cell(e)
+        self._down = hit[0] if hit else None
+
+    def _release(self, e):
+        hit = self._cell(e)
+        if not hit or hit[0] != self._down:
+            return
+        kind, rows, head, top, bottom, r, c = hit
+        key = rows[r][0]
+        if kind == "in":
+            self.model["in"][c - 1] = 0 if self.model["in"][c - 1] == key else key
+        else:
+            self.model["out"][key] = 0 if self.model["out"][key] == 128 + c else 128 + c
+        y = self.cv.yview()[0]
+        self.redraw()
+        self.cv.yview_moveto(y)
+        self._aim(e)
+
+
 class FloatApp:
     def __init__(self, args):
         self.args = args
@@ -1164,7 +1334,7 @@ class FloatApp:
     # -- construction de l'UI -------------------------------------------
     def _build_tab(self):
         """Languette à gauche des voies (2.2.0, remplace la barre du haut) : point de connexion (poignée pour
-        déplacer la fenêtre), flèche de repli, menu ⋯ (banques, taille, scènes, routing, console, fond,
+        déplacer la fenêtre), flèche de repli, menu ⋮ (banques, taille, scènes, routing, console, fond,
         verrou, fermer), cadenas quand l'édition est verrouillée.
         Fond TRANSPARENT (HOLE) et boutons regroupés au MILIEU de la hauteur : posée sur la colonne de
         libellés de la LV1, la languette ne cache que l'espace entre « Gain » et « 48 », pas le texte
@@ -1177,8 +1347,9 @@ class FloatApp:
         self.tab_box = box
 
         def glyph(text, size, cmd=None, cursor="hand2"):
-            c = tk.Canvas(box, width=TAB_W, height=size + 6, bg="#0d0e0f", highlightthickness=0, cursor=cursor)
-            item = c.create_text(TAB_W / 2.0, (size + 6) / 2.0, text=text, fill=MUT, font=("Segoe UI", size, "bold"))
+            h = size + 14
+            c = tk.Canvas(box, width=TAB_W, height=h, bg="#0d0e0f", highlightthickness=0, cursor=cursor)
+            item = c.create_text(TAB_W / 2.0, h / 2.0, text=text, fill=TXT, font=("Segoe UI", size, "bold"))
             if cmd:
                 c.bind("<ButtonRelease-1>", lambda e: cmd())
             c.pack(side="top")
@@ -1190,8 +1361,10 @@ class FloatApp:
         self._conn_id = self.led_conn.create_oval(c - 4, c - 4, c + 4, c + 4, fill="#555555", outline="")
         self.led_conn.bind("<ButtonPress-1>", self._win_drag_start)
         self.led_conn.bind("<B1-Motion>", self._win_drag_move)
-        self.btn_collapse, self._arrow_id = glyph("◂", 9, self._toggle_collapse)
-        self.btn_more, _ = glyph("⋯", 9, self._more_menu)
+        # tactile (demande de Joseph) : glyphes plus gros et zones de toucher plus hautes ; « ⋮ » vertical pour
+        # tenir dans les 14 px de la languette
+        self.btn_collapse, self._arrow_id = glyph("◂", 12, self._toggle_collapse)
+        self.btn_more, _ = glyph("⋮", 17, self._more_menu)
         self.lock_lbl = tk.Label(box, text="🔒", bg="#0d0e0f", fg=WARN, font=("Segoe UI", 7))
         # haut du bloc fixé (centré sur la hauteur du bloc complet) : il ne bouge pas quand le ⋯ disparaît
         box.update_idletasks()
@@ -1204,7 +1377,8 @@ class FloatApp:
         return tab
 
     def _more_menu(self):
-        mk = dict(tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032", selectcolor=TXT)
+        mk = dict(tearoff=0, bg="#15171a", fg=TXT, activebackground=TEAL, activeforeground="#032", selectcolor=TXT,
+                  font=("Segoe UI", 13))      # tactile : entrées plus hautes
         m = tk.Menu(self.root, **mk)
         banks = tk.Menu(m, **mk)
         for name, _s in LV1_BANKS:
@@ -1651,7 +1825,7 @@ class FloatApp:
         self.cfg = {"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
                     "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
                     "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION,
-                    "auto_place": self.auto_place}
+                    "auto_place": self.auto_place, "routing_view": self.cfg.get("routing_view", "mx")}
         save_cfg(self.cfg)
 
     def _toggle_lock(self):
@@ -1720,6 +1894,22 @@ class FloatApp:
         self._place_dock()
         self.panel_win.deiconify()
         self._z_state = None
+        self._outside_down = True          # le clic qui vient d'ouvrir le panneau ne compte pas
+        if not getattr(self, "_watching_outside", False):
+            self._watching_outside = True
+            self.root.after(30, self._watch_outside)
+
+    def _watch_outside(self):
+        """Panneau ouvert : toutes les 30 ms (un tapotement au doigt est bref), un clic ailleurs que dans
+        l'appli (LV1, bureau...) referme le panneau (demande de Joseph)."""
+        if not self.panel_mode:
+            self._watching_outside = False
+            return
+        down = click_outside_app()
+        if down and not self._outside_down:
+            self._toggle_panel(None)
+        self._outside_down = down
+        self.root.after(30, self._watch_outside)
 
     def _panel_row(self, text, sub, on_click, on_edit=None):
         row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
@@ -1848,8 +2038,9 @@ class FloatApp:
         tk.Entry(top, textvariable=name_var, width=36, bg="#000000", fg=TXT, insertbackground=TXT,
                  relief="flat").pack(side="left", fill="x", expand=True, padx=6)
 
+        tabs = tk.Frame(w, bg=PANEL)
+        tabs.pack(fill="x", padx=8)
         holder = tk.Frame(w, bg=PANEL)
-        holder.pack(fill="both", expand=True, padx=8)
         cv = tk.Canvas(holder, bg=PANEL, highlightthickness=0, width=560, height=460)
         sb = tk.Scrollbar(holder, orient="vertical", command=cv.yview)
         cv.configure(yscrollcommand=sb.set)
@@ -1859,6 +2050,8 @@ class FloatApp:
         cv.create_window((0, 0), window=body, anchor="nw")
         body.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
         cv.bind_all("<MouseWheel>", lambda e: cv.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        combos = []
 
         def column(col, title, kind, labels):
             tk.Label(body, text=title, bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).grid(
@@ -1873,9 +2066,34 @@ class FloatApp:
                     model[kind][i] = val[kind].get(cb.get(), 0)
                 cb.bind("<<ComboboxSelected>>", changed)
                 cb.grid(row=i + 1, column=col * 2 + 1, sticky="w", pady=1)
+                combos.append((cb, kind, i))
 
         column(0, "ENTRÉES → LV1", "in", ["EXP %d" % (i + 1) for i in range(32)])
         column(1, "SORTIES ← RETOURS LV1", "out", slots or ["Sortie %d" % (i + 1) for i in range(48)])
+        mx = RoutingMatrix(w, model, orig, choices, slots or ["Sortie %d" % (i + 1) for i in range(48)])
+        view = {"v": self.cfg.get("routing_view", "mx")}
+
+        def show(v):
+            view["v"] = v
+            self.cfg["routing_view"] = v
+            for b, bv in tab_btns:
+                b.config(bg=TEAL if bv == v else "#25282b", fg="#032" if bv == v else TXT)
+            if v == "mx":
+                holder.pack_forget()
+                mx.redraw()
+                mx.frame.pack(fill="both", expand=True, padx=8, after=tabs)
+            else:
+                mx.frame.pack_forget()
+                for cb, kind, i in combos:
+                    cb.set(lab[kind].get(model[kind][i], "OFF"))
+                holder.pack(fill="both", expand=True, padx=8, after=tabs)
+        tab_btns = []
+        for text, v in (("Matrice", "mx"), ("Listes", "list")):
+            b = tk.Button(tabs, text=text, bd=0, font=("Segoe UI", 10, "bold"), padx=12, pady=4,
+                          command=lambda v=v: show(v))
+            b.pack(side="left", padx=(0, 4), pady=(0, 6))
+            tab_btns.append((b, v))
+        show(view["v"])
         tk.Label(w, text="X32R : seules OUT 1-8 sont physiques. S16 : voies 1-8 ou 9-16 selon son sélecteur de "
                          "sorties (même retour sur les deux = marche dans les deux positions). L'enregistrement ne "
                          "touche pas la console : « Charger » ensuite.", bg=PANEL, fg=MUT, font=("Segoe UI", 8),

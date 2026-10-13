@@ -2278,6 +2278,21 @@ body.v-rout #rview{display:grid}
 .erow span{flex:0 0 82px;color:var(--mut)}
 .erow select{flex:1;min-width:0;background:#000;color:var(--txt);border:1px solid var(--line2);border-radius:4px;padding:2px 4px;font:inherit}
 .erow select.chg{border-color:var(--amber)}
+.etabs{display:flex;gap:4px;margin:6px 0}.etabs button.on{background:var(--cyan);color:#032}
+.mxwrap{overflow:auto;max-height:62vh;border:1px solid var(--line2);border-radius:5px;margin:4px 0 8px}
+table.mx{border-collapse:collapse;font-size:11px;user-select:none}
+table.mx th,table.mx td{border:1px solid #23262a;min-width:19px;height:19px;padding:0;text-align:center}
+table.mx thead th{position:sticky;top:0;background:#15171a;color:var(--mut);z-index:2;font-weight:600}
+table.mx th.rh{position:sticky;left:0;background:#15171a;color:var(--txt);text-align:left;padding:0 6px;white-space:nowrap;z-index:1;font-weight:500}
+table.mx th.corner{left:0;z-index:3;text-align:left;padding:0 6px;white-space:nowrap}
+table.mx td{cursor:pointer;background:#0b0c0d}
+table.mx td.hr,table.mx td.hc{background:#1d2a30}
+table.mx th.hr,table.mx th.hc{background:#24414d;color:#fff}
+table.mx td.hx{background:#2f5666;outline:2px solid var(--amber);outline-offset:-2px}
+table.mx td.on{background:var(--cyan);box-shadow:inset 0 0 0 3px #0b0c0d}
+table.mx td.on.hx{background:var(--cyan)}
+table.mx th.chg{color:var(--amber)}
+.mxinfo{min-height:18px;font-size:13px;color:var(--amber);margin:2px 0}
 .rrow:first-of-type{border-top:0}
 .rrow .rg{flex:0 0 66px;color:var(--cyan);font:700 13px Consolas,monospace}
 .rrow.off .rs{color:#6b737a}
@@ -2772,6 +2787,8 @@ function setView(v){
   if(v==="routing")loadRoutings();
 }
 let RC=null,RS=[],RED=null;   // éditeur de routing : choix possibles, noms des sorties, profil en cours
+let EVIEW=(()=>{try{return localStorage.getItem("x32eview")||"mx";}catch(_){return "mx";}})();   // matrice / listes
+let MXALL=false;
 function loadRoutings(){return api("/api/routings").then(r=>{RP=r.profiles;RC=r.choices;RS=r.slots_out||[];if(!RP.find(p=>p.id===rsel))rsel=RP.length?RP[0].id:null;renderRouting();});}
 function rrows(list){return (list||[]).map(r=>`<div class="rrow${r.src==="OFF"?" off":""}"><span class="rg">${r.a===r.b?r.a:r.a+"\u2013"+r.b}</span><span class="rs">${esc(r.src)}</span></div>`).join("")||'<div style="color:var(--mut)">\u2014</div>';}
 function detailHTML(p){
@@ -2809,22 +2826,81 @@ function renderEditor(){
   const row=(lab,k,i)=>`<div class="erow"><span>${esc(lab)}</span><select data-k="${k}" data-i="${i}">${k==="in"?oi:oo}</select></div>`;
   $("#rdetail").innerHTML=`<div class="h" style="text-align:left">Éditeur de routing</div>
     <div class="row"><input class="inp" id="ename" maxlength="60" value="${esc(RED.name)}"></div>
-    <div class="rgrid"><div class="rsec"><h4>Entrées → LV1 (EXP 1–32)</h4>${RED.model.in.map((v,i)=>row("EXP "+(i+1),"in",i)).join("")}
+    <div class="etabs"><button class="btn${EVIEW==="mx"?" on":""}" data-v="mx">Matrice</button><button class="btn${EVIEW==="list"?" on":""}" data-v="list">Listes</button></div>
+    ${EVIEW==="mx"?`<div class="rsec"><h4>Entrées → LV1 : une case par EXP (colonne)</h4>
+      <label class="opt"><input type="checkbox" id="mxall"${MXALL?" checked":""}> Toutes les sources (+ AES50 33–48, Aux, Talkback)</label>
+      <div class="mxinfo" id="mxi-in"></div>${mxHTML("in")}
+      <h4>Sorties ← retours de la LV1 : une case par sortie (ligne)</h4><div class="mxinfo" id="mxi-out"></div>${mxHTML("out")}
+      <div class="rnote">Cliquer une case pour router, la recliquer pour couper. X32R : seules OUT 1–8 sont physiques. S16 : voies 1–8 ou 9–16 selon son sélecteur de sorties (même retour sur les deux = marche dans les deux positions).</div></div>`
+    :`<div class="rgrid"><div class="rsec"><h4>Entrées → LV1 (EXP 1–32)</h4>${RED.model.in.map((v,i)=>row("EXP "+(i+1),"in",i)).join("")}
       <div class="rnote">Chaque EXP prend n'importe quelle entrée : Local (X32), AES50-A / B (S16)…</div></div>
     <div class="rsec"><h4>Sorties ← retours de la LV1</h4>${RED.model.out.map((v,i)=>row(RS[i]||("Sortie "+(i+1)),"out",i)).join("")}
-      <div class="rnote">X32R : seules OUT 1–8 sont physiques. S16 : voies 1–8 si son sélecteur de sorties est sur 1-8, 9–16 s'il est sur 9-16 (même retour sur les deux = marche dans les deux positions).</div></div></div>
+      <div class="rnote">X32R : seules OUT 1–8 sont physiques. S16 : voies 1–8 si son sélecteur de sorties est sur 1-8, 9–16 s'il est sur 9-16 (même retour sur les deux = marche dans les deux positions).</div></div></div>`}
     <div class="row"><button class="btn go" id="esave">${RED.id?"Enregistrer":"Enregistrer comme nouveau profil"}</button>${RED.id?'<button class="btn" id="esaveas">Enregistrer sous…</button>':""}<button class="btn" id="ecancel">Fermer</button></div>
     <div class="rnote">L'enregistrement ne touche pas la console : sélectionnez ensuite le profil et « Charger ce routing ».</div>`;
   document.querySelectorAll("#rdetail select").forEach(el=>{
     const k=el.dataset.k,i=+el.dataset.i;el.value=String(RED.model[k][i]);
     const mark=()=>el.classList.toggle("chg",RED.model[k][i]!==o0[k][i]);mark();
     el.onchange=()=>{RED.model[k][i]=+el.value;mark();};});
+  document.querySelectorAll("#rdetail .etabs button").forEach(b=>b.onclick=()=>{
+    EVIEW=b.dataset.v;try{localStorage.setItem("x32eview",EVIEW);}catch(_){}renderEditor();});
+  if($("#mxall"))$("#mxall").onchange=e=>{MXALL=e.target.checked;renderEditor();};
+  document.querySelectorAll("#rdetail table.mx").forEach(mxBind);
   const save=asNew=>api("/api/routings/save",{id:asNew?null:RED.id,name:$("#ename").value,model:RED.model}).then(r=>{
     if(!r.ok)return toast(r.error,"err");
     toast("Routing « "+r.name+" » enregistré","ok");RED=null;rsel=r.id;loadRoutings();});
   $("#esave").onclick=()=>save(false);
   if($("#esaveas"))$("#esaveas").onclick=()=>save(true);
   $("#ecancel").onclick=()=>{RED=null;renderRouting();};
+}
+function mxRows(kind){
+  if(kind==="out")return RS.map((t,i)=>({key:i,label:t}));
+  const used=new Set(RED.model.in);
+  return RC.in.filter(([v])=>v!==0&&(MXALL||v<=64||(v>80&&v<=112)||used.has(v))).map(([v,t])=>({key:v,label:t}));
+}
+function mxOn(kind,key,c){return kind==="in"?RED.model.in[c-1]===key:RED.model.out[key]===128+c;}
+function mxHTML(kind){
+  const o0=JSON.parse(RED.orig),rows=mxRows(kind);
+  let h=`<div class="mxwrap"><table class="mx" data-k="${kind}"><thead><tr><th class="corner">${kind==="in"?"Source \u2193 \u00b7 EXP \u2192":"Sortie \u2193 \u00b7 EXP \u2192"}</th>`;
+  for(let c=1;c<=32;c++)h+=`<th data-c="${c}"${kind==="in"&&RED.model.in[c-1]!==o0.in[c-1]?' class="chg"':""}>${c}</th>`;
+  h+="</tr></thead><tbody>";
+  rows.forEach((r,ri)=>{
+    const v=kind==="out"?RED.model.out[r.key]:0,other=kind==="out"&&v&&!(v>128&&v<=160)?` <i style="color:var(--mut)">(${esc((RC.out.find(x=>x[0]===v)||[0,"?"])[1])})</i>`:"";
+    const chg=kind==="out"&&RED.model.out[r.key]!==o0.out[r.key];
+    h+=`<tr><th class="rh${chg?" chg":""}" data-r="${ri}">${esc(r.label)}${other}</th>`;
+    for(let c=1;c<=32;c++)h+=`<td data-r="${ri}" data-c="${c}" data-key="${r.key}"${mxOn(kind,r.key,c)?' class="on"':""}></td>`;
+    h+="</tr>";});
+  return h+"</tbody></table></div>";
+}
+function mxBind(t){
+  const kind=t.dataset.k,info=$("#mxi-"+kind),rows=mxRows(kind);
+  let last=null;
+  const clear=()=>t.querySelectorAll(".hr,.hc,.hx").forEach(e=>e.classList.remove("hr","hc","hx"));
+  t.onmouseover=e=>{
+    const td=e.target.closest("td");if(!td||td===last)return;last=td;clear();
+    const r=td.dataset.r,c=td.dataset.c;
+    t.querySelectorAll(`[data-c="${c}"]`).forEach(x=>x.classList.add("hc"));
+    t.querySelectorAll(`[data-r="${r}"]`).forEach(x=>x.classList.add("hr"));
+    td.classList.add("hx");
+    const lab=rows[+r].label;
+    if(kind==="in"){const cur=RED.model.in[c-1],ct=(RC.in.find(x=>x[0]===cur)||[0,"OFF"])[1];
+      info.textContent=lab+" \u2192 EXP "+c+"   (EXP "+c+" reçoit aujourd'hui : "+ct+")";}
+    else{const cur=RED.model.out[rows[+r].key],ct=(RC.out.find(x=>x[0]===cur)||[0,"OFF"])[1];
+      info.textContent="EXP "+c+" \u2192 "+lab+"   ("+lab+" reçoit aujourd'hui : "+ct+")";}
+  };
+  t.onmouseleave=()=>{clear();last=null;info.textContent="";};
+  t.onclick=e=>{
+    const td=e.target.closest("td");if(!td)return;
+    const c=+td.dataset.c,key=+td.dataset.key,wrap=t.parentElement,sx=wrap.scrollLeft,sy=wrap.scrollTop;
+    if(kind==="in")RED.model.in[c-1]=RED.model.in[c-1]===key?0:key;
+    else RED.model.out[key]=RED.model.out[key]===128+c?0:128+c;
+    const tmp=document.createElement("div");tmp.innerHTML=mxHTML(kind);
+    wrap.replaceWith(tmp.firstChild);
+    const nw=$("#rdetail").querySelector(`table.mx[data-k="${kind}"]`);
+    nw.parentElement.scrollLeft=sx;nw.parentElement.scrollTop=sy;mxBind(nw);
+    const td2=nw.querySelector(`td[data-r="${td.dataset.r}"][data-c="${c}"]`);
+    if(td2)td2.dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));
+  };
 }
 function routingMsg(){
   const rl=S.routing_last;if(!rl)return"";
