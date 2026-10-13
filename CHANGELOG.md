@@ -2,6 +2,9 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [Non publié]
+- **Mixer détaché dans sa propre fenêtre** (ex. Mixer 2 sur un 2e écran, fenêtre « MIXER2 » de la LV1) : un **float de plus** s'ouvre pour ce Mixer, calé sur sa fenêtre, et suit sa couche, son mode et sa tranche sélectionnée ; il se ferme quand la fenêtre est refermée ou rattachée. La fenêtre principale (5 ou 6 onglets au lieu de 7) est de nouveau reconnue : avant, l'onglet affiché n'y était plus lu. Chaque float garde ses propres réglages.
+
 ## [2.4.0] — 2026-10-13
 **Routing** : configs X32R / M32C + 2 S16 intégrées, éditeur libre en matrice ; float plus tactile.
 - **Routing en matrice** (page et float, choix Matrice / Listes retenu) : lignes = sources (ou sorties), colonnes = EXP 1-32, un clic route, un 2e clic coupe. **Aide à la visée** : ligne et colonne de la case visée surlignées, texte « AES50-A 18 → EXP 2 (EXP 2 reçoit aujourd'hui : …) », numéros d'EXP toujours visibles. Float tactile : doigt posé = visée (on peut glisser), routage au relâcher. Sources par défaut : Local, AES50 A et B 1-32 (case « Toutes les sources » pour le reste).

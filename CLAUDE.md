@@ -297,6 +297,17 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   en administrateur ; mon 1er test sur une fenêtre ordinaire passait, chez Joseph non). Ce qui marche : la fenêtre
   active change d'appli (`_watch_outside`, 30 ms, après `focus_force` du panneau) + croix ✕.
 
+## Mixer détaché (2026-10-14)
+
+- LV1 V17 : un Mixer détaché = fenêtre top-level du même processus, titre **« MIXER2 »** (« MIXER1 » supposé,
+  pas encore vu), même disposition que la page Mixer (mêmes fractions AUTO_*/SEL_*/SEL_ROWS), une seule touche
+  d'onglet ; la fenêtre principale n'a plus que 6 onglets (5 si les deux sont détachés) -> `lv1_tab(hwnd,
+  names)` avec la liste réduite (`_detached_now`). Relevé : écran 1 fenêtre principale 1728x970, écran 2
+  MIXER2 1728x972 (bureau virtuel 3840x1080).
+- `lv1_windows()` -> {"main", "MIXER1", "MIXER2"}. Serveur : `_watch_detached_mixers()` (2 s) lance un float
+  `--lv1-window MIXER2` par fenêtre détachée (`FLOAT_PROCS[clé]`) ; ce float a une surface fixe, ne lit pas
+  d'onglet, se ferme 4 s après la disparition de sa fenêtre, config `x32_float_config_MIXER2.json`.
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
@@ -305,7 +316,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `CurrentLV1.dat`, paramètre couleur 592 et palette.
 - Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
 - À revérifier aussi après une mise à jour LV1 : couches / modes (`lv1/layers.py`).
-- Non traité : deux cartes X32 dans le même rack (deux consoles) ; vue « Mixer 2 » (surface 3) non suivie.
+- Non traité : deux cartes X32 dans le même rack (deux consoles).
 
 ## Environnement cible
 

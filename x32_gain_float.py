@@ -221,13 +221,18 @@ def _user32():
         return None, None
 
 
-def find_lv1_window():
-    """HWND de la fenêtre principale de la LV1 (titre « eMotion LV1 … », visible), ou None."""
+DETACHED_TITLES = ("MIXER1", "MIXER2")   # Mixer détaché dans sa propre fenêtre (titre relevé : « MIXER2 »)
+
+
+def lv1_windows():
+    """Fenêtres visibles de la LV1 : {"main": fenêtre principale (« eMotion LV1 … »), "MIXER1" / "MIXER2" :
+    Mixer détaché dans sa propre fenêtre (relevé le 2026-10-13, LV1 V17 : titre « MIXER2 », même disposition
+    que la page Mixer de la fenêtre principale, une seule touche d'onglet)}."""
     ctypes, u32 = _user32()
     if not u32:
-        return None
+        return {}
     from ctypes import wintypes
-    found = []
+    wins = []
     proto = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
     def cb(hwnd, _l):
@@ -236,11 +241,24 @@ def find_lv1_window():
             if n:
                 buf = ctypes.create_unicode_buffer(n + 1)
                 u32.GetWindowTextW(hwnd, buf, n + 1)
-                if buf.value.startswith("eMotion LV1"):
-                    found.append(hwnd)
+                wins.append((hwnd, buf.value))
         return True
     u32.EnumWindows(proto(cb), 0)
-    return found[0] if found else None
+    out = {}
+    for hwnd, title in wins:
+        if title.startswith("eMotion LV1") and "main" not in out:
+            out["main"] = hwnd
+    pid = window_pid(out["main"]) if "main" in out else None
+    for hwnd, title in wins:
+        key = title.upper().replace(" ", "")
+        if key in DETACHED_TITLES and key not in out and (pid is None or window_pid(hwnd) == pid):
+            out[key] = hwnd
+    return out
+
+
+def find_lv1_window(title=None):
+    """HWND de la fenêtre principale de la LV1 (title None), ou de son Mixer détaché « MIXER1 » / « MIXER2 »."""
+    return lv1_windows().get(title or "main")
 
 
 def float_hwnd(root):
@@ -313,7 +331,7 @@ def screen_row(x, y, w):
         u32.ReleaseDC(None, hdc)
 
 
-def lv1_tab(hwnd):
+def lv1_tab(hwnd, names=LV1_TABS):
     """Onglet du haut affiché par la LV1 (« Mixer 1 », « Mixer 2 », « All »…), ou None si illisible.
     La LV1 ne l'écrit pas dans sa base (vérifié le 2026-10-12) : on le LIT À L'ÉCRAN. Sur une ligne en
     haut de la fenêtre (14 px sur 1080), les 7 onglets sont 7 boutons de même largeur (~4,7 % de la
@@ -332,9 +350,9 @@ def lv1_tab(hwnd):
                 runs.append((cur, start, i - start))
             cur, start = k, i
     tabs = [k for k, s, n in runs if 0.035 * w <= n <= 0.06 * w]
-    if len(tabs) < len(LV1_TABS) or tabs[:len(LV1_TABS)].count("C") != 1:
+    if len(tabs) < len(names) or tabs[:len(names)].count("C") != 1:
         return None
-    return LV1_TABS[tabs.index("C")]
+    return names[tabs.index("C")]
 
 
 # Tranche sélectionnée (mode Edit) : relevés du 2026-10-12 sur la LV1 plein écran 1920x1080, en fractions de
@@ -1256,7 +1274,7 @@ class FloatApp:
         self.root = tk.Tk()
         self.auto_var = tk.BooleanVar(value=self.auto_place)
         self.autostart_var = tk.BooleanVar(value=False)
-        self.root.title(APP_SHORT + " — Float")
+        self.root.title(APP_SHORT + " — Float" + (" (%s)" % args.lv1_window if getattr(args, "lv1_window", None) else ""))
         try:  # logo dans la barre des tâches / Alt+Tab (au lieu de la plume de Tk)
             self._icons = [tk.PhotoImage(data=d) for d in ICON_PNG_B64]
             self.root.iconphoto(True, *self._icons)
@@ -1274,7 +1292,14 @@ class FloatApp:
         self._lv1_tab = None           # onglet du haut de la LV1 (« Mixer 1 »…), lu à l'écran
         self._tab_tick = 0
         self._surface = "mixer1"       # vue LV1 suivie : celle de l'onglet Mixer 1 / Mixer 2 affiché
+        # float d'un Mixer détaché dans sa propre fenêtre (« MIXER2 »...) : surface fixe, pas d'onglet à lire
+        self.detached = getattr(args, "lv1_window", None)
+        self._detached_now = ()        # Mixers détachés en ce moment (onglets absents de la fenêtre principale)
+        self._gone_since = None
         self._shown = True             # fenêtres affichées (cachées : LV1 réduite ou autre onglet)
+        if self.detached:
+            self._lv1_tab = "Mixer 2" if self.detached == "MIXER2" else "Mixer 1"
+            self._surface = "mixer2" if self.detached == "MIXER2" else "mixer1"
         # caché tant qu'il n'y a pas de LV1 : dès qu'elle a été vue une fois (LV1 fermée -> le float disparaît
         # au lieu de rester seul au milieu de l'écran, demande de Joseph), ou d'emblée au lancement à
         # l'ouverture de session (Lancer avec Windows). Lancé sans LV1 à la main : visible, comme avant.
@@ -1758,16 +1783,32 @@ class FloatApp:
         now = time.time()
         if self._lv1_hwnd and not window_alive(self._lv1_hwnd):
             self._lv1_hwnd = None
-        if not self._lv1_hwnd and now >= self._lv1_seek:
+        if now >= self._lv1_seek:
             self._lv1_seek = now + 2.0
-            self._lv1_hwnd = find_lv1_window()
-            self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
+            found = lv1_windows()
+            # onglets Mixer absents de la fenêtre principale quand ils sont détachés dans leur propre fenêtre
+            self._detached_now = tuple(k for k in DETACHED_TITLES if k in found)
+            if not self._lv1_hwnd:
+                self._lv1_hwnd = found.get(self.detached or "main")
+                self._lv1_pid = window_pid(self._lv1_hwnd) if self._lv1_hwnd else None
         lv1 = self._lv1_hwnd
+        if self.detached:
+            # fenêtre du Mixer refermée / rattachée : ce float n'a plus lieu d'être (l'appli en relancera un
+            # si elle réapparaît)
+            if lv1:
+                self._gone_since = None
+            else:
+                self._gone_since = self._gone_since or now
+                if now - self._gone_since > 4:
+                    self.quit()
+                    return
         fg = foreground_window()
         front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
         self._tab_tick += 1
         if lv1 and not window_iconic(lv1) and front and self._tab_tick % 3 == 0:
-            tab = lv1_tab(lv1)          # illisible (fenêtre couverte...) : on garde le dernier connu
+            names = tuple(t for t in LV1_TABS if t.replace(" ", "").upper() not in self._detached_now)
+            # Mixer détaché : sa fenêtre n'affiche que lui, pas d'onglet à lire
+            tab = None if self.detached else lv1_tab(lv1, names)   # illisible : on garde le dernier connu
             if tab:
                 self._lv1_tab = tab
                 if tab in MIXER_TABS:
@@ -2521,7 +2562,8 @@ def main():
                      help=argparse.SUPPRESS)  # usage interne : passe par le bouton "Float" du navigateur
                      # pour eviter de retaper le code d'acces --lan ; non documente pour la saisie manuelle
     ap.add_argument("--lv1-front", action="store_true", help=argparse.SUPPRESS)  # lancement auto : LV1 devant
-    ap.add_argument("--wait-lv1", action="store_true", help=argparse.SUPPRESS)   # ouverture de session : caché sans LV1
+    ap.add_argument("--wait-lv1", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--lv1-window", default=None, help=argparse.SUPPRESS)   # Mixer détaché suivi (« MIXER2 »)   # ouverture de session : caché sans LV1
     ap.add_argument("--direct", action="store_true",
                      help="connexion OSC directe à la console, sans passer par x32_gain_recall.py")
     ap.add_argument("--ip", help="adresse IP de la X32 (avec --direct)")
@@ -2543,6 +2585,14 @@ def main():
                      help="intervalle (s) d'interrogation de Companion pour les couleurs (défaut 1.0 ; "
                           "pas la boucle de gains à 200ms, pour ne pas bloquer l'UI sur 16 requêtes HTTP)")
     args = ap.parse_args()
+    if args.lv1_window:
+        # réglages propres au float de ce Mixer détaché (position, banque...) ; au 1er lancement, ceux du
+        # float principal (fond, vue...)
+        global CFG_PATH
+        main_cfg = load_cfg()
+        CFG_PATH = os.path.join(os.path.dirname(CFG_PATH), "x32_float_config_%s.json" % args.lv1_window)
+        if not os.path.exists(CFG_PATH):
+            save_cfg({k: v for k, v in main_cfg.items() if k in ("theme", "view", "routing_view")})
     try:
         app = FloatApp(args)
         app.run()

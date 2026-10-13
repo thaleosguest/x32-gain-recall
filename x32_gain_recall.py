@@ -1419,10 +1419,10 @@ def scan_network(timeout=1.5, port=X32_PORT):
     return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
 
 
-FLOAT_PROC = None  # float lance par cette appli (un seul a la fois)
+FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
-def launch_float_window(extra=()):
+def launch_float_window(extra=(), key="main"):
     """Lance la fenetre flottante en tant que processus separe, SUR CETTE MACHINE.
 
     Depuis la 1.5.0, plus de second .exe a gerer : la fenetre flottante est integree au meme
@@ -1437,8 +1437,8 @@ def launch_float_window(extra=()):
     facon. Ce bouton n'a donc d'utilite que pour qui clique depuis le navigateur de CETTE
     machine (cas typique : PC qui heberge aussi la LV1).
     """
-    global FLOAT_PROC
-    if FLOAT_PROC is not None and FLOAT_PROC.poll() is None:
+    proc = FLOAT_PROCS.get(key)
+    if proc is not None and proc.poll() is None:
         return True, ""  # deja ouvert (au demarrage ou par un clic precedent) : pas de deuxieme float
     frozen = getattr(sys, "frozen", False)
     here = os.path.dirname(os.path.abspath(sys.executable if frozen else __file__))
@@ -1458,7 +1458,7 @@ def launch_float_window(extra=()):
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
-        FLOAT_PROC = subprocess.Popen(cmd, **kwargs)
+        FLOAT_PROCS[key] = subprocess.Popen(cmd, **kwargs)
     except OSError as e:
         return False, "Lancement impossible : %s" % e
     return True, ""
@@ -1614,11 +1614,12 @@ def autostart_init():
 def quit_app():
     """Quitter (icone ou float) : arrete le serveur ; le float et l'onglet du navigateur se ferment d'eux-memes
     quand l'appli ne repond plus (voir x32_gain_float._poll et la page)."""
-    if FLOAT_PROC is not None and FLOAT_PROC.poll() is None:
-        try:
-            FLOAT_PROC.terminate()
-        except OSError:
-            pass
+    for proc in list(FLOAT_PROCS.values()):
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
     if TRAY:
         TRAY.stop()
     if SERVER:
@@ -1681,6 +1682,23 @@ def start_tray():
         TRAY.items = [i for n, i in enumerate(TRAY.items) if not (i is None and n and TRAY.items[n - 1] is None)]
 
 
+def _watch_detached_mixers():
+    """LV1 avec un Mixer détaché dans sa propre fenêtre (« MIXER1 » / « MIXER2 », souvent sur un 2e écran) : un
+    float de plus pour ce Mixer, calé sur sa fenêtre (demande de Joseph, 2026-10-13). Ce float se ferme tout
+    seul quand la fenêtre disparaît ; on le relance si elle revient."""
+    while True:
+        try:
+            for hwnd in _windows(lambda t: t.upper().replace(" ", "") in ("MIXER1", "MIXER2")):
+                import ctypes
+                buf = ctypes.create_unicode_buffer(64)
+                ctypes.windll.user32.GetWindowTextW(hwnd, buf, 64)
+                key = buf.value.upper().replace(" ", "")
+                launch_float_window(["--lv1-window", key], key=key)
+        except Exception as e:
+            print("Mixers detaches : %s" % e)
+        time.sleep(2)
+
+
 def _startup_windows(url, browser, float_win, at_login=False):
     """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours, puis la LV1
     au premier plan. Ouverture de session (--at-login) : pas de navigateur, le float attend la LV1."""
@@ -1694,6 +1712,8 @@ def _startup_windows(url, browser, float_win, at_login=False):
         ok, err = launch_float_window(["--wait-lv1"] if at_login else ["--lv1-front"])
         if not ok:
             print(err)
+        if sys.platform == "win32":
+            threading.Thread(target=_watch_detached_mixers, daemon=True).start()
 
 
 def start_sim():

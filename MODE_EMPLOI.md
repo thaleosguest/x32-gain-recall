@@ -92,6 +92,8 @@ par résolution d'écran. **⋮ → Caler sur la LV1 (auto)** le remet en place 
 - **Se déplie** en mode **SndChk** ou **Setup**, **se replie** dans les autres modes
   (il ne reste que le point vert et la flèche).
 - **Disparaît** quand la LV1 est fermée, réduite, ou affiche un autre onglet que Mixer 1 / Mixer 2.
+- **Mixer détaché** (Mixer 1 ou 2 ouvert dans sa propre fenêtre, sur un 2e écran par exemple) : un
+  **2e float** s'ouvre tout seul pour cette fenêtre et s'y cale ; il disparaît quand vous la refermez.
 - Reste **devant la LV1 mais derrière les autres applis** (il ne vous gêne pas dans le navigateur).
 - **Suit l'entrée A/B** de chaque canal : un canal basculé sur B (TracksLive, virtual soundcheck)
   n'a pas de préampli X32 à afficher.
