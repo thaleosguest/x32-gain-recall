@@ -17,7 +17,7 @@ Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 ## État actuel : v2.5.0 publiée (2026-10-14)
 
 Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.5.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.5.0 (branche `dev-2.4.1`) fusionnée dans `main` ; avant : #7 (v2.4.0), #6 (v2.3.0), #5 (v2.2.0), #4, #1-#3.
+PR #8 de la 2.5.0 (branche `dev-2.4.1`) fusionnée dans `main` ; avant : #7 (v2.4.0), #6 (v2.3.0), #5 (v2.2.0), #4, #1-#3.
 2.5.0 = pages détachées (un float par Mixer détaché, onglets lus avec la liste réduite), page Channel (canal lu à
 l'écran, chiffres relevés par taille, vérifié contre le patch), 48V au style du float, bulle des dB, lectures
 d'écran sur un fil à part (potards fluides). Ressources mesurées : ~0,3 % CPU de la machine, ~100 Mo en tout.
@@ -337,6 +337,14 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   « potards moins précis ». Zone Channel `CH_BOX` (7..213/1728, 27 %..52 %).
 - `PreampBox` (cadre Edit + cadre Channel), `confirm_float` (48V), `ValuePop` (bulle des dB au glisser, se place
   une fois puis ne change que le chiffre ; option `value_pop` du menu ⋮).
+
+## X32 en stage box d'une Core (2026-10-14)
+
+- X32 pleine taille reliée en AES50 A à une X32/M32 Core (carte DN32-WSG) : sur la X32 de scène, *Setup →
+  Preamps* « HA REMOTE : AES50 Port A » (photo de Joseph) -> la Core pilote ses préamplis comme ceux d'une S16
+  (AES50-A 1-32) : pas besoin de connecter l'appli aux deux consoles. « HA Gain Split » décoché.
+- Profils : `core_x32stage_a` (modèle) et `x32stage_for_core_a` (`_builtin_nodes()`, lignes brutes : 32 voies
+  AES50 en sortie, hors du modèle de l'éditeur limité à 16). Pas encore testé sur le matériel.
 
 ## Reste à faire / idées
 

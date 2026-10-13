@@ -2,6 +2,9 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [Non publié]
+- **Routing : X32 / M32 Core + X32 pleine taille en stage box** (AES50 A) : profil *LV1 — Core + X32 stage box* pour la Core (AES50-A 1-32 → EXP 1-32, EXP 1-16 → AES50 A) et profil *Stage box — X32 vers Core* à charger sur la X32 de scène (Local 1-32 → AES50 A, AES50-A 1-16 → OUT 1-16). Avec « HA Remote : AES50 Port A » sur la X32 de scène, la Core pilote ses préamplis : le float les règle comme ceux d'une S16.
+
 ## [2.5.0] — 2026-10-14
 **Page Channel, pages détachées, tactile** : préampli du canal affiché sur la page Channel, un float par Mixer détaché, 48V et bulle des dB pour le doigt, potards fluides.
 - **Page Channel** : le gain et le 48V du préampli X32 du canal affiché se posent dans la zone grisée « Preamp / Gain / 48V » du bloc Channel Input (onglet Channel ou fenêtre CHANNEL détachée), et suivent « < » / « > » ; potards grand format (un seul sur toute la largeur en mono), sous la ligne « Left / Right » d'un canal stéréo. La LV1 ne dit nulle part quel canal elle affiche : l'appli lit à l'écran « Channel N: » et « … EXP N », à l'identique de chiffres relevés (plein écran 1920x1080 et fenêtre 1728x970), et n'affiche rien si ce n'est pas cohérent avec le patch de la LV1 et la couleur du canal. Chiffre manquant pour une taille : appris tout seul quand le reste concorde.

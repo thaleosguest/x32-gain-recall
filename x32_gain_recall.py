@@ -488,7 +488,27 @@ def _builtin_models():
         ("m32c_s16a_s16b", "LV1 — M32C + S16 A + S16 B", {
             "in": a16 + b16,
             "out": [0] * 16 + eight(1) * 2 + eight(9) * 2}),
+        # X32 / M32 Core (carte vers la LV1) + X32 pleine taille en stage box sur AES50 A (2026-10-14) : la X32 de
+        # scène, en « HA Remote : AES50 Port A », laisse la Core piloter ses préamplis (= AES50-A 1-32 ici)
+        ("core_x32stage_a", "LV1 — Core + X32 stage box (AES50 A)", {
+            "in": [32 + k for k in range(1, 33)],                       # AES50-A 1-32 -> EXP 1-32
+            "out": [0] * 16 + [_exp(k) for k in range(1, 17)] + [0] * 16}),   # EXP 1-16 -> AES50-A 1-16
     ]
+
+
+def _builtin_nodes():
+    """Profils intégrés écrits directement en lignes de routing (hors du modèle de l'éditeur, limité à 16 voies
+    AES50 par port). X32 de scène reliée à une Core : ses 32 entrées partent sur AES50 A, les 16 retours qui en
+    arrivent sortent sur ses OUT 1-16 (User Out 1-16 = AES50-A 1-16, User Out 17-48 = Local 1-32)."""
+    uout = [32 + k for k in range(1, 17)] + list(range(1, 33))
+    io = dict(ROUT_FIXED)
+    io.update({
+        "/config/userrout/in": " ".join(str(k) for k in range(1, 33)),        # voies de la console = Local 1-32
+        "/config/userrout/out": " ".join(str(v) for v in uout),
+        "/config/routing/OUT": "UOUT1-4 UOUT5-8 UOUT9-12 UOUT13-16",
+        "/config/routing/AES50A": "UOUT17-24 UOUT25-32 UOUT33-40 UOUT41-48 UOUT17-24 UOUT25-32",
+    })
+    return [("x32stage_for_core_a", "Stage box — X32 vers Core (AES50 A)", {"io": io, "out": {}})]
 
 
 # --------------------------------------------------------------------------
@@ -1223,6 +1243,11 @@ class RoutingStore:
             if key not in self.seeded_keys:
                 pr = self._add(name, None, routing_nodes_from_model(model), "intégré")
                 pr["model"] = model
+                self.seeded_keys.append(key)
+                changed = True
+        for key, name, nodes in _builtin_nodes():
+            if key not in self.seeded_keys:
+                self._add(name, None, nodes, "intégré (à charger sur la X32 de scène)")
                 self.seeded_keys.append(key)
                 changed = True
         if changed:

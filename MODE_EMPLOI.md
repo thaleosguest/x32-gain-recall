@@ -146,6 +146,14 @@ Profils fournis :
 | **Routing LV1** (X32R + S16 sur AES50 A) | X32R 1-16 → EXP 1-16, S16 A 1-16 → EXP 17-32 | EXP 1-16 → X32R OUT, EXP 1-8 / 9-16 → S16 (selon son sélecteur) |
 | **LV1 — X32R + S16 A + S16 B** | S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 | EXP 1-8 → X32R OUT 1-8, EXP 9-16 → S16 A, EXP 17-24 → S16 B |
 | **LV1 — M32C + S16 A + S16 B** | S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 | EXP 1-8 → S16 A, EXP 9-16 → S16 B |
+| **LV1 — Core + X32 stage box (AES50 A)** | X32 de scène 1-32 (via AES50 A) → EXP 1-32 | EXP 1-16 → AES50 A (OUT 1-16 de la X32 de scène) |
+| **Stage box — X32 vers Core (AES50 A)** *(à charger sur la X32 de scène)* | Local 1-32 → AES50 A | AES50 A 1-16 → OUT 1-16 |
+
+**X32 pleine taille en stage box** d'une X32 / M32 Core : sur la X32 de scène, *Setup → Preamps* : cocher
+**HA Remote : AES50 Port A** (la Core pilote alors ses préamplis : le float les règle comme ceux d'une S16) et
+laisser **HA Gain Split** décoché. Chargez « Core + X32 stage box » avec l'appli connectée à la Core, puis
+« Stage box — X32 vers Core » en connectant l'appli à la X32 de scène (*Scanner* trouve les deux), et
+reconnectez-la à la Core.
 
 Pour les deux derniers, les retours sortent des S16 **quelle que soit la position de leur sélecteur de
 sorties** (1-8 ou 9-16).
