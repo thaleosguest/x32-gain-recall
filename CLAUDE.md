@@ -372,6 +372,18 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Panneau du float : fermeture automatique (fenêtre active) SUPPRIMÉE, croix ✕ seulement : le clavier tactile de
   Windows est une autre appli et fermait le panneau pendant la saisie (Joseph, 2026-10-14).
 
+## Look du float (2.7.0, en cours sur `dev-2.7`)
+
+- Piste « liseré LV1 » choisie par Joseph parmi 3 (cartes / anneau couleur / liseré) : liseré = pastille du haut de
+  colonne (existait déjà), potard à **arc de la couleur du canal** qui suit le gain (gris si couleur inconnue),
+  dB en blanc sur le fond, 48V entouré, rouge `PH_ON` quand actif (bleu avant).
+- Potard = image calculée pixel par pixel avec anti-crénelage (`knob_image`, Python pur : Tk ne lisse pas sous
+  Windows, pas de Pillow) ; géométrie par taille + images en cache (44 px ~3 ms, 130 px ~27 ms la 1re fois).
+- Question de Joseph « mieux que tk ? » : réponse donnée = rester sur tk pour la 2.7 (tout le calage LV1, la
+  transparence `-transparentcolor` et le z-order y sont réglés) ; Qt (PySide6) possible pour une 3.0.
+- Tester les colonnes : script qui crée des `Strip` avec un faux `owner` (locked, sensitivity, send_gain, label,
+  value_pop, root) + capture BitBlt ; le float `--direct --sim` n'a pas d'EXP (colonnes transparentes).
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
