@@ -1335,6 +1335,173 @@ class RoutingStore:
 #  Serveur HTTP local + API
 # --------------------------------------------------------------------------
 CLIENT = X32Client()
+
+# Plusieurs consoles (2026-10-14, demande de Joseph : 3 consoles, chacune avec sa carte dans le rack de la LV1).
+# La console 1 est CLIENT (inchangé) ; les suivantes sont dans EXTRA. Chaque console est associée à SA carte
+# (position dans le rack LV1, le « 2- » de « 2-EX 1 »). Numéros globaux : préampli k*N_HA + i, EXP k*1000 + v
+# (console 0 = numéros d'origine : rien ne change avec une seule console).
+EXTRA = []                     # [{"client": X32Client, "ip": str, "card": position ou None}]
+PRIMARY = {"card": None}       # carte de la console 1 (None : toute carte DN32-WSG / X-WSG, comme avant)
+CONSOLES_LOCK = threading.RLock()
+
+
+def all_consoles():
+    """[(n° 0-based, client, carte)]."""
+    with CONSOLES_LOCK:
+        return [(0, CLIENT, PRIMARY["card"])] + [(k, e["client"], e["card"]) for k, e in enumerate(EXTRA, 1)]
+
+
+def save_consoles():
+    s = load_settings()
+    s["card"] = PRIMARY["card"]
+    s["consoles"] = [{"ip": e["ip"], "card": e["card"]} for e in EXTRA]
+    try:
+        save_settings(s)
+    except OSError:
+        pass
+
+
+def update_card_map():
+    """Association cartes LV1 -> consoles, transmise à la lecture du patch LV1. Aucune association (une seule
+    console, carte non choisie) : {} = comportement d'origine."""
+    m = {}
+    for k, _c, card in all_consoles():
+        if card:
+            m[int(card)] = k
+    if LV1:
+        LV1.set_card_map(m if (m and (PRIMARY["card"] or EXTRA)) else {})
+
+
+def _norm_name(t):
+    t = re.sub(r"\s*\([^)]*\)\s*$", "", str(t or ""))      # « X32RACK (IOBox) » -> « X32RACK »
+    return re.sub(r"[^a-z0-9]", "", t.lower())
+
+
+def auto_assign_cards():
+    """Console sans carte : celle dont le nom (dans la LV1) correspond au nom de la console (« X32RACK » <->
+    « X32RACK-JS »), si une seule correspond et qu'elle n'est pas déjà prise. Rien sinon (choix dans le float)."""
+    if not LV1:
+        return
+    cards = LV1.cards()
+    changed = False
+    with CONSOLES_LOCK:
+        used = {c for _k, _cl, c in all_consoles() if c}
+        for k, client, card in all_consoles():
+            if card or not EXTRA:            # une seule console : rien à associer
+                continue
+            cname = _norm_name((client.info or {}).get("name"))
+            if not cname:
+                continue
+            cands = [c["slot"] for c in cards if c["slot"] not in used and _norm_name(c["name"])
+                     and (_norm_name(c["name"]) in cname or cname in _norm_name(c["name"]))]
+            if len(cands) == 1:
+                if k == 0:
+                    PRIMARY["card"] = cands[0]
+                else:
+                    EXTRA[k - 1]["card"] = cands[0]
+                used.add(cands[0])
+                changed = True
+    if changed:
+        save_consoles()
+        update_card_map()
+
+
+def add_console(ip, card=None, save=True):
+    client = X32Client()
+    with CONSOLES_LOCK:
+        if any(e["ip"] == ip for e in EXTRA) or CLIENT.ip == ip:
+            return False, "Console déjà ajoutée"
+        EXTRA.append({"client": client, "ip": ip, "card": card})
+    client.connect(ip)
+    threading.Thread(target=lambda: (time.sleep(1.5), client.refresh_exp_map()), daemon=True).start()
+    if save:
+        save_consoles()
+    update_card_map()
+    return True, ""
+
+
+def remove_console(n):
+    with CONSOLES_LOCK:
+        if not 1 <= n <= len(EXTRA):
+            return False
+        e = EXTRA.pop(n - 1)
+    e["client"].disconnect()
+    save_consoles()
+    update_card_map()
+    return True
+
+
+def set_console_card(n, card):
+    card = int(card) if card else None
+    with CONSOLES_LOCK:
+        for k, _c, c in all_consoles():
+            if card and c == card and k != n:
+                return False, "Carte déjà associée à la console %d" % (k + 1)
+        if n == 0:
+            PRIMARY["card"] = card
+        elif 1 <= n <= len(EXTRA):
+            EXTRA[n - 1]["card"] = card
+        else:
+            return False, "Console introuvable"
+    save_consoles()
+    update_card_map()
+    return True, ""
+
+
+def console_for(idx):
+    """(client, index local) d'un préampli global."""
+    k, i = divmod(int(idx), N_HA)
+    with CONSOLES_LOCK:
+        if k == 0:
+            return CLIENT, i
+        if 1 <= k <= len(EXTRA):
+            return EXTRA[k - 1]["client"], i
+    return None, i
+
+
+def merged_snapshot():
+    """État de la console 1, complété des préamplis / EXP des consoles suivantes (numéros globaux) et de la liste
+    des consoles et des cartes LV1."""
+    snap = CLIENT.snapshot()
+    consoles = []
+    for k, client, card in all_consoles():
+        cs = snap if k == 0 else client.snapshot()
+        if k:
+            snap["gains"] = snap["gains"] + cs["gains"]
+            snap["phantom"] = snap["phantom"] + cs["phantom"]
+            snap["names"] = snap["names"] + cs["names"]
+            for i, e in (cs.get("exp_map") or {}).items():
+                snap["exp_map"][k * N_HA + int(i)] = k * 1000 + int(e)
+        consoles.append({"n": k, "ip": client.ip, "name": (client.info or {}).get("name"), "card": card,
+                         "connected": cs["connected"], "trying": cs["trying"]})
+    snap["consoles"] = consoles
+    snap["lv1_cards"] = LV1.cards() if LV1 else []
+    return snap
+
+
+def merged_meters():
+    m = CLIENT.meters_snapshot()
+    for k, client, _card in all_consoles():
+        if k:
+            mk = client.meters_snapshot()
+            m["v"] = m["v"] + mk["v"]
+            m["live"] = m["live"] or mk["live"]
+    return m
+
+
+def consoles_loop():
+    """Toutes les 2 s : association automatique des cartes par le nom (les noms des consoles arrivent après la
+    connexion)."""
+    while True:
+        try:
+            auto_assign_cards()
+            for k, client, _card in all_consoles():
+                # console ajoutée avant d'être joignable : son routing (EXP) est relu dès qu'elle répond
+                if k and client.snapshot()["connected"] and not client.exp_map:
+                    client.refresh_exp_map()
+        except Exception as e:
+            print("Consoles : %s" % e)
+        time.sleep(2)
 STORE = None
 ROUTINGS = None
 SIM = None
@@ -1859,7 +2026,7 @@ class Handler(BaseHTTPRequestHandler):
         if needs_login:
             return self._reject_auth_api()
         if path == "/api/state":
-            snap = CLIENT.snapshot()
+            snap = merged_snapshot()
             # Affiche dans l'UI (deja protege par needs_login ci-dessus) : code, adresses, et si le
             # code peut etre change a chaud depuis cette page (seulement en --lan avec code actif).
             snap["lan_code"] = LAN_CODE
@@ -1871,7 +2038,7 @@ class Handler(BaseHTTPRequestHandler):
             snap["autostart_ok"] = autostart_command() is not None
             self._json(snap)
         elif path == "/api/meters":
-            self._json(CLIENT.meters_snapshot())
+            self._json(merged_meters())
         elif path == "/api/routings":
             self._json({"profiles": ROUTINGS.summaries(), "groups": ROUTING_GROUPS, "path": ROUTINGS.path,
                         "choices": routing_choices(), "slots_out": ROUT_SLOTS_OUT})
@@ -2058,11 +2225,27 @@ class Handler(BaseHTTPRequestHandler):
                 SESSIONS.add(keep)
             return self._json({"ok": True, "code": LAN_CODE})
         if p == "/api/gain":
-            v = CLIENT.set_gain(int(d["idx"]), float(d["db"]))
+            client, i = console_for(d["idx"])
+            v = client.set_gain(i, float(d["db"])) if client else None
             return self._json({"ok": v is not None, "db": v})
         if p == "/api/phantom":
-            CLIENT.set_phantom(int(d["idx"]), bool(d["on"]))
-            return self._json({"ok": True})
+            client, i = console_for(d["idx"])
+            if client:
+                client.set_phantom(i, bool(d["on"]))
+            return self._json({"ok": client is not None})
+        if p == "/api/consoles/add":
+            ip = str(d["ip"]).strip()
+            try:
+                socket.inet_aton(ip)
+            except OSError:
+                return self._json({"ok": False, "error": "Adresse IP invalide"})
+            ok, err = add_console(ip, d.get("card") or None)
+            return self._json({"ok": ok, "error": err})
+        if p == "/api/consoles/remove":
+            return self._json({"ok": remove_console(int(d["n"]))})
+        if p == "/api/consoles/card":
+            ok, err = set_console_card(int(d["n"]), d.get("card"))
+            return self._json({"ok": ok, "error": err})
         if p == "/api/presets/save":
             gains, phantom, names, info = self._capture()
             if not gains:
@@ -2478,9 +2661,10 @@ function label(i){return i<32?String(i+1):(i<80?"A"+(i-31):"B"+(i-79));}
    via /config/routing/CARD + /config/userrout/in), jamais suppose. Vide si non connecte, si la
    lecture a echoue, ou si ce canal n'est pas patche vers la carte en ce moment - jamais un numero
    invente. Se met a jour apres connexion, "Relire", ou l'envoi d'un routing. */
-function expLabel(i){const v=(S.exp_map||{})[i];return v?("EXP "+v):"";}
+function expLabel(i){const v=(S.exp_map||{})[i];return v?("EXP "+expTxt(v)):"";}
 /* Repere avec la source, comme dans le float : "L 15" (Local), "A 1" / "B 3" (AES50-A/B). */
-function tag(i){return i<32?"L "+(i+1):(i<80?"A "+(i-31):"B "+(i-79));}
+function tag(i){if(i>=128)return (Math.floor(i/128)+1)+"·"+tag(i%128);return i<32?"L "+(i+1):(i<80?"A "+(i-31):"B "+(i-79));}
+function expTxt(e){e=+e;return e<1000?String(e):(Math.floor(e/1000)+1)+"·"+(e%1000);}
 function footLabel(i){const e=expLabel(i);return e?tag(i)+" = "+e:tag(i);}
 /* meme texte, en deux morceaux insecables : passe sur 2 lignes (« L 15 » / « = EXP 15 ») si la voie
    est trop etroite, au lieu de couper le numero EXP */
@@ -2571,7 +2755,7 @@ function updateGroups(){
   document.querySelectorAll(".grp").forEach(g=>{
     const ch=+g.dataset.ch,inf=(S.lv1_channels||{})[ch]||{},hd=g.querySelector(".hd"),lb=inf.label||("In "+ch);
     const exps=(S.lv1_sources||{})[ch]||[];
-    hd.textContent=lb;hd.title=lb+" — canal LV1 In "+ch+(exps.length?" · EXP "+exps.join("/"):" · aucune entrée X32");
+    hd.textContent=lb;hd.title=lb+" — canal LV1 In "+ch+(exps.length?" · EXP "+exps.map(expTxt).join("/"):" · aucune entrée X32");
     hd.style.background=inf.color||"#39424a";hd.style.color=inf.color?inkFor(inf.color):"#e9edf0";
   });
 }
@@ -3447,6 +3631,13 @@ def main():
         print("  ! %s" % err)
     print("Quitter : icone pres de l'horloge (clic droit), ou menu ... du float." +
           (" Ou Ctrl+C ici." if sys.stdout and sys.stdout.isatty() else ""))
+    st = load_settings()
+    PRIMARY["card"] = st.get("card") or None
+    for c in st.get("consoles") or []:
+        if c.get("ip"):
+            add_console(c["ip"], c.get("card"), save=False)
+    update_card_map()
+    threading.Thread(target=consoles_loop, daemon=True).start()
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

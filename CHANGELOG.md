@@ -3,6 +3,7 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
+- **Plusieurs consoles** (une carte DN32-WSG / X-WSG par console dans le rack de la LV1) : float ⋮ → *Consoles…* pour ajouter les consoles 2, 3… (adresse IP ou Scanner) et choisir la carte de chacune (position dans le rack, le « 2- » de « 2-EX 1 » ; choisie automatiquement si son nom dans la LV1 reprend celui de la console). Le float règle les préamplis de toutes les consoles, chacun sur sa tranche LV1 (repères « 2·A 5 = EXP 2·5 » pour la console 2). Consoles et cartes mémorisées. Une seule console : rien ne change. Scènes de gains et routing : console 1.
 - **Routing : M32C + X32 pleine taille en stage box** : profils *LV1 — M32C + X32 stage box (AES50 A)* et *(AES50 B)*, à charger sur la M32C (maître, avec la carte) : AES50 1-32 → EXP 1-32, EXP 1-16 → AES50 1-16. Avec « HA Remote » sur la X32 de scène, la M32C pilote ses préamplis : le float les règle comme ceux d'une S16.
 
 ## [2.5.0] — 2026-10-14

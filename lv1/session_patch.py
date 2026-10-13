@@ -127,6 +127,17 @@ def load_device_labels(con):
     return labels
 
 
+def load_cards(con):
+    """Appareils d'E/S du rack de la LV1 (cartes de console, DAW...) : [{"slot": position 1-based (le « 2- » de
+    « 2-EX 1 »), "name", "model"}]. Sert à associer chaque console X32/M32 à SA carte (plusieurs consoles)."""
+    out = []
+    for assign, (label, model) in sorted(load_device_labels(con).items()):
+        if assign is None or assign < 0:
+            continue
+        out.append({"slot": assign + 1, "name": label, "model": model})
+    return out
+
+
 def load_channel_widths(con):
     """{canal idx 0-based: 1 (mono) ou 2 (stéréo)}, ou {} si la session n'a pas cette info.
     La largeur est chainer.num_inputs de l'objet canal (object.obj_type = 0, obj_index = canal) —
@@ -184,6 +195,7 @@ def read_session(db_path):
     try:
         cur = con.cursor()
         device_labels = load_device_labels(con)
+        cards = load_cards(con)
         widths = load_channel_widths(con)
         info = read_channel_info(con)
         selected = load_input_select(con)
@@ -217,7 +229,7 @@ def read_session(db_path):
         label, model = device_labels.get(assign, (f"device#{assign}", ""))
         g = groups.setdefault((ch_idx + 1, section, assign), {
             "input": INPUT_NAMES.get(section, str(section)),
-            "device": label, "model": model,
+            "device": label, "model": model, "slot": assign + 1,
             "sources": [], "active": False})
         g["sources"].append(src_idx + 1)
         # entrée sélectionnée (A par défaut), voir load_input_select() - pas routes.status
@@ -226,6 +238,8 @@ def read_session(db_path):
     channels = {}
     for (ch, section, assign), g in sorted(groups.items()):
         channels.setdefault(ch, []).append(g)
+    layer = dict(layer or {})
+    layer["_cards"] = cards              # transporté avec les couches (pas un champ de canal)
     return channels, info, layer
 
 
@@ -244,12 +258,26 @@ def extract_patch(db_path, devices=DEFAULT_DEVICES):
     return pick_sources(extract_routes(db_path), devices)
 
 
-def pick_sources(routes, devices=DEFAULT_DEVICES, follow_ab=True):
+def pick_sources(routes, devices=DEFAULT_DEVICES, follow_ab=True, card_map=None):
     """Comme extract_patch(), à partir de routes déjà lues (read_session).
     follow_ab (2.2.0, demande de Joseph) : seule l'entrée SÉLECTIONNÉE (A ou B) de chaque canal compte.
     Entrée sélectionnée : paramètre 0 du canal (load_input_select), réécrit aussitôt par la LV1 à chaque
     bascule A/B et à FlipAB (enregistreur, 2026-10-12).
-    Canal sur B (TracksLive, virtual soundcheck) : aucun préampli X32 ne l'alimente -> absent."""
+    Canal sur B (TracksLive, virtual soundcheck) : aucun préampli X32 ne l'alimente -> absent.
+    card_map {position de carte: n° de console 0-based} (plusieurs consoles, 2026-10-14) : seules les cartes
+    associées à une console comptent, et la voie v de la carte de la console k devient l'EXP k*1000+v (console
+    0 : numéros inchangés). Vide : comportement d'origine (toute carte DN32-WSG / X-WSG = la console)."""
+    if card_map:
+        out = {}
+        for ch, groups in routes.items():
+            if follow_ab:
+                groups = [g for g in groups if g["active"]]
+            pick = next((g for g in groups if g.get("slot") in card_map), None)
+            if pick:
+                k = card_map[pick["slot"]]
+                out[ch] = {"device": pick["device"], "input": pick["input"],
+                           "sources": [k * 1000 + v for v in pick["sources"]], "rank": 0}
+        return out
     out = {}
     for ch, groups in routes.items():
         if follow_ab:

@@ -180,7 +180,9 @@ set_theme_map(DEFAULT_THEME)   # meme bleu "action primaire" que le navigateur (
 
 def strip_tag(idx):
     """Repere de voie avec la source : 'L 15' (Local 15), 'A 1' / 'B 3' (AES50-A/B), comme demande
-    pour la ligne « L 15 = EXP 15 » du float."""
+    pour la ligne « L 15 = EXP 15 » du float. Console 2, 3... (plusieurs consoles) : '2·A 5'."""
+    if idx >= N_HA:
+        return "%d·%s" % (idx // N_HA + 1, strip_tag(idx % N_HA))
     if idx < 32:
         return "L %d" % (idx + 1)
     if idx < 80:
@@ -950,6 +952,15 @@ class ServerBackend:
     def quit_app(self):
         return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
 
+    def consoles_add(self, ip):
+        return self._post("/api/consoles/add", {"ip": ip}) or {"ok": False, "error": self.last_error}
+
+    def consoles_remove(self, n):
+        return self._post("/api/consoles/remove", {"n": n}) or {"ok": False, "error": self.last_error}
+
+    def consoles_card(self, n, card):
+        return self._post("/api/consoles/card", {"n": n, "card": card}) or {"ok": False, "error": self.last_error}
+
     def set_autostart(self, on):
         return self._post("/api/autostart", {"on": on}) or {"ok": False, "error": self.last_error}
 
@@ -1382,6 +1393,12 @@ class Strip(tk.Frame):
         bg = hex_color or tc(PANEL)
         if self.swatch.cget("bg") != bg:
             self.swatch.config(bg=bg)
+
+
+def exp_txt(e):
+    """Numéro EXP affiché : « 15 », ou « 2·15 » pour la voie 15 de la carte de la console 2."""
+    e = int(e)
+    return str(e) if e < 1000 else "%d·%d" % (e // 1000 + 1, e % 1000)
 
 
 def join_tags(idxs):
@@ -1936,6 +1953,8 @@ class FloatApp:
         m.add_separator()
         m.add_command(label="Scènes…", command=lambda: self._toggle_panel("scenes"))
         m.add_command(label="Routing…", command=lambda: self._toggle_panel("routing"))
+        if hasattr(self.backend, "consoles_add"):
+            m.add_command(label="Consoles…", command=lambda: self._toggle_panel("consoles"))
         m.add_checkbutton(label="Console (IP, connexion)", variable=self.console_var,
                           command=lambda: self._toggle_console(self.console_var.get()))
         m.add_checkbutton(label="Verrouiller l'édition", variable=self.lock_var, command=self._toggle_lock)
@@ -2157,13 +2176,14 @@ class FloatApp:
         if ch is not None:
             if not src.get(ch) or not _close(bg, self._channel_color(ch)):
                 return None
-            if exp is not None and exp not in src[ch]:
+            if exp is not None and exp not in [e % 1000 for e in src[ch]]:
                 return None
             if exp is None:
-                self._learn_digits(res, "src", src[ch][0])
+                self._learn_digits(res, "src", src[ch][0] % 1000)
             return self._preamps(ch)
         if exp is not None:
-            cands = [c for c, exps in src.items() if exp in exps and _close(bg, self._channel_color(c))]
+            cands = [c for c, exps in src.items()
+                     if exp in [e % 1000 for e in exps] and _close(bg, self._channel_color(c))]
             if len(cands) == 1:
                 self._learn_digits(res, "bas", cands[0])
                 return self._preamps(cands[0])
@@ -2522,6 +2542,8 @@ class FloatApp:
                   width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
         if mode == "scenes":
             self._fill_scenes_panel()
+        elif mode == "consoles":
+            self._fill_consoles_panel()
         else:
             self._fill_routing_panel()
         apply_theme(self.panel_win)
@@ -2777,6 +2799,80 @@ class FloatApp:
                   command=close).pack(side="right")
         w.protocol("WM_DELETE_WINDOW", close)
 
+    def _fill_consoles_panel(self):
+        """Plusieurs consoles (chacune avec sa carte dans le rack de la LV1) : carte de chaque console, ajout
+        (adresse IP ou Scanner), retrait. La console 1 est celle de la barre de connexion."""
+        tk.Label(self.panel, text="CONSOLES", bg=PANEL, fg=MUT, font=("Segoe UI", 8, "bold")).pack(
+            anchor="w", padx=6, pady=(6, 2))
+        cards = getattr(self, "_lv1_cards", []) or []
+        labels = ["(automatique / non choisie)"] + ["%d - %s" % (c["slot"], c["name"]) for c in cards]
+        slot_of = dict(zip(labels, [None] + [c["slot"] for c in cards]))
+
+        def refresh():
+            self.root.after(400, lambda: (self._toggle_panel("consoles"), self._toggle_panel("consoles")))
+
+        for c in getattr(self, "_consoles", []) or []:
+            row = tk.Frame(self.panel, bg="#0d0e0f", highlightthickness=1, highlightbackground=LINE)
+            row.pack(fill="x", padx=6, pady=3)
+            dot = OK if c.get("connected") else (AMBER if c.get("trying") else "#555555")
+            head = tk.Frame(row, bg="#0d0e0f")
+            head.pack(fill="x", padx=6, pady=(4, 0))
+            tk.Label(head, text="●", bg="#0d0e0f", fg=dot, font=("Segoe UI", 10)).pack(side="left")
+            tk.Label(head, text=" Console %d — %s (%s)" % (c["n"] + 1, c.get("name") or "?", c.get("ip") or "—"),
+                     bg="#0d0e0f", fg=TXT, font=("Segoe UI", 9, "bold")).pack(side="left")
+            if c["n"] > 0:
+                tk.Button(head, text="Retirer", bd=0, bg="#25282b", fg=WARN, font=("Segoe UI", 8, "bold"),
+                          command=lambda n=c["n"]: (self.backend.consoles_remove(n), refresh())).pack(side="right")
+            line = tk.Frame(row, bg="#0d0e0f")
+            line.pack(fill="x", padx=6, pady=(2, 6))
+            tk.Label(line, text="Carte LV1 :", bg="#0d0e0f", fg=MUT, font=("Segoe UI", 8)).pack(side="left")
+            var = tk.StringVar(value=next((l for l, sl in slot_of.items() if sl and sl == c.get("card")), labels[0]))
+
+            def choose(_v=None, n=c["n"], var=var):
+                r = self.backend.consoles_card(n, slot_of.get(var.get()))
+                if not r.get("ok"):
+                    messagebox.showerror("Consoles", r.get("error") or "Impossible", parent=self.root)
+                refresh()
+            om = tk.OptionMenu(line, var, *labels, command=choose)
+            om.config(bg="#25282b", fg=TXT, bd=0, highlightthickness=0, font=("Segoe UI", 9),
+                      activebackground="#33383c")
+            om["menu"].config(font=("Segoe UI", 11))
+            om.pack(side="left", padx=4, fill="x", expand=True)
+        add = tk.Frame(self.panel, bg=PANEL)
+        add.pack(fill="x", padx=6, pady=(6, 2))
+        tk.Label(add, text="Ajouter une console :", bg=PANEL, fg=MUT, font=("Segoe UI", 8)).pack(side="left")
+        ip_var = tk.StringVar()
+        tk.Entry(add, textvariable=ip_var, width=15, bg="#000000", fg=TXT, insertbackground=TXT,
+                 relief="flat").pack(side="left", padx=4)
+
+        def do_add(ip):
+            r = self.backend.consoles_add(ip.strip())
+            if not r.get("ok"):
+                messagebox.showerror("Consoles", r.get("error") or "Impossible", parent=self.root)
+            refresh()
+        tk.Button(add, text="Ajouter", bd=0, bg=TEAL, fg="#032", font=("Segoe UI", 8, "bold"),
+                  command=lambda: do_add(ip_var.get())).pack(side="left")
+        found = tk.Frame(self.panel, bg=PANEL)
+        found.pack(fill="x", padx=6, pady=(2, 6))
+
+        def scan():
+            known = {c.get("ip") for c in getattr(self, "_consoles", []) or []}
+            for w in found.winfo_children():
+                w.destroy()
+            res = [c for c in (self.backend.scan() or []) if c.get("ip") not in known]
+            if not res:
+                tk.Label(found, text="Aucune autre console trouvée sur le réseau.", bg=PANEL, fg=MUT,
+                         font=("Segoe UI", 8)).pack(anchor="w")
+            for c in res:
+                self._panel_row("%s (%s)" % (c.get("name", "?"), c["ip"]), c.get("model", ""),
+                                lambda ip=c["ip"]: do_add(ip))
+        tk.Button(found, text="Scanner le réseau", bd=0, bg="#25282b", fg=TXT, font=("Segoe UI", 8, "bold"),
+                  command=scan).pack(anchor="w")
+        tk.Label(self.panel, text="Chaque console règle les préamplis de SA carte (position dans le rack de la LV1, "
+                 "le « 2- » de « 2-EX 1 »). Carte choisie automatiquement si son nom dans la LV1 reprend celui de "
+                 "la console.", bg=PANEL, fg=MUT, font=("Segoe UI", 8), wraplength=self._panel_width() - 20,
+                 justify="left").pack(fill="x", padx=8, pady=(0, 6))
+
     def _panel_width(self):
         return 300
 
@@ -2984,6 +3080,8 @@ class FloatApp:
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
         self._lv1_lay = lay
+        self._consoles = snap.get("consoles") or []
+        self._lv1_cards = snap.get("lv1_cards") or []
         self._lv1_layers_all = snap.get("lv1_layers") or {}
         self._lv1_channels = snap.get("lv1_channels") or {}
         if self._surface != getattr(self, "_surface_seen", None):
@@ -3037,12 +3135,12 @@ class FloatApp:
                 exps = self.lv1_sources.get(ch, [])
                 tag = ""
                 if s.idxs:
-                    tag = "%s = EXP %s" % (join_tags(s.idxs), "/".join(str(e) for e in exps))
+                    tag = "%s = EXP %s" % (join_tags(s.idxs), "/".join(exp_txt(e) for e in exps))
                 elif exps:
-                    tag = "EXP %s" % "/".join(str(e) for e in exps)
+                    tag = "EXP %s" % "/".join(exp_txt(e) for e in exps)
             else:
                 exp = em.get(str(s.idxs[0]), em.get(s.idxs[0]))
-                tag = strip_tag(s.idxs[0]) + (" = EXP %d" % exp if exp else "")
+                tag = strip_tag(s.idxs[0]) + (" = EXP %s" % exp_txt(exp) if exp else "")
                 ch = self._lv1_channel(exp)
             s.set_tag(tag)
             info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}

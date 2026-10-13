@@ -170,6 +170,17 @@ au besoin, la case est routée quand vous relevez le doigt. Vue **Listes** : un 
 par sortie. Pour revenir au standard, rechargez simplement un autre profil. Les couleurs et
 noms LV1 du float suivent tout seuls (EXP 2 affichera le préampli A18).
 
+### Plusieurs consoles (une carte chacune dans le rack de la LV1)
+Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : float **⋮ → Consoles…**.
+- **Ajouter** les consoles 2, 3… (adresse IP, ou *Scanner le réseau*). La console 1 est celle de la barre
+  de connexion.
+- **Carte LV1** de chaque console : sa position dans le rack (le « 2- » de « 2-EX 1 » dans la LV1). Choisie
+  toute seule si le nom de la carte dans la LV1 reprend celui de la console (ex. « X32-FOH »).
+- Le float règle alors les préamplis de **toutes** les consoles, chacun sur sa tranche LV1 ; ceux de la
+  console 2 sont repérés « 2·A 5 = EXP 2·5 ». Une console sans carte choisie : ses tranches restent sans
+  potard (jamais le préampli d'une autre console).
+- Les scènes de gains et le routing concernent la console 1.
+
 ## 6. Les scènes de gains
 
 Une scène ne contient **que la X32** : gains, 48 V, noms des voies X32. La LV1 garde sa propre

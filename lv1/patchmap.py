@@ -92,6 +92,8 @@ def build_exp_map(channels, ranks=None):
 
 class PatchMap:
     def __init__(self, manual_path=None, session_path=None, devices=DEFAULT_DEVICES, poll=0.5):
+        self.card_map = {}             # position de carte LV1 -> n° de console (plusieurs consoles)
+        self._cards = []
         self.manual_path = manual_path
         self.session_path = session_path
         self.devices = parse_devices(devices) if isinstance(devices, str) else (tuple(devices) if devices else None)
@@ -150,7 +152,8 @@ class PatchMap:
             return False
         try:
             routes, info, layer = read_session(f)
-            chans = pick_sources(routes, self.devices)
+            self._cards = (layer or {}).pop("_cards", [])
+            chans = pick_sources(routes, self.devices, card_map=self.card_map)
         except (sqlite3.Error, OSError) as e:
             # souvent : copie prise pendant une écriture de la LV1 - on garde le résultat précédent et on
             # réessaie au prochain contrôle (sig non mémorisée)
@@ -197,6 +200,21 @@ class PatchMap:
         return self
 
     # -- lecture de la table ------------------------------------------------
+    def set_card_map(self, card_map):
+        """{position de carte LV1: n° de console} (plusieurs consoles) ; {} = une seule console, comme avant."""
+        card_map = dict(card_map or {})
+        with self._lock:
+            if card_map == self.card_map:
+                return
+            self.card_map = card_map
+            self._session_sig = None          # relire la session avec la nouvelle association
+        self.refresh()
+
+    def cards(self):
+        """Appareils d'E/S du rack de la LV1 : [{"slot", "name", "model"}] (voir session_patch.load_cards)."""
+        with self._lock:
+            return list(self._cards)
+
     def exp_to_channel(self):
         """{numéro EXP: canal LV1} (copie)."""
         with self._lock:

@@ -182,8 +182,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   relié au bloc ambre `#F2B63B` LV1 (vumètre), fond anthracite `#2B2E33`. Pas de teal (= couleur de canal LV1).
   Source unique : `tools/make_icon.py` (Python pur, pas de Pillow sur ce PC) → `assets/logo.svg`,
   `assets/icon.ico` (`--icon` de PyInstaller), `brand_icon.py` (généré : `LOGO_SVG`, `ICON_PNG_B64`).
-- Une seule carte X32 par rack LV1 supportée (choix de Joseph) : avec deux cartes (X-WSG-1/-2 = deux
-  consoles), la voie N de chacune serait prise pour l'EXP N de la console connectée. Pas traité.
+- Plusieurs cartes / consoles : traité le 2026-10-14 (voir « Plusieurs consoles »).
 
 ## Données de l'appli (depuis la 2.0.0)
 
@@ -348,6 +347,20 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   de test (« Core + X32 stage box », « Stage box — X32 vers Core ») sont retirés des listes (`RETIRED_BUILTINS`).
   `_builtin_nodes()` (profils en lignes brutes) reste disponible, vide. Pas encore testé sur le matériel.
 
+## Plusieurs consoles (2026-10-14)
+
+- Chaque route LV1 porte la position de sa carte (`slot` = `device.assign` + 1, le « 2- » de « 2-EX 1 ») ;
+  `session_patch.load_cards()` liste les appareils du rack (transportés dans `layer["_cards"]`).
+  `pick_sources(card_map={slot: console k})` : seules les cartes associées comptent, EXP global = k*1000 + voie.
+- Serveur : `CLIENT` = console 1 ; `EXTRA` = consoles 2.. ({client, ip, card}) ; `PRIMARY["card"]`. Préampli
+  global = k*N_HA + i ; `merged_snapshot()` / `merged_meters()` concatènent ; `/api/gain|phantom` -> `console_for`.
+  `/api/consoles/add|remove|card`. Settings : `card`, `consoles`. `auto_assign_cards()` (2 s) : carte dont le nom
+  LV1 (sans « (IOBox) ») est contenu dans le nom de la console ou l'inverse, si unique. Carte map vide (une
+  console, pas de carte choisie) = comportement d'origine.
+- Float : `strip_tag` « 2·A 5 », `exp_txt` « 2·15 », panneau ⋮ → Consoles… ; page Channel : EXP lu = voie (% 1000).
+- Testé : console 1 = X32 de Joseph (carte 1, auto par le nom), console 2 = simulateur (carte 2) : tranche 64 ->
+  préamplis 128/129 « 2·1/2·2 », gain envoyé à la console 2 seulement. Scènes / routing : console 1 seulement.
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
@@ -356,7 +369,6 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `CurrentLV1.dat`, paramètre couleur 592 et palette.
 - Le choix du dossier des scènes n'existe que dans le navigateur (pas dans le float).
 - À revérifier aussi après une mise à jour LV1 : couches / modes (`lv1/layers.py`).
-- Non traité : deux cartes X32 dans le même rack (deux consoles).
 
 ## Environnement cible
 
