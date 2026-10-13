@@ -393,6 +393,17 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Tester les colonnes : script qui crée des `Strip` avec un faux `owner` (locked, sensitivity, send_gain, label,
   value_pop, root) + capture BitBlt ; le float `--direct --sim` n'a pas d'EXP (colonnes transparentes).
 
+## v3 en Qt (branche `dev-3.0`, décidée le 2026-10-14)
+
+- Raison : la LV1 est pensée multi-touch ; tk ne reçoit qu'un doigt (toucher = clic souris). Test
+  `tools/qt_touch_test.py` (exe `XM32_Qt_Touch_Test.exe`, 46 Mo, ~2 s au lancement) : **4 doigts = 4 potards en
+  même temps, OK chez Joseph** ; fluidité identique à tk (mesuré : ~0,6 ms par colonne dans les deux cas).
+- Fenêtre Qt : `FramelessWindowHint | Tool | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`,
+  `WA_TranslucentBackground` (colonnes vides = alpha 0), `WA_AcceptTouchEvents` (un point = un potard),
+  `QT_ENABLE_HIGHDPI_SCALING=0` (pixels = pixels écran pour le calage).
+- Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
+  couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
