@@ -1,6 +1,6 @@
 <img src="assets/logo.svg" width="72" alt="Logo">
 
-# Mode d'emploi — X/M32 Gain Recall for eMotion LV1 (v2.2.0)
+# Mode d'emploi — X/M32 Gain Recall for eMotion LV1 (v2.6.0)
 
 *Pour ceux qui découvrent l'appli. Comptez 10 minutes la première fois, ensuite c'est un double-clic.*
 
@@ -20,6 +20,7 @@ scènes de gains (une par groupe ou par date, par exemple).
 | **Console** | Behringer X32 ou Midas M32, avec une carte **DN32-WSG** ou **X-WSG** branchée au réseau SoundGrid |
 | **LV1** | Waves eMotion LV1 **V17**, sur un PC Windows |
 | **Réseau** | Le PC de la LV1 et la X32 sur le **même réseau** (câble Ethernet de la X32, prise *Remote*) |
+| **Plusieurs consoles** | Possible : une carte DN32-WSG / X-WSG par console dans le rack de la LV1 (voir chapitre 7) |
 | **À installer** | Rien. Ni Python, ni Companion, ni MyRemote. |
 
 > L'appli doit tourner **sur le même PC que la LV1**. Sur un autre PC, gains et scènes marchent,
@@ -124,13 +125,21 @@ Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille d
 | Entrée | Rôle |
 |---|---|
 | **Banque** | *LV1 Ch 1-16…* (une colonne par tranche LV1, le mode normal) ou *Local / A / B 1-16* (une colonne par préampli X32, pour un préampli qui n'arrive sur aucun canal) |
-| **Plus large / Plus étroit** | Calage fin des colonnes |
-| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se ferme avec sa croix ✕) |
-| **Routing…** | Charger un routing X32 (profil « Routing LV1 » fourni) |
-| **Console** | Barre IP / Connecter / Scanner, sous les voies |
+| **Bulle des dB en réglant** | Affiche (ou non) la valeur en gros pendant qu'on tourne un potard |
+| **Caler sur la LV1 (auto)** | Remet le float en place tout seul sur les tranches |
+| **Plus large / Plus étroit** | Calage fin à la main des colonnes |
+| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains |
+| **Routing…** | Charger un profil de routing, en créer ou modifier un (✎) |
+| **Consoles…** | Ajouter / retirer des consoles, choisir la carte LV1 de chacune (chapitre 7) |
+| **Console (IP, connexion)** | Barre IP / Connecter / Scanner, sous les voies |
 | **Verrouiller l'édition** | Plus aucun gain modifiable (pendant le show) |
 | **Fond de la fenêtre** | Anthracite (défaut), Noir, Or, Bleu nuit |
-| **Fermer le float** | La page du navigateur reste ouverte |
+| **Mise à jour… disponible** | Affiché seulement quand une version plus récente est publiée |
+| **Fermer le float** | Ferme le float seulement (l'appli continue) |
+| **Lancer avec Windows** | Démarrage automatique à l'ouverture de session |
+| **Quitter l'appli** | Arrête tout : float, page, connexion |
+
+Les panneaux **Scènes…**, **Routing…** et **Consoles…** se ferment avec leur croix **✕** (en haut à droite).
 
 ## 5. Le routing de la console
 
@@ -154,8 +163,8 @@ Profils fournis :
 décoché) : la M32C pilote ses préamplis, le float les règle comme ceux d'une S16. Tout le reste se règle sur la
 M32C : chargez le profil du port utilisé (A ou B), l'appli connectée à la M32C.
 
-Pour les deux derniers, les retours sortent des S16 **quelle que soit la position de leur sélecteur de
-sorties** (1-8 ou 9-16).
+Pour les profils avec deux S16, les retours sortent des S16 **quelle que soit la position de leur sélecteur
+de sorties** (1-8 ou 9-16).
 
 ### Un routing à vous (éditeur libre)
 Pour mettre, par exemple, **L1 sur EXP 1 et A18 sur EXP 2** (une source de la scène plus proche du S16) :
@@ -170,7 +179,21 @@ au besoin, la case est routée quand vous relevez le doigt. Vue **Listes** : un 
 par sortie. Pour revenir au standard, rechargez simplement un autre profil. Les couleurs et
 noms LV1 du float suivent tout seuls (EXP 2 affichera le préampli A18).
 
-### Plusieurs consoles (une carte chacune dans le rack de la LV1)
+## 6. Les scènes de gains
+
+Une scène ne contient **que les consoles** (X32 / M32) : gains, 48 V, noms des voies, de toutes les consoles
+connectées. La LV1 garde sa propre session, comme d'habitude.
+
+- **Sauvegarder** : *Scènes…* → donnez un nom → *Sauvegarder*.
+- **Rappeler** : choisissez la scène → *Charger* → confirmez. L'appli relit la console pour
+  vérifier, et propose **Annuler** si besoin.
+- Le **48 V n'est jamais rappelé par défaut** (sécurité micros / rubans). Pour le rappeler aussi,
+  passez par la page du navigateur, qui en a l'option.
+- **Changer de dossier** (clé USB, dossier synchronisé) : seulement dans la page du navigateur,
+  panneau *Scènes* → **Dossier…**.
+- Export / import JSON : page du navigateur aussi.
+
+## 7. Plusieurs consoles (une carte chacune dans le rack de la LV1)
 Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : float **⋮ → Consoles…**.
 - **Ajouter** les consoles 2, 3… (adresse IP, ou *Scanner le réseau*). La console 1 est celle de la barre
   de connexion.
@@ -182,24 +205,10 @@ Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : flo
 - **Routing** : avec plusieurs consoles, choisissez la console visée (sélecteur *Console* dans l'onglet
   Routing de la page ; dans le float, l'appli demande la console au moment de charger). Aperçu, vérification
   et *Annuler le dernier routing* se font console par console.
-- **Scènes de gains** : une scène enregistre et rappelle les gains des **toutes** les consoles connectées
+- **Scènes de gains** : une scène enregistre et rappelle les gains de **toutes** les consoles connectées
   (laissez-les connectées en même temps) ; une console absente au rappel est signalée et laissée de côté.
 
-## 6. Les scènes de gains
-
-Une scène ne contient **que la X32** : gains, 48 V, noms des voies X32. La LV1 garde sa propre
-session, comme d'habitude.
-
-- **Sauvegarder** : *Scènes…* → donnez un nom → *Sauvegarder*.
-- **Rappeler** : choisissez la scène → *Charger* → confirmez. L'appli relit la console pour
-  vérifier, et propose **Annuler** si besoin.
-- Le **48 V n'est jamais rappelé par défaut** (sécurité micros / rubans). Pour le rappeler aussi,
-  passez par la page du navigateur, qui en a l'option.
-- **Changer de dossier** (clé USB, dossier synchronisé) : seulement dans la page du navigateur,
-  panneau *Scènes* → **Dossier…**.
-- Export / import JSON : page du navigateur aussi.
-
-## 7. Depuis une tablette ou un téléphone (facultatif)
+## 8. Depuis une tablette ou un téléphone (facultatif)
 
 1. Tablette sur le **même réseau** que le PC.
 2. Le code n'est demandé **qu'aux tablettes et téléphones** (pas sur le PC de l'appli). Sur la page
@@ -249,6 +258,8 @@ l'appli continue, l'icône aussi.)
 | Le float a disparu | Normal hors Mixer 1 / Mixer 2, LV1 réduite ou fermée : il revient avec la LV1, sur Mixer 1 |
 | Le float est replié | Normal hors SndChk / Setup. Cliquez la flèche pour le déplier |
 | Colonnes décalées par rapport aux tranches | **⋮ → Caler sur la LV1 (auto)** |
+| Plusieurs consoles : les tranches d'une console restent sans potard | **⋮ → Consoles…** : la console est-elle connectée (point vert) et a-t-elle la bonne **Carte LV1** ? |
+| Page Channel : zone vide | Canal sans préampli X32, ou LV1 dans une taille de fenêtre non relevée (plein écran ou fenêtre 1728x970) |
 | Un correctif « ne change rien » | Un ancien exe est peut-être encore ouvert : icône près de l'horloge → *Quitter* (et vérifiez qu'il n'en reste pas une 2e), relancez |
 | Après une mise à jour de la LV1 | L'appli est testée sur LV1 V17 : si les couleurs ou les couches ne suivent plus, signalez-le (onglet *Issues* du dépôt) |
 

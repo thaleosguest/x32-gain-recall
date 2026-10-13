@@ -197,8 +197,8 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Au 1er lancement, les fichiers des versions ≤ 1.9 rangés à côté de l'exe sont **recopiés**
   (jamais supprimés) dans `%APPDATA%`.
 - JSON lus en `utf-8-sig` (fichiers enregistrés par le Bloc-notes avec BOM).
-- Une scène ne contient que la X32 (gains, 48V, noms X32) ; rien de la LV1, qui sauvegarde
-  sa propre session.
+- Une scène ne contient que les consoles (gains, 48V, noms ; toutes les consoles connectées depuis la 2.6.0) ;
+  rien de la LV1, qui sauvegarde sa propre session.
 
 ## Fenêtre flottante
 
@@ -215,9 +215,9 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   canal → EXP par `lv1_sources` (`PatchMap.channel_sources()`). Vue X32 conservée (choix de Joseph :
   vue au choix, même menu de banques). Navigateur : idem (`.grp`), colonnes stéréo plus larges.
 - **Replié** : seulement le point de connexion (= poignée de déplacement) + la flèche (demande de Joseph).
-- **Une seule barre** en haut (demande de Joseph) : la barre de connexion s'ouvre SOUS les voies (bouton
-  « Console », auto tant que non connecté) pour ne jamais décaler les voies calées sur la LV1.
-- **Calage** : `strip_w` = largeur moyenne à virgule ; `_col_widths()` répartit les pixels (somme exacte).
+- Pas de barre en haut depuis la 2.2.0 (languette à gauche) ; la barre de connexion s'ouvre SOUS les voies
+  (⋮ → Console, auto tant que non connecté) pour ne jamais décaler les voies calées sur la LV1.
+- **Calage manuel** (depuis la 2.3.0 le calage est automatique, `auto_place`) : `strip_w` = largeur moyenne à virgule ; `_col_widths()` répartit les pixels (somme exacte).
   Profils par résolution dans `x32_float_config.json` (`screens`, `last_screen`) ; écran inconnu = dernier
   profil mis à l'échelle. Écrans de Joseph de tailles différentes : c'est la raison.
 - Tester le float : il enregistre sa config dans `%APPDATA%` → la sauvegarder avant et la remettre après.
@@ -248,7 +248,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 
 - Au lancement : navigateur ouvert puis **réduit** (`_push_browser_back` : toute fenêtre dont le titre
   contient `APP_NAME`, après 0,8 s, surveillée 4 s — Brave remet au premier plan une fenêtre réduite trop
-  tôt), puis float (`launch_float_window`, un seul à la fois : `FLOAT_PROC`). Reconnexion à `last_ip`
+  tôt), puis float (`launch_float_window`, un seul par clé : `FLOAT_PROCS["main"]`, + un par Mixer détaché). Reconnexion à `last_ip`
   (settings). Pas de code d'accès pour 127.0.0.1/::1 SI le Host est dans `ALLOWED_HOSTS` (anti
   DNS-rebinding). Serveur fermé : le float quitte (port refusé ~4 s), l'onglet fait `window.close()`.
 - **LV1 au premier plan au démarrage** : c'est le float (`--lv1-front`, option cachée passée par
@@ -297,9 +297,9 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   ajoutés une fois chacun (`seeded_keys` dans x32_routings.json). Choix de Joseph : sorties S16 doublées
   sur les voies 1-8 ET 9-16 (sélecteur indifférent) ; éditeur libre (pas d'exceptions), page ET float.
 
-- **Panneau du float fermé en touchant ailleurs** : `GetAsyncKeyState` ne voit PAS les clics sur la LV1 (elle tourne
-  en administrateur ; mon 1er test sur une fenêtre ordinaire passait, chez Joseph non). Ce qui marche : la fenêtre
-  active change d'appli (`_watch_outside`, 30 ms, après `focus_force` du panneau) + croix ✕.
+- (Historique) Panneau du float fermé en touchant ailleurs : `GetAsyncKeyState` ne voit PAS les clics sur la LV1
+  (administrateur) ; essayé ensuite « la fenêtre active change d'appli » (`_watch_outside`) : RETIRÉ en 2.6.0, il
+  fermait le panneau pendant la saisie au clavier tactile. Aujourd'hui : croix ✕ seulement.
 
 ## Mixer détaché (2026-10-14)
 
@@ -361,7 +361,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   console, pas de carte choisie) = comportement d'origine.
 - Float : `strip_tag` « 2·A 5 », `exp_txt` « 2·15 », panneau ⋮ → Consoles… ; page Channel : EXP lu = voie (% 1000).
 - Testé : console 1 = X32 de Joseph (carte 1, auto par le nom), console 2 = simulateur (carte 2) : tranche 64 ->
-  préamplis 128/129 « 2·1/2·2 », gain envoyé à la console 2 seulement. Scènes : console 1 seulement.
+  préamplis 128/129 « 2·1/2·2 », gain envoyé à la console 2 seulement.
 - Routing par console : paramètre `target` (n° 0-based) sur `/api/routings/preview|apply|undo|model` (dans
   `_routing_route`, `client = console_for(target * N_HA)`) ; `consoles[]` de l'état porte `routing_last` /
   `routing_can_undo` ; page : sélecteur `#rcons` (si > 1 console) ; float : `_pick_console()`. Testé sur le
