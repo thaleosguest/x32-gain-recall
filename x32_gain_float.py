@@ -297,6 +297,11 @@ def client_rect(hwnd):
     return pt.x, pt.y, r.right - r.left, r.bottom - r.top
 
 
+def screen_rect(x, y, w, h):
+    """Pixels (r, g, b) d'un rectangle d'écran, ligne par ligne (liste de lignes)."""
+    return [screen_row(x, y + k, w) for k in range(h)]
+
+
 def screen_row(x, y, w):
     """Pixels (r, g, b) de la ligne d'écran [x, x+w) à la hauteur y (capture GDI d'une seule ligne)."""
     ctypes, u32 = _user32()
@@ -362,12 +367,96 @@ def lv1_tab(hwnd, names=LV1_TABS):
 SEL_GREY = (120, 120, 120)                  # fond de la zone de fader de la tranche sélectionnée (autres : 17)
 SEL_ROWS = (800 / 1080.0, 880 / 1080.0, 960 / 1080.0)   # lignes lues (une suffit ; plusieurs si l'une est couverte)
 SEL_X0, SEL_PITCH, SEL_W = 143 / 1920.0, 96 / 1920.0, 92 / 1920.0   # 1re tranche, pas, largeur du fond gris
+# Page Channel (2026-10-14, demande de Joseph) : réglage du préampli X32 du canal affiché, posé dans la zone
+# grisée « Preamp / Gain / 48V » du bloc « Channel Input » (fractions de la zone client, relevées en 1728x970).
+CH_BOX = (7 / 1728.0, 0.27, 206 / 1728.0, 0.25)          # x, y, largeur, hauteur
+# Case du canal sélectionné, en haut à gauche de toutes les pages (« Channel 22 », couleur du canal) : la LV1 ne
+# dit nulle part quel canal la page Channel affiche (ni base, ni accessibilité Windows) ; on reconnaît l'image de
+# cette case, apprise sur une page Mixer où la tranche sélectionnée (grise) donne le canal.
+CH_NAMEBOX = (10 / 1728.0, 6 / 970.0, 170 / 1728.0, 34 / 970.0)
+CH_COLOR_PT = (20 / 1728.0, 8 / 970.0)                    # fond de la case = couleur du canal (exacte, vérifié)
+
 # Calage automatique du float (modes SndChk / Setup : section « Input » en haut) : les cadres vides « Preamp /
 # Gain / 48 » des 16 tranches, relevés le 2026-10-12 (1920x1080) ; identiques au calage fait à la main par Joseph.
 AUTO_X0, AUTO_Y0 = 142 / 1920.0, 184 / 1080.0      # coin haut-gauche du cadre de la 1re tranche
 AUTO_PITCH, AUTO_H = 96 / 1920.0, 133 / 1080.0     # pas des tranches, hauteur des cadres
 # Cadre vide du bloc « Input » (sous A/B) de la page Edit, où se pose le réglage de la tranche sélectionnée
 SEL_BOX = (32 / 1920.0, 183 / 1080.0, 92 / 1920.0, 133 / 1080.0)   # x, y, largeur, hauteur
+
+
+def _hex_rgb(h):
+    try:
+        return tuple(int(h[i:i + 2], 16) for i in (1, 3, 5))
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def _close(a, b, tol=8):
+    return a is not None and b is not None and all(abs(x - y) <= tol for x, y in zip(a, b))
+
+
+def lv1_namebox(hwnd):
+    """Signature de la case du canal sélectionné (en haut à gauche) : (couleur du fond, pixels du texte), ou None.
+    Pixels du texte = ceux qui s'écartent nettement du fond (le nom, les flèches) : insensible au léger lissage."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    bx, by = x + round(w * CH_NAMEBOX[0]), y + round(h * CH_NAMEBOX[1])
+    bw, bh = round(w * CH_NAMEBOX[2]), round(h * CH_NAMEBOX[3])
+    bg = screen_row(x + round(w * CH_COLOR_PT[0]), y + round(h * CH_COLOR_PT[1]), 1)
+    if not bg:
+        return None
+    bg = bg[0]
+    lum = lambda c: 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
+    lb = lum(bg)
+    pts = frozenset((i, j) for j, row in enumerate(screen_rect(bx, by, bw, bh))
+                    for i, c in enumerate(row) if abs(lum(c) - lb) > 70)
+    return bg, pts
+
+
+def _namebox_same(a, b):
+    """Même case (même nom, même couleur), à 1 pixel de décalage près (fenêtres de tailles voisines)."""
+    if not _close(a[0], b[0], 6):
+        return False
+    pa, pb = a[1], b[1]
+    if abs(len(pa) - len(pb)) > 8:
+        return False
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            moved = {(i + dx, j + dy) for i, j in pb}
+            if len(pa.symmetric_difference(moved)) <= 6:
+                return True
+    return False
+
+
+SEL_TOP_ROWS = (99, 100, 101)        # /1080 : liseré jaune du haut de la case de la tranche sélectionnée
+SEL_TOP_YELLOW = (255, 242, 0)      # jaune pur (un canal de couleur jaune est (243, 250, 29) : distinct)
+
+
+def lv1_selected_column_top(hwnd):
+    """Colonne (0-15) de la tranche sélectionnée, d'après le liseré jaune en haut de sa case de source
+    (« 1- EX 12 ») : présent dans TOUS les modes (Setup n'a pas de faders, donc pas de fond gris). None sinon."""
+    rect = client_rect(hwnd)
+    if not rect or rect[2] < 400:
+        return None
+    x, y, w, h = rect
+    for fy in sorted({round(h * r / 1080.0) for r in SEL_TOP_ROWS} | {round(h * 100 / 1080.0) + d for d in (-2, 2)}):
+        row = screen_row(x, y + fy, w)
+        cols, start = set(), None
+        for i, c in enumerate(row + [(0, 0, 0)]):
+            yel = _close(c, SEL_TOP_YELLOW, 6)
+            if yel and start is None:
+                start = i
+            elif not yel and start is not None:
+                if i - start >= 0.03 * w:
+                    k = int((start / float(w) - SEL_X0) / SEL_PITCH + 0.02)
+                    if 0 <= k < 16:
+                        cols.add(k)
+                start = None
+        if len(cols) == 1:
+            return cols.pop()
+    return None
 
 
 def lv1_selected_column(hwnd):
@@ -795,6 +884,7 @@ class Unit(tk.Frame):
         for w in (self.knob, self.led, self):
             w.bind("<ButtonPress-1>", self._drag_start)
             w.bind("<B1-Motion>", self._drag_move)
+            w.bind("<ButtonRelease-1>", lambda e: self._pop("hide"))
             w.configure(cursor="sb_v_double_arrow")
 
         self._val_font = tkfont.Font(family="Consolas", size=8 if compact else 10, weight="bold")
@@ -884,9 +974,15 @@ class Unit(tk.Frame):
         self.led.itemconfig(self._led_id, fill=color)
 
     # -- interaction ----------------------------------------------------
+    def _pop(self, what):
+        pop = getattr(self.owner, "value_pop", None)
+        if pop:
+            pop.show(self) if what == "show" else pop.hide_soon()
+
     def _drag_start(self, e):
         self._drag_y0 = e.y_root
         self._drag_db0 = self.db if self.db is not None else 0.0
+        self._pop("show")
 
     def _drag_move(self, e):
         if self._drag_y0 is None or self.owner.locked:
@@ -896,6 +992,7 @@ class Unit(tk.Frame):
         if new_db != self.db:
             self.set_gain(new_db)
             self.owner.send_gain(self.idx, new_db)
+            self._pop("show")
 
     def _edit_value(self, _e=None):
         """Clic sur la valeur en dB : saisie directe au clavier plutôt que de glisser."""
@@ -913,6 +1010,8 @@ class Unit(tk.Frame):
             return
         self.set_gain(db)
         self.owner.send_gain(self.idx, db)
+        self._pop("show")
+        self._pop("hide")
 
     def _phantom_click(self):
         if self.owner.locked:
@@ -920,12 +1019,10 @@ class Unit(tk.Frame):
         if self.phantom_state:
             self.owner.send_phantom(self.idx, False)
         else:
-            if messagebox.askyesno(
-                "Activer le +48 V ?",
+            if confirm_float(
+                self.owner, "Activer le +48 V ?",
                 "Voie %s : vérifiez qu'aucun micro ruban / dynamique non protégé n'est branché avant d'activer "
-                "l'alimentation fantôme." % self.owner.label(self.idx),
-                parent=self.owner.root,
-            ):
+                "l'alimentation fantôme." % self.owner.label(self.idx), "Activer +48 V"):
                 self.owner.send_phantom(self.idx, True)
 
 
@@ -1058,6 +1155,157 @@ def join_tags(idxs):
     if len(tags) == 2 and tags[0].split()[0] == tags[1].split()[0]:
         return "%s/%s" % (tags[0], tags[1].split()[1])
     return " + ".join(tags)
+
+
+def confirm_float(owner, title, text, ok_text, danger=True):
+    """Confirmation au style du float (2026-10-14, demande de Joseph : à la place de la boîte Windows) : fond
+    sombre, voyant d'avertissement qui clignote, gros boutons pour le doigt. Renvoie True si confirmé."""
+    root = owner.root
+    w = tk.Toplevel(root)
+    w.overrideredirect(True)
+    w.attributes("-topmost", True)
+    w.configure(bg=WARN if danger else LINE2)
+    inner = tk.Frame(w, bg=PANEL)
+    inner.pack(fill="both", expand=True, padx=2, pady=2)
+    head = tk.Frame(inner, bg=PANEL)
+    head.pack(fill="x", padx=14, pady=(12, 4))
+    led = tk.Canvas(head, width=26, height=26, bg=PANEL, highlightthickness=0)
+    led.pack(side="left")
+    dot = led.create_oval(3, 3, 23, 23, fill=WARN if danger else AMBER, outline="")
+    tk.Label(head, text=title, bg=PANEL, fg=WARN if danger else AMBER, font=("Segoe UI", 14, "bold")).pack(
+        side="left", padx=(10, 0))
+    tk.Label(inner, text=text, bg=PANEL, fg=TXT, font=("Segoe UI", 11), wraplength=380, justify="left").pack(
+        fill="x", padx=14, pady=(4, 12))
+    res = {"ok": False}
+
+    def close(ok):
+        res["ok"] = ok
+        w.destroy()
+    bar = tk.Frame(inner, bg=PANEL)
+    bar.pack(fill="x", padx=14, pady=(0, 14))
+    tk.Button(bar, text="Annuler", bd=0, bg="#25282b", fg=TXT, activebackground="#33383c",
+              font=("Segoe UI", 13, "bold"), padx=18, pady=10, command=lambda: close(False)).pack(side="left")
+    tk.Button(bar, text=ok_text, bd=0, bg=WARN if danger else TEAL, fg="#ffffff" if danger else "#032",
+              activebackground=WARN, font=("Segoe UI", 13, "bold"), padx=18, pady=10,
+              command=lambda: close(True)).pack(side="right")
+    w.bind("<Escape>", lambda e: close(False))
+    blink = {"on": True}
+
+    def tick():
+        if not w.winfo_exists():
+            return
+        blink["on"] = not blink["on"]
+        led.itemconfig(dot, fill=(WARN if danger else AMBER) if blink["on"] else "#3a1d1b")
+        w.after(450, tick)
+    w.update_idletasks()
+    # au centre de l'écran où se trouve le float
+    mx, my = root.winfo_rootx() + root.winfo_width() // 2, root.winfo_rooty() + root.winfo_height() // 2
+    w.geometry("+%d+%d" % (max(0, mx - w.winfo_reqwidth() // 2), max(0, my - w.winfo_reqheight() // 2)))
+    tick()
+    try:
+        w.grab_set()
+        w.focus_force()
+    except tk.TclError:
+        pass
+    root.wait_window(w)
+    return res["ok"]
+
+
+class ValuePop:
+    """Bulle « +32.5 dB » en gros, décalée au-dessus du potard qu'on tourne : le doigt ne la cache pas
+    (demande de Joseph, tactile). Se cache peu après le relâcher."""
+
+    def __init__(self, owner):
+        self.owner = owner
+        w = tk.Toplevel(owner.root)
+        w.overrideredirect(True)
+        w.withdraw()
+        w.attributes("-topmost", True)
+        w.configure(bg=AMBER)
+        self.lbl = tk.Label(w, text="", bg="#000000", fg=CYAN, font=("Consolas", 24, "bold"), padx=12, pady=4)
+        self.lbl.pack(padx=2, pady=2)
+        self.sub = tk.Label(w, text="", bg="#000000", fg=MUT, font=("Segoe UI", 9, "bold"))
+        self.sub.pack(fill="x", padx=2, pady=(0, 2))
+        self.win = w
+        self._job = None
+
+    def show(self, unit):
+        if self._job:
+            self.owner.root.after_cancel(self._job)
+            self._job = None
+        db = unit.db
+        self.lbl.config(text=("%+.1f dB" % db) if db is not None else "— dB")
+        self.sub.config(text="Gain " + self.owner.label(unit.idx))
+        w = self.win
+        w.update_idletasks()
+        pw, ph = w.winfo_reqwidth(), w.winfo_reqheight()
+        x = unit.winfo_rootx() + unit.winfo_width() // 2 - pw // 2
+        y = unit.winfo_rooty() - ph - 70                 # bien au-dessus du doigt
+        if y < 0:
+            y = unit.winfo_rooty() + unit.winfo_height() + 70
+        w.geometry("+%d+%d" % (max(0, x), max(0, y)))
+        if w.state() == "withdrawn":
+            w.deiconify()
+        w.lift()
+
+    def hide_soon(self, ms=700):
+        if self._job:
+            self.owner.root.after_cancel(self._job)
+        self._job = self.owner.root.after(ms, self.win.withdraw)
+
+
+class PreampBox:
+    """Petite fenêtre posée dans une zone de la LV1 (fractions de sa zone client) : gain et 48V du ou des
+    préamplis X32 d'un canal. Sert au cadre « Input » de la page Edit et à la zone Preamp de la page Channel."""
+
+    def __init__(self, owner):
+        self.owner = owner
+        w = tk.Toplevel(owner.root)
+        w.overrideredirect(True)
+        w.withdraw()
+        w.attributes("-topmost", True)
+        w.configure(bg=PANEL)
+        self.win = w
+        self.tag = tk.Label(w, text="", bg=PANEL, fg=MUT, font=("Segoe UI", 7, "bold"))
+        self.tag.pack(side="top", pady=(2, 0))
+        self.body = tk.Frame(w, bg=PANEL)
+        self.body.pack(side="top", fill="both", expand=True)
+        self.key = None
+        self.geom = None
+        self.units = []
+
+    def sync(self, sel, hwnd, box):
+        """sel = (canal, [préamplis]) ou None (cadre caché) ; hwnd = fenêtre LV1 où se poser ; box = fractions."""
+        rect = client_rect(hwnd) if (sel and hwnd) else None
+        if not rect:
+            if self.win.state() != "withdrawn":
+                self.win.withdraw()
+            return
+        x, y, w, h = rect
+        bx, by = x + round(w * box[0]), y + round(h * box[1])
+        bw, bh = max(40, round(w * box[2])), max(60, round(h * box[3]))
+        if sel != self.key or (bw, bh) != (self.geom or (0, 0, 0, 0))[2:]:
+            self.key = sel
+            for c in self.body.winfo_children():
+                c.destroy()
+            self.units = []
+            ch, idxs = sel
+            self.tag.config(text=join_tags(idxs))
+            avail = bh - self.tag.winfo_reqheight() - 4
+            uw = min((bw - 4) // 2, 70)           # comme les colonnes du float : un mono est un demi-stéréo
+            for i in idxs[:2]:
+                u = Unit(self.body, self.owner, i, uw, compact=True)
+                u.resize(uw, avail)
+                u.pack(side="left", expand=True)
+                self.units.append(u)
+            apply_theme(self.win)
+        geom = (bx, by, bw, bh)
+        if geom != self.geom:
+            self.geom = geom
+            self.win.geometry("%dx%d+%d+%d" % (bw, bh, bx, by))
+        if self.win.state() == "withdrawn":
+            self.win.deiconify()
+            self.owner._z_state = None
 
 
 class RoutingMatrix:
@@ -1311,7 +1559,10 @@ class FloatApp:
         self._lv1_lay = {}             # couche + mode de la surface suivie (lv1_layers de /api/state)
         self._sel_col = None           # mode Edit : colonne de la tranche sélectionnée, lue à l'écran
         self._sel_key = None           # (canal, préamplis) affichés dans la fenêtre de la tranche sélectionnée
-        self._sel_units = []
+        self._lv1_found = {}           # fenêtres de la LV1 (principale, Mixers / Channel détachés)
+        self._lv1_layers_all = {}      # couches des deux Mixers (lv1_layers de /api/state)
+        self._lv1_channels = {}        # noms / couleurs des canaux LV1
+        self._ch_hwnd = None
         self.root.attributes("-topmost", True)
         self.root.configure(bg=BG)        # opaque (2.2.0 ; 0,97 avant)
         try:
@@ -1338,6 +1589,7 @@ class FloatApp:
         self._build_dock()
         self._build_resize_grip()
         self._build_sel_win()
+        self.value_pop = ValuePop(self)
 
         self.root.bind("<Escape>", lambda e: self.quit())
         self.root.protocol("WM_DELETE_WINDOW", self.quit)
@@ -1560,69 +1812,78 @@ class FloatApp:
 
     # -- tranche sélectionnée (mode Edit) ----------------------------------
     def _build_sel_win(self):
-        """Petite fenêtre posée dans le cadre vide du bloc « Input » de la page Edit de la LV1 : gain et 48V
-        du ou des préamplis X32 de la tranche sélectionnée (demande de Joseph). Placée en proportion de la
-        fenêtre de la LV1 (SEL_BOX) : rien à caler."""
-        w = tk.Toplevel(self.root)
-        w.overrideredirect(True)
-        w.withdraw()
-        w.attributes("-topmost", True)
-        w.configure(bg=PANEL)
-        self.sel_win = w
-        self.sel_tag = tk.Label(w, text="", bg=PANEL, fg=MUT, font=("Segoe UI", 7, "bold"))
-        self.sel_tag.pack(side="top", pady=(2, 0))
-        self.sel_body = tk.Frame(w, bg=PANEL)
-        self.sel_body.pack(side="top", fill="both", expand=True)
-        self._sel_geom = None
+        """Cadres posés sur la LV1 : tranche sélectionnée en mode Edit (cadre « Input ») et canal de la page
+        Channel (zone Preamp). Placés en proportion de la fenêtre de la LV1 : rien à caler."""
+        self.sel_box = PreampBox(self)
+        self.sel_win = self.sel_box.win
+        self.ch_box = PreampBox(self)
+        self._namebox_cache = []        # [(signature de la case, canal)], appris sur les pages Mixer
+        self._namebox_lc = None         # noms / couleurs des canaux quand le cache a été appris
+        self._ch_page = None            # (canal, préamplis) de la page Channel, ou None
+
+    def _preamps(self, ch):
+        exp_to_idx = {int(e): int(k) for k, e in (self.exp_map or {}).items() if e}
+        idxs = [exp_to_idx[e] for e in self.lv1_sources.get(ch, []) if e in exp_to_idx]
+        return (ch, idxs) if idxs else None
 
     def _sel_channel(self):
         """(canal LV1, [préamplis X32]) de la tranche sélectionnée, ou None."""
         chans = self._lv1_lay.get("channels") or []
         if self._sel_col is None or self._sel_col >= len(chans) or not chans[self._sel_col]:
             return None
-        ch = chans[self._sel_col]
-        exp_to_idx = {int(e): int(k) for k, e in (self.exp_map or {}).items() if e}
-        idxs = [exp_to_idx[e] for e in self.lv1_sources.get(ch, []) if e in exp_to_idx]
-        return (ch, idxs) if idxs else None
+        return self._preamps(chans[self._sel_col])
 
     def _sync_sel_win(self, lv1_shown):
-        """Affiche la fenêtre de la tranche sélectionnée en mode Edit (onglet Mixer 1 / 2), si la tranche a
-        un préampli X32 ; la reconstruit quand la tranche change ; la suit si la fenêtre de la LV1 bouge."""
         sel = None
         if lv1_shown and self._lv1_tab in MIXER_TABS and self._lv1_lay.get("preset_name") == "Edit":
             sel = self._sel_channel()
-        if not sel:
-            if self.sel_win.state() != "withdrawn":
-                self.sel_win.withdraw()
+        self.sel_box.sync(sel, self._lv1_hwnd, SEL_BOX)
+
+    def _channel_color(self, ch):
+        info = self._lv1_channels.get(str(ch)) or self._lv1_channels.get(ch) or {}
+        return _hex_rgb(info.get("color"))
+
+    def _learn_and_read_channel_page(self):
+        """Pages Mixer visibles (fenêtre principale ou Mixers détachés) : la tranche grise donne le canal
+        sélectionné -> on apprend l'image de la case « canal sélectionné » (si sa couleur est bien celle du
+        canal). Page Channel (onglet de la fenêtre principale, ou fenêtre CHANNEL détachée) : on y reconnaît
+        cette case -> canal affiché. Jamais deviné : inconnu, ambigu ou couleur différente -> rien."""
+        if self._lv1_channels != self._namebox_lc:          # un nom / une couleur a changé : tout réapprendre
+            self._namebox_cache, self._namebox_lc = [], self._lv1_channels
+        found = self._lv1_found
+        layers = self._lv1_layers_all
+        mixers = []
+        if found.get("main") and self._lv1_tab in MIXER_TABS:
+            mixers.append((found["main"], self._surface))
+        for key, surf in (("MIXER1", "mixer1"), ("MIXER2", "mixer2")):
+            if found.get(key):
+                mixers.append((found[key], surf))
+        for hwnd, surf in mixers:
+            if window_iconic(hwnd):
+                continue
+            col = lv1_selected_column_top(hwnd)
+            if col is None:
+                col = lv1_selected_column(hwnd)
+            chans = (layers.get(surf) or {}).get("channels") or []
+            if col is None or col >= len(chans) or not chans[col]:
+                continue
+            ch = chans[col]
+            sig = lv1_namebox(hwnd)
+            if not sig or not _close(sig[0], self._channel_color(ch)):
+                continue
+            if not any(c == ch and _namebox_same(sig, s2) for s2, c in self._namebox_cache):
+                self._namebox_cache = [(s2, c) for s2, c in self._namebox_cache if c != ch] + [(sig, ch)]
+        page = found.get("CHANNEL") or (found.get("main") if self._lv1_tab == "Channel" else None)
+        self._ch_hwnd = page
+        if not page or window_iconic(page):
+            self._ch_page = None
             return
-        rect = client_rect(self._lv1_hwnd)
-        if not rect:
-            return
-        x, y, w, h = rect
-        bx, by = x + round(w * SEL_BOX[0]), y + round(h * SEL_BOX[1])
-        bw, bh = max(40, round(w * SEL_BOX[2])), max(60, round(h * SEL_BOX[3]))
-        if sel != self._sel_key or (bw, bh) != (self._sel_geom or (0, 0, 0, 0))[2:]:
-            self._sel_key = sel
-            for c in self.sel_body.winfo_children():
-                c.destroy()
-            self._sel_units = []
-            ch, idxs = sel
-            self.sel_tag.config(text=join_tags(idxs))
-            avail = bh - self.sel_tag.winfo_reqheight() - 4
-            uw = (bw - 4) // 2                    # comme les colonnes du float : un mono est un demi-stéréo
-            for i in idxs[:2]:
-                u = Unit(self.sel_body, self, i, uw, compact=True)
-                u.resize(uw, avail)
-                u.pack(side="left", expand=True)
-                self._sel_units.append(u)
-            apply_theme(self.sel_win)
-        geom = (bx, by, bw, bh)
-        if geom != self._sel_geom:
-            self._sel_geom = geom
-            self.sel_win.geometry("%dx%d+%d+%d" % (bw, bh, bx, by))
-        if self.sel_win.state() == "withdrawn":
-            self.sel_win.deiconify()
-            self._z_state = None
+        sig = lv1_namebox(page)
+        chs = {c for s2, c in self._namebox_cache if sig and _namebox_same(sig, s2)}
+        ch = chs.pop() if len(chs) == 1 else None
+        if ch is not None and not _close(sig[0], self._channel_color(ch)):
+            ch = None
+        self._ch_page = self._preamps(ch) if ch is not None else None
 
     def _build_resize_grip(self):
         grip = tk.Canvas(self.root, width=10, height=10, bg="#0d0e0f", highlightthickness=0,
@@ -1788,6 +2049,7 @@ class FloatApp:
         if now >= self._lv1_seek:
             self._lv1_seek = now + 2.0
             found = lv1_windows()
+            self._lv1_found = found
             # onglets absents de la fenêtre principale : pages détachées dans leur propre fenêtre (Mixer 2,
             # Channel... : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 et Channel détachés)
             self._detached_now = tuple(k for k in found if k != "main")
@@ -1819,6 +2081,8 @@ class FloatApp:
             if self._lv1_lay.get("preset_name") == "Edit":
                 # pas de « dernier connu » ici : une tranche désélectionnée (ou hors couche) vide le cadre
                 self._sel_col = lv1_selected_column(lv1)
+            if not self.detached:
+                self._learn_and_read_channel_page()
         if lv1:
             self._wait_lv1 = True          # LV1 vue : désormais, plus de LV1 = float caché
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
@@ -1835,9 +2099,13 @@ class FloatApp:
         if shown and lv1 and self.auto_place and not window_iconic(lv1):
             self._auto_fit(lv1)
         self._sync_sel_win(shown and lv1 and not window_iconic(lv1))
+        lv1_up = bool(lv1) and not window_iconic(lv1)
+        self.ch_box.sync(self._ch_page if (lv1_up and not self.detached) else None, self._ch_hwnd, CH_BOX)
         if shown:
             self._sync_dock()
-            wins = [w for w in (self.root, self.panel_win, self.sel_win) if w.state() != "withdrawn"]
+        wins = [w for w in ((self.root, self.panel_win) if shown else ()) + (self.sel_win, self.ch_box.win)
+                if w.state() != "withdrawn"]
+        if wins:
             hwnds = [h for h in (float_hwnd(w) for w in wins) if h]
             if front:
                 if self._z_state != ("top", len(hwnds)):    # une fenêtre de plus (tranche sélectionnée) : refaire
@@ -2400,6 +2668,8 @@ class FloatApp:
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
         self._lv1_lay = lay
+        self._lv1_layers_all = snap.get("lv1_layers") or {}
+        self._lv1_channels = snap.get("lv1_channels") or {}
         if self._surface != getattr(self, "_surface_seen", None):
             self._surface_seen = self._surface        # Mixer 1 <-> Mixer 2 : tout réappliquer
             self._lv1_layer_seen = self._lv1_preset_seen = None
@@ -2430,7 +2700,7 @@ class FloatApp:
                 self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
-        for u in self._sel_units:
+        for u in self.sel_box.units + self.ch_box.units:
             u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
             u.set_phantom(snap["phantom"][u.idx] if snap.get("phantom") else None)
             u.set_led(m["v"][u.idx] if m.get("live") else None, self.clip_db)

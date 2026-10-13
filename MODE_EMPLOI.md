@@ -107,10 +107,18 @@ cadre vide du bloc **Input** de la LV1 (sous les boutons A / B) : potard de gain
 canal stéréo. Sélectionnez une autre tranche : il suit. Le cadre reste vide si la tranche ne reçoit
 aucun préampli X32 (entrée B, TracksLive, groupe…).
 
+### Sur la page Channel
+Sur la page **Channel** de la LV1, le réglage du préampli X32 du canal affiché apparaît dans la zone grisée
+« Preamp / Gain / 48V » du bloc **Channel Input**. La LV1 ne dit pas quel canal elle affiche : l'appli le
+reconnaît après l'avoir vu **sélectionné une fois sur une page Mixer** (cliquer son nom sur Mixer 1 ou 2).
+Tant que ce n'est pas fait, ou en cas de doute (deux canaux de même nom et même couleur), la zone reste vide :
+l'appli n'affiche jamais le préampli d'un autre canal.
+
 ### Régler un gain
-- **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien.
+- **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien. La
+  valeur s'affiche en gros au-dessus du potard pendant qu'on le tourne (visible même avec le doigt dessus).
 - **Cliquer sur la valeur en dB** pour taper un chiffre exact.
-- **48 V** : bouton sous le potard, avec confirmation avant d'allumer.
+- **48 V** : bouton sous le potard, avec confirmation (voyant rouge) avant d'allumer.
 
 ### Le menu ⋮ (dans la languette)
 | Entrée | Rôle |

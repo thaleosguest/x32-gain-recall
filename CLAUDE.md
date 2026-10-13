@@ -311,6 +311,19 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `--lv1-window MIXER2` par fenêtre détachée (`FLOAT_PROCS[clé]`) ; ce float a une surface fixe, ne lit pas
   d'onglet, se ferme 4 s après la disparition de sa fenêtre, config `x32_float_config_MIXER2.json`.
 
+## Page Channel et sélection (2026-10-14)
+
+- Canal affiché par la page Channel : PAS dans la base (surfaces 0-5 : Common, Setup, OVV1, OVV2, FIT, OVVAll ;
+  aucune propriété de sélection), PAS dans l'accessibilité Windows (UIA : 5 panneaux vides, interface dessinée).
+- Solution (`_learn_and_read_channel_page`, float principal) : sur une page Mixer, tranche sélectionnée =
+  **liseré jaune pur (255,242,0)** sur 1 ligne en haut de sa case de source (y 100/1080, tous les modes ; canaux
+  jaunes = (243,250,29), distincts) -> canal ; on mémorise la signature de la case « canal sélectionné » (en haut
+  à gauche : couleur du fond = couleur du canal EXACTE, vérifiée = #0FA2AB, + pixels du texte) ; sur la page
+  Channel (onglet ou fenêtre CHANNEL), même signature (±1 px, ≤ 6 pixels d'écart) et même couleur -> canal.
+  Cache vidé si `lv1_channels` change ; ambigu -> rien. Zone `CH_BOX` (7..213/1728, 27 %..52 %). Testé en
+  direct : canal 22 appris sur Mixer 1 (Setup), reconnu sur Channel -> préampli A 6 (EXP 22).
+- `PreampBox` (cadre Edit + cadre Channel), `confirm_float` (48V), `ValuePop` (bulle des dB au glisser).
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
