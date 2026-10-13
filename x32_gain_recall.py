@@ -1477,7 +1477,54 @@ def merged_snapshot():
                          "routing_last": cs["routing_last"], "routing_can_undo": cs["routing_can_undo"]})
     snap["consoles"] = consoles
     snap["lv1_cards"] = LV1.cards() if LV1 else []
+    if len(consoles) > 1:
+        merged_recall_state(snap)
     return snap
+
+
+def recall_all(preset, indices=None, with_phantom=False):
+    """Rappel d'une scène sur toutes les consoles : chaque console reçoit sa part (préampli global k*N_HA + i).
+    Console absente ou déconnectée : sautée et signalée (« skipped », numéros 1-based)."""
+    parts = {}
+    for key in ("gains", "phantom"):
+        for gi, v in (preset.get(key) or {}).items():
+            gi = int(gi)
+            if indices is not None and gi not in indices:
+                continue
+            parts.setdefault(gi // N_HA, {"gains": {}, "phantom": {}, "name": preset.get("name", "")})[key][str(gi % N_HA)] = v
+    res = {"t": time.time(), "name": preset.get("name", ""), "sent_gain": 0, "sent_phantom": 0, "verified": None,
+           "bad": [], "skipped": []}
+    for k in sorted(parts):
+        client, _i = console_for(k * N_HA)
+        if client is None or not client.snapshot()["connected"]:
+            res["skipped"].append(k + 1)
+            continue
+        r = client.recall(parts[k], None, with_phantom)
+        res["sent_gain"] += r["sent_gain"]
+        res["sent_phantom"] += r["sent_phantom"]
+    return res
+
+
+def merged_recall_state(snap):
+    """Dernier rappel / annulation possible, toutes consoles confondues (affichage de la page et du float)."""
+    lrs, can_undo = [], False
+    for k, client, _card in all_consoles():
+        cs = client.snapshot() if k else snap
+        can_undo = can_undo or cs["can_undo"]
+        lr = cs.get("last_recall")
+        if lr:
+            lrs.append((k, lr))
+    if lrs:
+        t0 = max(lr["t"] for _k, lr in lrs)
+        recent = [(k, lr) for k, lr in lrs if t0 - lr["t"] < 5]          # le même rappel, sur plusieurs consoles
+        snap["last_recall"] = {
+            "t": t0, "name": recent[-1][1]["name"],
+            "sent_gain": sum(lr["sent_gain"] for _k, lr in recent),
+            "sent_phantom": sum(lr["sent_phantom"] for _k, lr in recent),
+            "verified": (None if any(lr["verified"] is None for _k, lr in recent)
+                         else all(lr["verified"] for _k, lr in recent)),
+            "bad": [k * N_HA + i for k, lr in recent for i in lr["bad"]]}
+    snap["can_undo"] = can_undo
 
 
 def merged_meters():
@@ -2155,11 +2202,16 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "introuvable"}, 404)
 
     def _capture(self):
-        s = CLIENT.snapshot()
+        """Scène = gains / 48V / noms de TOUTES les consoles connectées (préampli global k*N_HA + i : la console 1
+        garde ses numéros d'origine)."""
+        s = merged_snapshot()
         gains = {str(i): g for i, g in enumerate(s["gains"]) if g is not None}
         phantom = {str(i): p for i, p in enumerate(s["phantom"]) if p is not None}
         names = {str(i): n for i, n in enumerate(s["names"]) if n}
-        return gains, phantom, names, s["info"]
+        info = dict(s["info"] or {})
+        if len(s["consoles"]) > 1:
+            info["consoles"] = [{"n": c["n"], "ip": c["ip"], "name": c["name"]} for c in s["consoles"]]
+        return gains, phantom, names, info
 
     def _route(self, p, d):
         if p == "/api/connect":
@@ -2265,13 +2317,16 @@ class Handler(BaseHTTPRequestHandler):
             pr = STORE.get(d["id"])
             if not pr:
                 return self._json({"ok": False, "error": "Scene introuvable"})
-            if not CLIENT.snapshot()["connected"]:
+            if not any(c.snapshot()["connected"] for _k, c, _card in all_consoles()):
                 return self._json({"ok": False, "error": "Non connecte a la console"})
             idx = set(int(i) for i in d["indices"]) if d.get("indices") else None
-            r = CLIENT.recall(pr, idx, bool(d.get("phantom")))
+            r = recall_all(pr, idx, bool(d.get("phantom")))
+            if r["skipped"] and not (r["sent_gain"] or r["sent_phantom"]):
+                return self._json({"ok": False, "error": "Console(s) %s non connectée(s)" % ", ".join(map(str, r["skipped"]))})
             return self._json({"ok": True, "result": r})
         if p == "/api/presets/undo":
-            return self._json({"ok": CLIENT.do_undo()})
+            done = [c.do_undo() for _k, c, _card in all_consoles()]
+            return self._json({"ok": any(done)})
         if p == "/api/presets/rename":
             return self._json({"ok": STORE.rename(d["id"], str(d["name"]).strip()[:60] or "Sans nom")})
         if p == "/api/presets/delete":

@@ -125,7 +125,7 @@ Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille d
 |---|---|
 | **Banque** | *LV1 Ch 1-16…* (une colonne par tranche LV1, le mode normal) ou *Local / A / B 1-16* (une colonne par préampli X32, pour un préampli qui n'arrive sur aucun canal) |
 | **Plus large / Plus étroit** | Calage fin des colonnes |
-| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se referme avec sa croix ✕ ou en touchant la LV1) |
+| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se ferme avec sa croix ✕) |
 | **Routing…** | Charger un routing X32 (profil « Routing LV1 » fourni) |
 | **Console** | Barre IP / Connecter / Scanner, sous les voies |
 | **Verrouiller l'édition** | Plus aucun gain modifiable (pendant le show) |
@@ -182,7 +182,8 @@ Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : flo
 - **Routing** : avec plusieurs consoles, choisissez la console visée (sélecteur *Console* dans l'onglet
   Routing de la page ; dans le float, l'appli demande la console au moment de charger). Aperçu, vérification
   et *Annuler le dernier routing* se font console par console.
-- Les scènes de gains concernent la console 1.
+- **Scènes de gains** : une scène enregistre et rappelle les gains des **toutes** les consoles connectées
+  (laissez-les connectées en même temps) ; une console absente au rappel est signalée et laissée de côté.
 
 ## 6. Les scènes de gains
 

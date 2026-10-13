@@ -2551,16 +2551,9 @@ class FloatApp:
         self._place_dock()
         self.panel_win.deiconify()
         self._z_state = None
-        self._outside_down = True          # le clic qui vient d'ouvrir le panneau ne compte pas
-        try:
-            self.panel_win.focus_force()   # le panneau devient la fenêtre active : toucher ailleurs la change
-        except tk.TclError:
-            pass
-        fg = foreground_window()
-        self._panel_focus = bool(fg) and window_pid(fg) == os.getpid()
-        if not getattr(self, "_watching_outside", False):
-            self._watching_outside = True
-            self.root.after(30, self._watch_outside)
+        # Fermeture : croix ✕ seulement (2026-10-14, Joseph). La fermeture automatique « quand une autre fenêtre
+        # devient active » fermait le panneau pendant qu'on tapait un nom de scène : le clavier tactile de
+        # Windows est une autre appli. _watch_outside n'est plus lancé.
 
     def _watch_outside(self):
         """Panneau ouvert : toutes les 30 ms (un tapotement au doigt est bref), un clic ailleurs que dans

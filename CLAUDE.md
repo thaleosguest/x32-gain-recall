@@ -364,6 +364,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `_routing_route`, `client = console_for(target * N_HA)`) ; `consoles[]` de l'état porte `routing_last` /
   `routing_can_undo` ; page : sélecteur `#rcons` (si > 1 console) ; float : `_pick_console()`. Testé sur le
   simulateur en console 2 (envoi, vérification, EXP relus, annulation), console 1 intacte.
+- Scènes multi-consoles : `_capture` via `merged_snapshot` (clés globales, console 1 inchangée, `console.consoles`
+  = consoles de la scène) ; `recall_all` découpe par console (absente -> `skipped`) ; `/api/presets/undo` sur
+  toutes ; `merged_recall_state` fusionne `last_recall` / `can_undo`. Testé sur le simulateur.
+- Panneau du float : fermeture automatique (fenêtre active) SUPPRIMÉE, croix ✕ seulement : le clavier tactile de
+  Windows est une autre appli et fermait le panneau pendant la saisie (Joseph, 2026-10-14).
 
 ## Reste à faire / idées
 
