@@ -3,10 +3,11 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [Non publié]
-- **Page Channel** : le gain et le 48V du préampli X32 du canal affiché se posent dans la zone grisée « Preamp / Gain / 48V » du bloc Channel Input (onglet Channel ou fenêtre CHANNEL détachée). La LV1 ne dit nulle part quel canal elle affiche : l'appli reconnaît la case « canal sélectionné » (en haut à gauche), apprise sur une page Mixer où la tranche sélectionnée est repérée. Rien n'est affiché tant que ce canal n'a pas été sélectionné une fois sur une page Mixer, ni en cas de doute (nom en double, couleur différente, canal renommé).
+- **Page Channel** : le gain et le 48V du préampli X32 du canal affiché se posent dans la zone grisée « Preamp / Gain / 48V » du bloc Channel Input (onglet Channel ou fenêtre CHANNEL détachée), et suivent « < » / « > ». La LV1 ne dit nulle part quel canal elle affiche : l'appli lit à l'écran « Channel N: » et « … EXP N », à l'identique de chiffres relevés (plein écran 1920x1080 et fenêtre 1728x970), et n'affiche rien si ce n'est pas cohérent avec le patch de la LV1 et la couleur du canal. Chiffre manquant pour une taille : appris tout seul quand le reste concorde.
+- **Potards plus fluides** : les lectures d'écran (onglet, tranche sélectionnée, page Channel) passent sur un fil à part et s'arrêtent pendant qu'on tourne un potard (elles rendaient le glisser saccadé).
 - **Tranche sélectionnée repérée dans tous les modes** (liseré jaune en haut de sa case ; avant : fond gris des faders, absent en Setup).
 - **48V** : confirmation au style du float, voyant rouge clignotant, gros boutons.
-- **Bulle des dB** : en tournant un potard (ou en tapant une valeur), la valeur s'affiche en gros au-dessus du potard, hors du doigt.
+- **Bulle des dB** : en tournant un potard (ou en tapant une valeur), la valeur s'affiche en gros au-dessus du potard, hors du doigt ; se coupe dans le menu ⋮.
 - **Mixer détaché dans sa propre fenêtre** (ex. Mixer 2 sur un 2e écran, fenêtre « MIXER2 » de la LV1) : un **float de plus** s'ouvre pour ce Mixer, calé sur sa fenêtre, et suit sa couche, son mode et sa tranche sélectionnée ; il se ferme quand la fenêtre est refermée ou rattachée. La fenêtre principale est de nouveau reconnue quand des pages en sont détachées (Mixer 2, Channel, Show… : « Mixer 1, All, Show, Patch, Setup » avec Mixer 2 et Channel détachés) : avant, l'onglet affiché n'y était plus lu. Chaque float garde ses propres réglages.
 
 ## [2.4.0] — 2026-10-13

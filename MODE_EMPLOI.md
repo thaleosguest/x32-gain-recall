@@ -109,10 +109,10 @@ aucun préampli X32 (entrée B, TracksLive, groupe…).
 
 ### Sur la page Channel
 Sur la page **Channel** de la LV1, le réglage du préampli X32 du canal affiché apparaît dans la zone grisée
-« Preamp / Gain / 48V » du bloc **Channel Input**. La LV1 ne dit pas quel canal elle affiche : l'appli le
-reconnaît après l'avoir vu **sélectionné une fois sur une page Mixer** (cliquer son nom sur Mixer 1 ou 2).
-Tant que ce n'est pas fait, ou en cas de doute (deux canaux de même nom et même couleur), la zone reste vide :
-l'appli n'affiche jamais le préampli d'un autre canal.
+« Preamp / Gain / 48V » du bloc **Channel Input**, et suit « < » / « > ». L'appli lit à l'écran le numéro
+du canal et de son EXP, et vérifie qu'ils concordent avec le patch de la LV1 : en cas de doute, la zone reste
+vide (l'appli n'affiche jamais le préampli d'un autre canal). Canal sans préampli X32 : zone vide.
+Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille de fenêtre LV1 n'est pas lue.
 
 ### Régler un gain
 - **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien. La

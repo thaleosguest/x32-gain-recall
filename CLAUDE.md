@@ -315,14 +315,25 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 
 - Canal affiché par la page Channel : PAS dans la base (surfaces 0-5 : Common, Setup, OVV1, OVV2, FIT, OVVAll ;
   aucune propriété de sélection), PAS dans l'accessibilité Windows (UIA : 5 panneaux vides, interface dessinée).
-- Solution (`_learn_and_read_channel_page`, float principal) : sur une page Mixer, tranche sélectionnée =
-  **liseré jaune pur (255,242,0)** sur 1 ligne en haut de sa case de source (y 100/1080, tous les modes ; canaux
-  jaunes = (243,250,29), distincts) -> canal ; on mémorise la signature de la case « canal sélectionné » (en haut
-  à gauche : couleur du fond = couleur du canal EXACTE, vérifiée = #0FA2AB, + pixels du texte) ; sur la page
-  Channel (onglet ou fenêtre CHANNEL), même signature (±1 px, ≤ 6 pixels d'écart) et même couleur -> canal.
-  Cache vidé si `lv1_channels` change ; ambigu -> rien. Zone `CH_BOX` (7..213/1728, 27 %..52 %). Testé en
-  direct : canal 22 appris sur Mixer 1 (Setup), reconnu sur Channel -> préampli A 6 (EXP 22).
-- `PreampBox` (cadre Edit + cadre Channel), `confirm_float` (48V), `ValuePop` (bulle des dB au glisser).
+- 1er essai (écarté par Joseph) : apprendre la case « canal sélectionné » sur une page Mixer -> avec « > » on
+  tombe sur un canal jamais vu, plus d'accès au préampli.
+- Solution retenue : **lecture des chiffres à l'écran** (`lv1_channel_page`, fil `_screen_reader`) :
+  « Channel N: » (bandeau du bas, texte (17,17,17) sur la couleur du canal, `CH_REG_BAS`) et « … EXP N »
+  (source, texte clair, `CH_REG_SRC`). Découpe en caractères (masque strict : sépare les chiffres collés),
+  image en gris normalisée 8x12, comparée aux modèles de `lv1/digits.py` PAR TAILLE d'interface
+  (`ui_scale_key` = min(w/1920, h/1080) x 100 : 100 et 90 relevés le 2026-10-14 en faisant défiler les canaux
+  1→12/23 avec « > ») ; un chiffre n'est retenu que s'il est quasi identique (écart ≤ 3/96, 2e ≥ +6) : d'une
+  taille à l'autre la LV1 dessine autrement (testé : inutilisable). `_resolve_channel` : canal+EXP lus ->
+  EXP ∈ sources(canal) ; un seul lu -> patch + couleur du bandeau (exacte) ; sinon rien. Chiffres manquants
+  appris (`x32_digits_learned.json`) quand l'autre numéro est lu (ex. « 8 » d'EXP 18 en fenêtre). Testé :
+  canaux 1→24 et retour, tous justes (14/15 sans X32 : vides).
+- Tranche sélectionnée sur une page Mixer : **liseré jaune pur (255,242,0)** en haut de sa case de source
+  (y 100/1080, tous les modes ; canaux jaunes = (243,250,29)) -> `lv1_selected_column_top` (cadre Edit).
+- Captures d'écran : 15-45 ms CHACUNE (GDI) -> une seule capture par lecture (`screen_rows`, `screen_bytes`),
+  sur le fil `_screen_reader`, suspendu pendant un glisser de potard (`_dragging`) : c'était la cause des
+  « potards moins précis ». Zone Channel `CH_BOX` (7..213/1728, 27 %..52 %).
+- `PreampBox` (cadre Edit + cadre Channel), `confirm_float` (48V), `ValuePop` (bulle des dB au glisser, se place
+  une fois puis ne change que le chiffre ; option `value_pop` du menu ⋮).
 
 ## Reste à faire / idées
 
