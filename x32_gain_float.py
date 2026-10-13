@@ -1886,6 +1886,12 @@ class FloatApp:
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
+        # croix de fermeture, assez grosse pour le doigt (le « clic ailleurs » ne se voit pas toujours :
+        # Windows cache la souris à cette appli quand on touche la LV1, qui tourne en administrateur)
+        head = tk.Frame(self.panel, bg=PANEL)
+        head.pack(fill="x")
+        tk.Button(head, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
+                  width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
         if mode == "scenes":
             self._fill_scenes_panel()
         else:
@@ -1895,6 +1901,12 @@ class FloatApp:
         self.panel_win.deiconify()
         self._z_state = None
         self._outside_down = True          # le clic qui vient d'ouvrir le panneau ne compte pas
+        try:
+            self.panel_win.focus_force()   # le panneau devient la fenêtre active : toucher ailleurs la change
+        except tk.TclError:
+            pass
+        fg = foreground_window()
+        self._panel_focus = bool(fg) and window_pid(fg) == os.getpid()
         if not getattr(self, "_watching_outside", False):
             self._watching_outside = True
             self.root.after(30, self._watch_outside)
@@ -1903,6 +1915,15 @@ class FloatApp:
         """Panneau ouvert : toutes les 30 ms (un tapotement au doigt est bref), un clic ailleurs que dans
         l'appli (LV1, bureau...) referme le panneau (demande de Joseph)."""
         if not self.panel_mode:
+            self._watching_outside = False
+            return
+        # 1) une autre appli devient la fenêtre active (LV1 touchée, autre appli...) : marche même avec la LV1
+        #    en administrateur ; 2) clic ailleurs lu sur la souris (autres applis : Windows le cache pour la LV1)
+        fg = foreground_window()
+        if fg and window_pid(fg) == os.getpid():
+            self._panel_focus = True
+        elif fg and self._panel_focus:
+            self._toggle_panel(None)
             self._watching_outside = False
             return
         down = click_outside_app()

@@ -290,6 +290,10 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   ajoutés une fois chacun (`seeded_keys` dans x32_routings.json). Choix de Joseph : sorties S16 doublées
   sur les voies 1-8 ET 9-16 (sélecteur indifférent) ; éditeur libre (pas d'exceptions), page ET float.
 
+- **Panneau du float fermé en touchant ailleurs** : `GetAsyncKeyState` ne voit PAS les clics sur la LV1 (elle tourne
+  en administrateur ; mon 1er test sur une fenêtre ordinaire passait, chez Joseph non). Ce qui marche : la fenêtre
+  active change d'appli (`_watch_outside`, 30 ms, après `focus_force` du panneau) + croix ✕.
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou

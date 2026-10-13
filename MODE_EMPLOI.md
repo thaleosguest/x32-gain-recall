@@ -115,7 +115,7 @@ aucun préampli X32 (entrée B, TracksLive, groupe…).
 |---|---|
 | **Banque** | *LV1 Ch 1-16…* (une colonne par tranche LV1, le mode normal) ou *Local / A / B 1-16* (une colonne par préampli X32, pour un préampli qui n'arrive sur aucun canal) |
 | **Plus large / Plus étroit** | Calage fin des colonnes |
-| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se referme en touchant ailleurs) |
+| **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains (le panneau se referme avec sa croix ✕ ou en touchant la LV1) |
 | **Routing…** | Charger un routing X32 (profil « Routing LV1 » fourni) |
 | **Console** | Barre IP / Connecter / Scanner, sous les voies |
 | **Verrouiller l'édition** | Plus aucun gain modifiable (pendant le show) |
