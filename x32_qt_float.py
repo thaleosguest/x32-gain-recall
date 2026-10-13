@@ -34,14 +34,22 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialG
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a1"
+QT_FLOAT_VERSION = "3.0.0-a2"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
 TXT, MUT, OK, AMBER, WARN, TEAL = "#e9edf0", "#8c939a", "#3ddc84", "#f2b63b", "#ff5b4d", "#13a9af"
 PH_ON = xf.PH_ON
 TAP_PX = 12                     # un toucher qui bouge moins que ça est un « tap » (48V, valeur, languette)
-TAB_ITEM_H = (14, 26, 31)       # languette : point de connexion, flèche, ⋮ (hauteurs des zones de toucher)
+# Calage relevé sur la LV1 V17 en 1920x1080 (2026-10-14, Mixer 1, SndChk) : intérieur du cadre « Preamp / Gain / 48 »
+# d'une tranche = 92 px au pas de 96 (x 143..234 pour la tranche 1), y 184..315. Les cartes restent DANS le cadre :
+# le contour gris et le liseré jaune de la tranche sélectionnée restent visibles (demande de Joseph).
+CARD_L, CARD_R = 1 / 96.0, 93 / 96.0        # bords de la carte, en fraction du pas des tranches
+QT_AUTO_H = 132 / 1080.0
+# Languette (v3) : dans l'espace vide de la barre du haut, entre « Setup » et le cadenas (x 1287..1370, boutons
+# y 8..49 en 1920x1080) ; calée par la droite (le cadenas ne bouge pas quand des pages sont détachées)
+TOOL_BOX = (1292 / 1920.0, 8 / 1080.0, 74 / 1920.0, 42 / 1080.0)
+TOOL_ITEMS = ("conn", "arrow", "more")
 
 
 def qc(color):
@@ -104,7 +112,8 @@ class Col:
         self.color = None
         self.tag = ""
         self.name = ""
-        self.x = self.w = 0
+        self.x = self.w = 0              # zone de la colonne (pas des tranches) : prise au doigt
+        self.cx = self.cw = 0            # carte, DANS le cadre de la tranche LV1
 
 
 def draw_knob(p, kr, db, color, held):
@@ -140,7 +149,7 @@ def draw_knob(p, kr, db, color, held):
 
 
 class FloatWindow(QWidget):
-    """Languette + colonnes, dessinées dans une seule fenêtre transparente (trous = traversables)."""
+    """Les colonnes, dessinées dans une seule fenêtre transparente (trous = traversables)."""
 
     def __init__(self, app):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -157,33 +166,13 @@ class FloatWindow(QWidget):
         self.points = {}                 # id du point (doigt / souris) -> état du geste
 
     # -- géométrie -------------------------------------------------------------
-    def tab_box(self):
-        h = sum(TAB_ITEM_H) + (14 if self.app.locked else 0)
-        if self.app.collapsed:
-            h -= TAB_ITEM_H[2]
-        y = round(self.app.strip_h / 2 - sum(TAB_ITEM_H) / 2)
-        return QRectF(0, y, TAB_W, h)
-
-    def tab_item(self, y):
-        """Élément de la languette sous y : "conn", "arrow", "more" ou None."""
-        box = self.tab_box()
-        if not box.contains(QPointF(TAB_W / 2, y)):
-            return None
-        y -= box.top()
-        names = ("conn", "arrow", "more")
-        for n, h in zip(names, TAB_ITEM_H):
-            if y < h:
-                return None if (n == "more" and self.app.collapsed) else n
-            y -= h
-        return None
-
     def unit_rects(self, col):
         """[(idx, zone du préampli, potard, valeur, 48V, diode)] d'une colonne."""
         app = self.app
         top = 5 + QFontMetrics(self.f_tag).height() + 3
         if col.ch is None:
             top += QFontMetrics(self.f_name).height()
-        uw = (col.w - 2) / 2.0
+        uw = col.cw / 2.0
         n = len(col.idxs)
         body_h = app.strip_h - top - 2
         fixed = 7 + 4 + 16 + 4 + 15 + 6
@@ -192,7 +181,7 @@ class FloatWindow(QWidget):
             ksz = min(ksz, app.max_knob)
         block = fixed + ksz
         y0 = top + max(0, (body_h - block) / 2)
-        x0 = col.x + (col.w - uw * n) / 2
+        x0 = col.cx + (col.cw - uw * n) / 2
         out = []
         for k, idx in enumerate(col.idxs[:2]):
             ux = x0 + k * uw
@@ -200,7 +189,7 @@ class FloatWindow(QWidget):
             led = QRectF(cx - 4, y0, 8, 7)
             kr = QRectF(cx - ksz / 2, y0 + 11, ksz, ksz)
             val = QRectF(ux, kr.bottom() + 3, uw, 16)
-            pw = max(20, min(uw - 6, 38))
+            pw = max(20, min(uw - 8, 38))
             ph = QRectF(cx - pw / 2, val.bottom() + 3, pw, 15)
             out.append((idx, QRectF(ux, top, uw, app.strip_h - top), kr, val, ph, led))
         return out
@@ -211,7 +200,6 @@ class FloatWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.TextAntialiasing)
-        self._paint_tab(p)
         if not app.collapsed:
             clip = e.rect()
             for col in app.cols:
@@ -224,35 +212,9 @@ class FloatWindow(QWidget):
             p.drawLine(QPointF(r[0] - 4, r[1]), QPointF(r[0], r[1] - 4))
         p.end()
 
-    def _paint_tab(self, p):
-        app = self.app
-        box = self.tab_box()
-        path = QPainterPath()
-        path.addRoundedRect(box, 4, 4)
-        p.fillPath(path, qc(BOX))
-        y = box.top()
-        cx = TAB_W / 2
-        dot = OK if app.conn_state == "ok" else (AMBER if app.conn_state == "trying" else "#555555")
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(dot))
-        p.drawEllipse(QPointF(cx, y + TAB_ITEM_H[0] / 2), 4, 4)
-        y += TAB_ITEM_H[0]
-        p.setPen(QColor(TXT))
-        p.setFont(QFont("Segoe UI", 11, QFont.Bold))
-        p.drawText(QRectF(0, y, TAB_W, TAB_ITEM_H[1]), Qt.AlignCenter, "▸" if app.collapsed else "◂")
-        y += TAB_ITEM_H[1]
-        if not app.collapsed:
-            p.setFont(QFont("Segoe UI", 15, QFont.Bold))
-            p.drawText(QRectF(0, y, TAB_W, TAB_ITEM_H[2]), Qt.AlignCenter, "⋮")
-            y += TAB_ITEM_H[2]
-        if app.locked:
-            p.setPen(QColor(WARN))
-            p.setFont(QFont("Segoe UI", 7))
-            p.drawText(QRectF(0, y, TAB_W, 14), Qt.AlignCenter, "🔒")
-
     def _paint_col(self, p, col):
         app = self.app
-        r = QRectF(col.x + 0.5, 0.5, col.w - 1.5, app.strip_h - 1)
+        r = QRectF(col.cx, 0, col.cw, app.strip_h)
         card = QPainterPath()
         card.addRoundedRect(r, 5, 5)
         p.fillPath(card, qc(PANEL))
@@ -263,12 +225,12 @@ class FloatWindow(QWidget):
         fm = QFontMetrics(self.f_tag)
         p.setPen(QColor(MUT))
         p.setFont(self.f_tag)
-        p.drawText(QRectF(col.x, 7, col.w, fm.height()), Qt.AlignCenter, self._fit_tag(col.tag, col.w - 4))
+        p.drawText(QRectF(col.cx, 7, col.cw, fm.height()), Qt.AlignCenter, self._fit_tag(col.tag, col.cw - 4))
         if col.ch is None and col.name:
             p.setPen(QColor(TXT))
             p.setFont(self.f_name)
-            name = QFontMetrics(self.f_name).elidedText(col.name, Qt.ElideRight, int(col.w - 4))
-            p.drawText(QRectF(col.x, 7 + fm.height(), col.w, QFontMetrics(self.f_name).height()), Qt.AlignCenter, name)
+            name = QFontMetrics(self.f_name).elidedText(col.name, Qt.ElideRight, int(col.cw - 4))
+            p.drawText(QRectF(col.cx, 7 + fm.height(), col.cw, QFontMetrics(self.f_name).height()), Qt.AlignCenter, name)
         held = {g["idx"] for g in self.points.values() if g.get("mode") == "gain"}
         for idx, zone, kr, val, ph, led in self.unit_rects(col):
             db = app.gain(idx)
@@ -310,9 +272,6 @@ class FloatWindow(QWidget):
 
     # -- toucher / souris ------------------------------------------------------
     def _hit(self, pos):
-        if pos.x() < TAB_W:
-            item = self.tab_item(pos.y())
-            return ("tab", item) if item else None
         if self.app.collapsed:
             return None
         if pos.x() > self.width() - 12 and pos.y() > self.app.strip_h - 12:
@@ -347,8 +306,6 @@ class FloatWindow(QWidget):
             g["db0"] = db
             self.app.dragging_start()
             self.app.pop.show_for(self, what)
-        elif kind == "tab" and what == "conn":
-            g["win0"] = self.pos()
         elif kind == "grip":
             g["size0"] = (self.app.strip_w, self.app.strip_h)
         self.points[pid] = g
@@ -366,10 +323,6 @@ class FloatWindow(QWidget):
             if db != self.app.local.get(g["idx"]):
                 self.app.set_gain_local(g["idx"], db)
                 self.app.pop.show_for(self, g["idx"])
-        elif g["mode"] == "tab" and g["idx"] == "conn" and g["moved"]:
-            self.app.set_auto_place(False)
-            self.move(g["win0"] + QPoint(round(d.x()), round(d.y())))
-            self.app.save_soon()
         elif g["mode"] == "grip" and g["moved"]:
             w0, h0 = g["size0"]
             self.app.set_auto_place(False)
@@ -388,12 +341,6 @@ class FloatWindow(QWidget):
                 self.app.phantom_tap(g["idx"])
             elif g["mode"] == "val":
                 self.app.edit_value(g["idx"])
-            elif g["mode"] == "tab":
-                if g["idx"] == "arrow":
-                    self.app.toggle_collapse()
-                elif g["idx"] == "more":
-                    box = self.tab_box()
-                    self.app.more_menu(self.mapToGlobal(QPoint(TAB_W, round(box.top()))))
         self.update()
 
     def event(self, e):
@@ -430,6 +377,105 @@ class FloatWindow(QWidget):
     def mouseReleaseEvent(self, e):
         if not self._from_touch(e) and e.button() == Qt.LeftButton:
             self._release("mouse", e.globalPosition())
+
+
+class ToolBar(QWidget):
+    """Languette (v3) : point de connexion (glisser = déplacer le float), flèche de repli, menu ⋮, cadenas.
+    Posée dans l'espace vide de la barre du haut de la LV1 (demande de Joseph) ; sans LV1 : à gauche du float."""
+
+    def __init__(self, app):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.app = app
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_AcceptTouchEvents)
+        self.points = {}
+        self.resize(74, 42)
+
+    def item_at(self, pos):
+        i = int(pos.x() * len(TOOL_ITEMS) / max(1, self.width()))
+        return TOOL_ITEMS[max(0, min(len(TOOL_ITEMS) - 1, i))]
+
+    def paintEvent(self, _e):
+        app = self.app
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 6, 6)
+        p.fillPath(path, qc(PANEL))
+        p.setPen(QPen(qc(LINE2), 1))
+        p.drawPath(path)
+        cw = self.width() / float(len(TOOL_ITEMS))
+        h = self.height()
+        dot = OK if app.conn_state == "ok" else (AMBER if app.conn_state == "trying" else "#555555")
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(dot))
+        p.drawEllipse(QPointF(cw / 2, h / 2), 5, 5)
+        if app.locked:
+            p.setPen(QColor(WARN))
+            p.setFont(QFont("Segoe UI", 6))
+            p.drawText(QRectF(0, h - 13, cw, 12), Qt.AlignCenter, "🔒")
+        p.setPen(QColor(TXT))
+        p.setFont(QFont("Segoe UI", 13, QFont.Bold))
+        p.drawText(QRectF(cw, 0, cw, h), Qt.AlignCenter, "▾" if app.collapsed else "▴")
+        p.setFont(QFont("Segoe UI", 16, QFont.Bold))
+        p.drawText(QRectF(2 * cw, 0, cw, h), Qt.AlignCenter, "⋮")
+        p.end()
+
+    def _press(self, pid, pos, gpos):
+        self.points[pid] = {"item": self.item_at(pos), "p0": QPointF(gpos), "moved": False,
+                            "win0": self.app.win.pos()}
+
+    def _move(self, pid, pos, gpos):
+        g = self.points.get(pid)
+        if not g:
+            return
+        d = QPointF(gpos) - g["p0"]
+        if abs(d.x()) + abs(d.y()) > TAP_PX:
+            g["moved"] = True
+        if g["item"] == "conn" and g["moved"] and not self.app.collapsed:
+            self.app.set_auto_place(False)          # déplacement à la main : calage manuel
+            self.app.win.move(g["win0"] + QPoint(round(d.x()), round(d.y())))
+            self.app.save_soon()
+
+    def _release(self, pid):
+        g = self.points.pop(pid, None)
+        if not g or g["moved"]:
+            return
+        if g["item"] == "arrow":
+            self.app.toggle_collapse()
+        elif g["item"] == "more":
+            self.app.more_menu(self.mapToGlobal(QPoint(0, self.height())))
+        self.update()
+
+    def event(self, e):
+        t = e.type()
+        if t in (QEvent.TouchBegin, QEvent.TouchUpdate, QEvent.TouchEnd, QEvent.TouchCancel):
+            for pt in e.points():
+                st = pt.state()
+                if st == QEventPoint.State.Pressed:
+                    self._press(pt.id(), pt.position(), pt.globalPosition())
+                elif st == QEventPoint.State.Updated:
+                    self._move(pt.id(), pt.position(), pt.globalPosition())
+                elif st == QEventPoint.State.Released:
+                    self._release(pt.id())
+            if t == QEvent.TouchCancel:
+                self.points.clear()
+            e.accept()
+            return True
+        return super().event(e)
+
+    def mousePressEvent(self, e):
+        if not FloatWindow._from_touch(e) and e.button() == Qt.LeftButton:
+            self._press("mouse", e.position(), e.globalPosition())
+
+    def mouseMoveEvent(self, e):
+        if not FloatWindow._from_touch(e):
+            self._move("mouse", e.position(), e.globalPosition())
+
+    def mouseReleaseEvent(self, e):
+        if not FloatWindow._from_touch(e) and e.button() == Qt.LeftButton:
+            self._release("mouse")
 
 
 # --------------------------------------------------------------------------
@@ -643,6 +689,7 @@ class QtFloat:
         self.link = Link(self.backend)
 
         self.win = FloatWindow(self)
+        self.tool = ToolBar(self)
         self.pop = ValuePop(self)
         try:
             icon = QIcon()
@@ -654,7 +701,7 @@ class QtFloat:
         except Exception:
             pass
         x, y = self._apply_screen_profile(cfg.get("x", 200), cfg.get("y", 200))
-        self.win.move(x, y)
+        self.win.move(x + TAB_W, y)          # config partagée avec le float tk : sa fenêtre commence à la languette
         self.build_cols()
 
         self._save_timer = QTimer()
@@ -781,12 +828,11 @@ class QtFloat:
 
     def _relayout(self):
         w = self.strip_w
-        x = TAB_W
         for i, col in enumerate(self.cols):
-            cw = int(round((i + 1) * w)) - int(round(i * w))
-            col.x, col.w = x, cw
-            x += cw
-        width = TAB_W if self.collapsed else x
+            col.x, col.w = int(round(i * w)), int(round((i + 1) * w)) - int(round(i * w))
+            col.cx = int(round(i * w + w * CARD_L))
+            col.cw = int(round(i * w + w * CARD_R)) - col.cx
+        width = int(round(len(self.cols) * w))
         if (self.win.width(), self.win.height()) != (width, self.strip_h):
             self.win.setFixedSize(width, self.strip_h)
         self.win.update()
@@ -885,11 +931,9 @@ class QtFloat:
             self.build_cols()
         else:
             self._refresh_cols()
-        if not self.win.points or changed:
-            self.win.update()
-        else:
-            # glisser en cours : on ne repeint que les autres colonnes (les valeurs tenues sont locales)
-            self.win.update()
+        self.win.update()
+        if changed:
+            self.tool.update()
 
     # -- LV1 : devant / derrière, caché, calage (100 ms) -------------------------
     def follow_lv1(self):
@@ -932,23 +976,44 @@ class QtFloat:
         if shown != self._shown:
             self._shown = shown
             if shown:
-                self.win.show()
+                if not self.collapsed:
+                    self.win.show()
+                self.tool.show()
                 self._z_state = None
             else:
                 self.win.hide()
+                self.tool.hide()
                 self.pop.hide()
         if shown and lv1 and self.auto_place and not window_iconic(lv1):
             self._auto_fit(lv1)
         if shown:
-            h = int(self.win.winId())
+            self._place_tool(lv1)
+            hwnds = [int(w.winId()) for w in (self.win, self.tool) if w.isVisible()]
+            key = (len(hwnds),)
             if front:
-                if self._z_state != "top":
-                    set_topmost(h, True)
-                    self._z_state = "top"
-            elif self._z_state != fg:
-                set_topmost(h, False)
-                place_below(h, fg)
-                self._z_state = fg
+                if self._z_state != ("top",) + key:
+                    for h in hwnds:
+                        set_topmost(h, True)
+                    self._z_state = ("top",) + key
+            elif self._z_state != (fg,) + key:
+                for h in hwnds:
+                    set_topmost(h, False)
+                    place_below(h, fg)
+                self._z_state = (fg,) + key
+
+    def _place_tool(self, lv1):
+        """Languette dans l'espace vide de la barre du haut de la LV1 (fenêtre principale) ; Mixer détaché ou
+        pas de LV1 : à gauche des colonnes, comme l'ancienne languette."""
+        rect = client_rect(lv1) if (lv1 and not self.detached and not window_iconic(lv1)) else None
+        if rect and rect[2] >= 400:
+            x, y, w, h = rect
+            geom = (x + round(w * TOOL_BOX[0]), y + round(h * TOOL_BOX[1]),
+                    max(60, round(w * TOOL_BOX[2])), max(32, round(h * TOOL_BOX[3])))
+        else:
+            p = self.win.pos()
+            geom = (p.x() - 76, p.y(), 74, 42)
+        if (self.tool.x(), self.tool.y(), self.tool.width(), self.tool.height()) != geom:
+            self.tool.setGeometry(*geom)
 
     def _screen_reader(self):
         """Lecture de l'onglet de la LV1 (captures de 15-45 ms) sur un fil à part, jamais pendant un glisser."""
@@ -976,8 +1041,8 @@ class QtFloat:
             return
         self._auto_geom = rect
         x, y, w, h = rect
-        self.set_strip_size(w * AUTO_PITCH, round(h * AUTO_H))
-        self.win.move(x + round(w * AUTO_X0) - TAB_W, y + round(h * AUTO_Y0))
+        self.set_strip_size(w * AUTO_PITCH, round(h * QT_AUTO_H))
+        self.win.move(x + round(w * AUTO_X0), y + round(h * AUTO_Y0))
         self.save_soon()
 
     def _apply_screen_profile(self, x, y):
@@ -1015,7 +1080,7 @@ class QtFloat:
 
     def save_cfg(self):
         p = self.win.pos()
-        x, y = p.x(), p.y()
+        x, y = p.x() - TAB_W, p.y()        # repère du float tk (voir __init__)
         screens = dict(self.cfg.get("screens") or {})
         last = self.cfg.get("last_screen")
         rect = monitor_rect(x, y)
@@ -1033,14 +1098,19 @@ class QtFloat:
 
     # -- languette et menu -------------------------------------------------------
     def toggle_collapse(self):
+        """Repli : les colonnes disparaissent, la languette reste."""
         self.collapsed = not self.collapsed
         if self.collapsed:
             self.pop.hide()
-        self._relayout()
+            self.win.hide()
+        elif self._shown:
+            self.win.show()
+            self._z_state = None
+        self.tool.update()
 
     def toggle_lock(self):
         self.locked = not self.locked
-        self.win.update()
+        self.tool.update()
 
     def select_bank(self, name):
         for view, banks in (("lv1", LV1_BANKS), ("x32", BANKS)):
