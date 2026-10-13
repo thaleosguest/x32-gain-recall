@@ -14,10 +14,13 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.3.0 publiée (2026-10-13)
+## État actuel : v2.4.0 publiée (2026-10-13)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.3.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.3.0 (branche `dev-2.3`) fusionnée dans `main` ; avant : #5 (v2.2.0), #4 (v2.1.0), #1, #2 (v2.0.0), #3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.4.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.4.0 (branche `dev-2.4`) fusionnée dans `main` ; avant : #6 (v2.3.0), #5 (v2.2.0), #4 (v2.1.0), #1, #2, #3.
+2.4.0 = routing : profils X32R + S16 A + S16 B et M32C + S16 A + S16 B, éditeur libre (page + float) en
+matrice avec aide à la visée ou en listes ; float plus tactile (⋮, menu 13 pt, panneau fermé par ✕ ou en
+touchant la LV1) (détails : section « Routing (2.4.0) »).
 2.3.0 = plug and play : mode d'emploi (`MODE_EMPLOI.md`), float ouvert et calé tout seul, 1re connexion
 automatique + reconnexion, navigateur réduit, LV1 au premier plan, pas de code sur le PC, icône près de
 l'horloge (exe sans console), une seule instance, Lancer avec Windows, float caché LV1 fermée, tranche
@@ -275,7 +278,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Tests : l'exe de Joseph tourne souvent sur 8032 (et prend le port 10023 du simulateur) → tester sur
   `--web-port 8091` sans `--sim`, avec `APPDATA` temporaire.
 
-## Routing (2.4.0, branche dev-2.4)
+## Routing (2.4.0)
 
 - L'appli lit/écrit TOUT le routing X32 par OSC (`/node` pour lire, `/` pour écrire) : `/config/routing/*`
   (blocs IN, AES50A/B, CARD, OUT, PLAY), `/config/userrout/in` (32) et `/out` (48), `/outputs/*`.
