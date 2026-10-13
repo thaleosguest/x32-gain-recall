@@ -7,6 +7,7 @@ Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à parti
 - **Potards redessinés** : bords lissés (anti-crénelage), arc de la couleur du canal LV1 qui suit le gain (on lit le niveau d'un coup d'œil), index blanc. Arc gris tant que la couleur du canal est inconnue. Aussi dans les cadres Edit et Channel.
 - **Valeur en dB** en blanc sur le fond de la colonne (au lieu du cyan sur noir).
 - **48V** : bouton entouré, **rouge** quand il est actif (comme sur la LV1 ; bleu avant).
+- **« Lancer avec Windows » n'est plus réécrit tout seul** quand l'exe a été déplacé ou remplacé (nouvelle version téléchargée) : Windows Defender prenait ce geste pour un virus (« Behavior:Win32/Persistence.A!ml ») et bloquait l'exe. La case apparaît décochée avec le nouvel exe : la recocher une fois.
 - Fenêtres de la LV1 mieux reconnues : une fenêtre Windows au numéro élevé pouvait être sautée.
 
 ## [2.6.0] — 2026-10-14

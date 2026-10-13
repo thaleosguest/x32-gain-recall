@@ -225,6 +225,7 @@ Connexion non chiffrée : réseau de confiance seulement, pas le Wi-Fi public d'
 Clic droit sur l'icône près de l'horloge (ou menu **⋮** du float) → **Lancer avec Windows**. L'appli
 démarre alors toute seule à l'ouverture de la session Windows, sans ouvrir le navigateur ; le float
 reste caché jusqu'au lancement de la LV1, puis s'y pose. Décochez pour arrêter.
+Après une mise à jour (nouvel exe, ou exe déplacé), la case apparaît décochée : recochez-la une fois.
 
 ## Mises à jour
 

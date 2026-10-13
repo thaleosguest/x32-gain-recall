@@ -1845,12 +1845,13 @@ def autostart_set(on):
 
 
 def autostart_init():
-    """Au lancement : etat de la case, et chemin remis a jour si l'exe a ete deplace / remplace."""
+    """Au lancement : etat de la case, coche seulement si la cle Run lance CET exe. Plus de reecriture
+    automatique quand l'exe a ete deplace / remplace (2.7.0) : un exe telecharge qui s'inscrit tout seul au
+    demarrage de Windows a ete bloque par Defender (« Behavior:Win32/Persistence.A!ml », qui a aussi efface
+    la valeur). La case apparait alors decochee : la recocher inscrit le nouvel exe."""
     cur = autostart_read()
-    AUTOSTART["on"] = bool(cur)
     cmd = autostart_command()
-    if cur and cmd and cur != cmd:
-        autostart_set(True)
+    AUTOSTART["on"] = bool(cur) and (cmd is None or cur == cmd)
 
 
 def quit_app():
