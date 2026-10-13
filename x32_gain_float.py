@@ -369,7 +369,9 @@ SEL_ROWS = (800 / 1080.0, 880 / 1080.0, 960 / 1080.0)   # lignes lues (une suffi
 SEL_X0, SEL_PITCH, SEL_W = 143 / 1920.0, 96 / 1920.0, 92 / 1920.0   # 1re tranche, pas, largeur du fond gris
 # Page Channel (2026-10-14, demande de Joseph) : réglage du préampli X32 du canal affiché, posé dans la zone
 # grisée « Preamp / Gain / 48V » du bloc « Channel Input » (fractions de la zone client, relevées en 1728x970).
-CH_BOX = (7 / 1728.0, 0.27, 206 / 1728.0, 0.25)          # x, y, largeur, hauteur
+# x, y, largeur, hauteur : sous la ligne « Left / lien / Right » d'un canal stéréo (y 302/1080), au-dessus des
+# valeurs des vumètres (y 585/1080)
+CH_BOX = (7 / 1728.0, 306 / 1080.0, 206 / 1728.0, 269 / 1080.0)
 # Canal affiché par la page Channel : la LV1 ne le dit nulle part (ni base, ni accessibilité Windows). On LIT les
 # chiffres à l'écran : « Channel N: » (bandeau du bas, fond = couleur du canal) et « … EXP N » (source de
 # l'entrée), et on n'affiche rien si ce n'est pas cohérent avec le patch de la LV1 (voir _resolve_channel).
@@ -1097,6 +1099,7 @@ class Unit(tk.Frame):
         self.compact = compact
         self.db = None
         self.phantom_state = None
+        self.max_knob = None           # potard plafonné (grands cadres de la page Channel)
 
         self.led = tk.Canvas(self, width=max(8, width - 10), height=7, bg=PANEL, highlightthickness=0)
         self.led.pack(pady=(4, 3))
@@ -1141,6 +1144,11 @@ class Unit(tk.Frame):
             ksz = max(14, min(width - 6, room))
         else:
             ksz = max(16, min(width - 12, room))
+        if self.max_knob:
+            ksz = min(ksz, self.max_knob)
+            pad = max(4, (width - ksz) // 2)      # valeur et 48V à la largeur du potard
+            self.val.pack_configure(padx=pad)
+            self.ph.pack_configure(padx=pad)
         self.knob.config(width=ksz, height=ksz)
         self.led.config(width=max(8, width - 10))
         self._draw_knob()
@@ -1499,7 +1507,8 @@ class PreampBox:
     """Petite fenêtre posée dans une zone de la LV1 (fractions de sa zone client) : gain et 48V du ou des
     préamplis X32 d'un canal. Sert au cadre « Input » de la page Edit et à la zone Preamp de la page Channel."""
 
-    def __init__(self, owner):
+    def __init__(self, owner, big=False):
+        self.big = big                 # page Channel : potards grand format (un seul sur toute la largeur en mono)
         self.owner = owner
         w = tk.Toplevel(owner.root)
         w.overrideredirect(True)
@@ -1533,9 +1542,15 @@ class PreampBox:
             ch, idxs = sel
             self.tag.config(text=join_tags(idxs))
             avail = bh - self.tag.winfo_reqheight() - 4
-            uw = min((bw - 4) // 2, 70)           # comme les colonnes du float : un mono est un demi-stéréo
+            n = len(idxs[:2])
+            if self.big:
+                uw = (bw - 8) // n
+            else:
+                uw = min((bw - 4) // 2, 70)       # comme les colonnes du float : un mono est un demi-stéréo
             for i in idxs[:2]:
-                u = Unit(self.body, self.owner, i, uw, compact=True)
+                u = Unit(self.body, self.owner, i, uw, compact=not self.big)
+                if self.big:
+                    u.max_knob = 130 if n == 1 else 96
                 u.resize(uw, avail)
                 u.pack(side="left", expand=True)
                 self.units.append(u)
@@ -2062,7 +2077,7 @@ class FloatApp:
         Channel (zone Preamp). Placés en proportion de la fenêtre de la LV1 : rien à caler."""
         self.sel_box = PreampBox(self)
         self.sel_win = self.sel_box.win
-        self.ch_box = PreampBox(self)
+        self.ch_box = PreampBox(self, big=True)
         self._ch_page = None            # (canal, préamplis) de la page Channel, ou None
         self._ch_cache = {}             # dernière lecture de la page Channel (refaite si l'image change)
         self._digits_learned = load_learned_digits()
