@@ -2,7 +2,8 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
-## [Non publié]
+## [2.6.0] — 2026-10-14
+**Plusieurs consoles** : une carte par console dans le rack de la LV1, float, routing et scènes pour toutes ; profils M32C + X32 en stage box.
 - **Plusieurs consoles** (une carte DN32-WSG / X-WSG par console dans le rack de la LV1) : float ⋮ → *Consoles…* pour ajouter les consoles 2, 3… (adresse IP ou Scanner) et choisir la carte de chacune (position dans le rack, le « 2- » de « 2-EX 1 » ; choisie automatiquement si son nom dans la LV1 reprend celui de la console). Le float règle les préamplis de toutes les consoles, chacun sur sa tranche LV1 (repères « 2·A 5 = EXP 2·5 » pour la console 2). Consoles et cartes mémorisées. Une seule console : rien ne change.
 - **Scènes sur toutes les consoles** : une scène enregistre les gains / 48V / noms de toutes les consoles connectées ; le rappel envoie à chacune sa part (console absente : sautée et signalée), vérification et annulation sur toutes. Les anciennes scènes (une console) restent valables.
 - **Panneau Scènes / Routing / Consoles du float** : fermé par sa croix ✕ seulement (la fermeture automatique fermait le panneau pendant la saisie d'un nom au clavier tactile de Windows).
