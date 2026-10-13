@@ -6,7 +6,7 @@
 
 Petit outil pour **régler, sauvegarder et rappeler les gains** (et le routing, dès la v1.2) d'une Behringer X32 / Midas M32 par le réseau (OSC, UDP 10023). Interface web locale, style Waves eMotion LV1. Aucune dépendance : Python 3.8+ (bibliothèque standard).
 
-Version courante : **2.3.0** (voir [CHANGELOG](CHANGELOG.md)).
+Version courante : **2.4.0** (voir [CHANGELOG](CHANGELOG.md)).
 
 ## Fonctions
 - Réglage des gains (−12 à +60 dB, pas de 0,5) des 128 préamplis : entrées locales, AES50-A, AES50-B.
@@ -28,6 +28,7 @@ Première fois ? Voir le **[mode d'emploi pas à pas](MODE_EMPLOI.md)**.
    - **Pare-feu** : autoriser l'accès sur les réseaux **privés**, nécessaire pour piloter depuis une tablette et pour le bouton *Scanner*.
 3. C'est tout (2.3.0) : l'appli **trouve la console** sur le réseau et s'y connecte (puis s'y reconnecte à chaque lancement), ouvre le **float déjà calé sur les tranches de la LV1**, ouvre la page dans le navigateur **réduite** et remet la LV1 au premier plan. Elle vit dans une **icône près de l'horloge** (plus de fenêtre noire) : Ouvrir la page, Afficher le float, **Lancer avec Windows**, Quitter. Pas de code d'accès sur ce PC (seulement pour les tablettes, bouton 🔑 de la page).
 4. Si la LV1 tourne sur ce PC, chaque voie affiche tout de suite le **canal LV1** qui reçoit ce préampli : nom, couleur, « L 15 = EXP 15 », et suit les repatchs en 1 à 2 s. En mode **Edit** de la LV1, le réglage de la tranche sélectionnée apparaît dans le cadre vide du bloc Input. Une version plus récente publiée est signalée (icône, float, page).
+5. **Routing de la X32 / M32** (onglet Routing, ou ⋮ → Routing… du float) : profils prêts à charger (X32R + S16, X32R + 2 S16, M32C + 2 S16) et **éditeur en matrice** pour un routing à soi, EXP par EXP (ex. L1 → EXP 1, A18 → EXP 2).
 
 ### Le donner à quelqu'un d'autre
 L'exe suffit, sans rien à configurer côté LV1 : **ni MyRemote, ni adresse IP, ni port, ni Companion**. L'appli lit le fichier que la LV1 tient à jour sur son propre PC (`C:\Users\Public\Waves Audio\eMotion\Sessions\CurrentLV1.dat`, même emplacement sur toute installation). Conditions :
@@ -43,7 +44,7 @@ L'exe suffit, sans rien à configurer côté LV1 : **ni MyRemote, ni adresse IP,
 ### Fenêtre compagnon (mode réduit, toujours au premier plan)
 Bouton **« Float »** dans la barre du haut du navigateur : lance la fenêtre flottante sans quitter le navigateur ni chercher aucun fichier (depuis la 1.5.0, c'est littéralement le même exécutable qui se relance lui-même avec un drapeau interne `--float` — plus un second `.exe` à gérer). **À réserver au cas où le navigateur et le serveur tournent sur la même machine** (PC qui héberge aussi la LV1) : ce bouton lance le processus sur la machine qui exécute `x32_gain_recall.py`, pas sur l'appareil où la page est affichée — cliqué depuis une tablette connectée au serveur via le réseau local, il ouvre la fenêtre sur le PC, pas sur la tablette (qui ne peut de toute façon pas exécuter de script Python ni d'exe Windows).
 
-`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `XM32_Gain_Recall_LV1.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être posée **sur** la LV1, dans l'espace entre la rangée A/B et la rangée Ø : glisser le point vert pour la placer, le coin en bas à droite pour caler largeur et hauteur sur les 16 tranches (réglage mémorisé par écran). Depuis la 2.2.0, plus de barre en haut : une **languette à gauche** des voies, avec le point vert (poignée), la flèche de repli et le menu **⋯** (banque, largeur, Scènes, Routing, console, verrou, fond Anthracite / Noir / Or / Bleu nuit, version, fermer).
+`x32_gain_float.py` (ou `Lancer_X32_Gain_Float.bat` pour l'usage Python source, ou `XM32_Gain_Recall_LV1.exe --float` pour l'exe) ouvre une petite fenêtre sans bordure, toujours visible par-dessus les autres applis, avec juste les potards de gain + 48V + une diode de niveau d'une banque de 16 voies — sans les faders. Faite pour être posée **sur** la LV1, dans l'espace entre la rangée A/B et la rangée Ø : glisser le point vert pour la placer, le coin en bas à droite pour caler largeur et hauteur sur les 16 tranches (réglage mémorisé par écran). Depuis la 2.2.0, plus de barre en haut : une **languette à gauche** des voies, avec le point vert (poignée), la flèche de repli et le menu **⋮** (banque, largeur, Scènes, Routing, console, verrou, fond Anthracite / Noir / Or / Bleu nuit, version, fermer).
 
 **Intégrée à la LV1** (2.2.0) : devant la LV1 mais derrière les autres applis ; cachée quand la LV1 est réduite ou affiche un autre onglet que Mixer 1 / Mixer 2 ; suit la couche affichée (Ch 1-16 …, Custom, Talk Back sur Masters ; configurations 16 à 80 canaux), le mode (dépliée en SndChk / Setup, repliée ailleurs) et l'entrée A/B de chaque canal ; une colonne sans préampli X32 est transparente (on voit et on clique la LV1 en dessous).
 

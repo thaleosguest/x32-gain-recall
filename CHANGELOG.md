@@ -2,6 +2,13 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [2.4.0] — 2026-10-13
+**Routing** : configs X32R / M32C + 2 S16 intégrées, éditeur libre en matrice ; float plus tactile.
+- **Routing en matrice** (page et float, choix Matrice / Listes retenu) : lignes = sources (ou sorties), colonnes = EXP 1-32, un clic route, un 2e clic coupe. **Aide à la visée** : ligne et colonne de la case visée surlignées, texte « AES50-A 18 → EXP 2 (EXP 2 reçoit aujourd'hui : …) », numéros d'EXP toujours visibles. Float tactile : doigt posé = visée (on peut glisser), routage au relâcher. Sources par défaut : Local, AES50 A et B 1-32 (case « Toutes les sources » pour le reste).
+- **Float plus tactile** : bouton ⋮ et flèche de la languette plus gros (zones de toucher plus hautes), menu ⋮ en plus gros caractères ; le panneau Scènes / Routing se **referme quand on touche ailleurs** (LV1, bureau… : détecté par le changement de fenêtre active, la LV1 en administrateur cachant la souris aux autres applis) et a une **croix ✕**.
+- **Deux routings intégrés de plus** : *LV1 — X32R + S16 A + S16 B* (S16 A 1-16 → EXP 1-16, S16 B 1-16 → EXP 17-32 ; EXP 1-8 → X32R OUT 1-8, EXP 9-16 → S16 A, EXP 17-24 → S16 B) et *LV1 — M32C + S16 A + S16 B* (mêmes entrées ; EXP 1-8 → S16 A, EXP 9-16 → S16 B). Sorties S16 identiques sur les voies AES50 1-8 et 9-16 : marchent quelle que soit la position du sélecteur des S16. Ajoutés aussi aux installations existantes.
+- **Éditeur de routing libre** (page : onglet Routing → *✎ Modifier…* / *Depuis la console…* ; float : ✎ dans ⋮ → Routing…) : source de chaque EXP 1-32 (Local, AES50 A/B, Aux, Talkback) et retour de chaque sortie (X32 OUT 1-16, AES50 A et B voies 1-16), pour un routing non continu (ex. L1 → EXP 1, A18 → EXP 2). Enregistré comme un profil de plus ; n'importe quel profil, ou le routing actuel de la console, peut servir de départ.
+
 ## [2.3.0] — 2026-10-13
 **Plug and play** : télécharger l'exe, le lancer, c'est tout. Nouveau [mode d'emploi pas à pas](MODE_EMPLOI.md).
 - **Avis de mise à jour** : au lancement puis une fois par jour, l'appli regarde la dernière release publiée sur GitHub ; plus récente -> bulle de notification, entrée dans le menu de l'icône et du float (⋯), lien en haut de la page, vers la page de téléchargement. Rien n'est téléchargé ni installé tout seul. `--no-update-check` pour ne pas vérifier.
