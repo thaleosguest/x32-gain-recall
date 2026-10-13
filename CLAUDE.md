@@ -401,7 +401,14 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Fenêtre Qt : `FramelessWindowHint | Tool | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`,
   `WA_TranslucentBackground` (colonnes vides = alpha 0), `WA_AcceptTouchEvents` (un point = un potard),
   `QT_ENABLE_HIGHDPI_SCALING=0` (pixels = pixels écran pour le calage).
-- Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
+- **Étape 1 faite (3.0.0-a1)** : `x32_qt_float.py` (classe `QtFloat`, fenêtre `FloatWindow` tout dessinée, `Link` =
+  lectures/envois sur des fils, `Dialog`, `ValuePop`) ; reprend la logique de `x32_gain_float` (import, pas de copie
+  des fonctions sans interface). Lancement : appli avec l'option cachée `--qt-float` -> floats lancés avec
+  `--float --qt`. Même fichier de config que le float tk. Tests : `QTest.touchEvent` prend des coordonnées ÉCRAN
+  (`mapToGlobal`), et la LV1 de ce PC cache le float -> remplacer `x32_qt_float.lv1_windows` par `lambda: {}`.
+- Reste : étape 2 (cadres Edit / Channel, lectures d'écran sel/page, Mixers détachés à vérifier), étape 3
+  (panneaux Scènes / Routing / Consoles, barre de connexion ; en attendant ⋮ -> « ouvrir la page »), étape 4 bascule.
+- (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
   couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
 
 ## Reste à faire / idées

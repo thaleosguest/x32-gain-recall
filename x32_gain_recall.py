@@ -1661,6 +1661,7 @@ def scan_network(timeout=1.5, port=X32_PORT):
     return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
 
 
+FLOAT_QT = False  # v3 en cours : float Qt (x32_qt_float.py) au lieu du float tk (option cachee --qt-float)
 FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
@@ -1688,6 +1689,8 @@ def launch_float_window(extra=(), key="main"):
         cmd = [sys.executable, "--float", "--port", str(WEB_PORT)]
     else:
         cmd = [sys.executable, os.path.abspath(__file__), "--float", "--port", str(WEB_PORT)]
+    if FLOAT_QT:
+        cmd.insert(cmd.index("--float") + 1, "--qt")
     cmd += list(extra)
     if ALLOW_ANY_HOST and LAN_CODE:
         # Quiconque clique ce bouton est deja authentifie dans le navigateur (sinon la page de
@@ -3539,6 +3542,7 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
+    ap.add_argument("--qt-float", action="store_true", help=argparse.SUPPRESS)   # v3 en cours : float Qt
     ap.add_argument("--no-update-check", action="store_true",
                     help="ne pas verifier sur GitHub si une version plus recente est publiee")
     ap.add_argument("--at-login", action="store_true",
@@ -3598,6 +3602,8 @@ def main():
         ),
     )
     a = ap.parse_args()
+    global FLOAT_QT
+    FLOAT_QT = a.qt_float
     if a.at_login:
         a.no_browser = True
     if not a.sim and already_running(a.web_port):
@@ -3734,8 +3740,14 @@ if __name__ == "__main__":
         # flottante, importee ici seulement (et non en haut du fichier) pour que ce script continue a
         # demarrer sans tkinter quand on ne s'en sert pas comme fenetre flottante.
         sys.argv.remove("--float")
-        redirect_output_to_log("x32_float.log")
-        import x32_gain_float
-        x32_gain_float.main()
+        if "--qt" in sys.argv:                     # v3 en cours : float Qt
+            sys.argv.remove("--qt")
+            redirect_output_to_log("x32_float.log")
+            import x32_qt_float
+            x32_qt_float.main()
+        else:
+            redirect_output_to_log("x32_float.log")
+            import x32_gain_float
+            x32_gain_float.main()
     else:
         main()
