@@ -14,10 +14,12 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.6.0 publiée (2026-10-14)
+## État actuel : v2.7.0 publiée (2026-10-14)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.6.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.6.0 (branche `dev-2.6`) fusionnée dans `main` ; avant : #8 (v2.5.0), #7 (v2.4.0), #6 (v2.3.0), #5, #4, #1-#3.
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.7.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+PR de la 2.7.0 (branche `dev-2.7`) fusionnée dans `main` ; avant : #9 (v2.6.0), #8 (v2.5.0), #7 (v2.4.0), #6 (v2.3.0)...
+2.7.0 = look du float (potards lisses, arc à la couleur du canal LV1, 48V rouge), croix du panneau Scènes gardée
+après un chargement + croix de la barre Console, « Lancer avec Windows » plus réécrit tout seul (Defender).
 2.6.0 = plusieurs consoles (une carte LV1 chacune : float, routing par console, scènes multi-consoles, panneau
 ⋮ → Consoles…), profils M32C + X32 stage box (AES50 A / B), panneau du float fermé par ✕ seulement.
 2.5.0 = pages détachées (un float par Mixer détaché, onglets lus avec la liste réduite), page Channel (canal lu à
@@ -234,6 +236,13 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 
 ## Pièges de ce PC
 
+- **Defender (2026-10-14)** : `Behavior:Win32/Persistence.A!ml` sur l'exe téléchargé de la CI = l'appli réécrivait
+  d'elle-même la clé Run (exe déplacé) ; Defender a bloqué l'exe ET effacé la valeur. Corrigé en 2.7.0 (plus de
+  réécriture automatique). Ne jamais réécrire la clé Run sans action de l'utilisateur.
+- Compiler en local marche (PyInstaller installé dans le Python 3.15 de Joseph) : `--distpath`/`--workpath`/
+  `--specpath` dans le scratchpad, `--icon` en chemin ABSOLU (sinon cherché relatif au specpath). Exe de test
+  copié dans `dist\<version>-test` (ignoré par git) ; un exe en cours d'exécution est verrouillé -> autre dossier.
+
 - `gh` n'est pas dans le PATH : `& "C:\Program Files\GitHub CLI\gh.exe"` (connecté en `thaleosguest`).
 - Pas d'identité git globale : commits avec
   `git -c user.name="Claude" -c user.email="thaleosguest@users.noreply.github.com" commit ...`
@@ -371,6 +380,18 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   toutes ; `merged_recall_state` fusionne `last_recall` / `can_undo`. Testé sur le simulateur.
 - Panneau du float : fermeture automatique (fenêtre active) SUPPRIMÉE, croix ✕ seulement : le clavier tactile de
   Windows est une autre appli et fermait le panneau pendant la saisie (Joseph, 2026-10-14).
+
+## Look du float (2.7.0)
+
+- Piste « liseré LV1 » choisie par Joseph parmi 3 (cartes / anneau couleur / liseré) : liseré = pastille du haut de
+  colonne (existait déjà), potard à **arc de la couleur du canal** qui suit le gain (gris si couleur inconnue),
+  dB en blanc sur le fond, 48V entouré, rouge `PH_ON` quand actif (bleu avant).
+- Potard = image calculée pixel par pixel avec anti-crénelage (`knob_image`, Python pur : Tk ne lisse pas sous
+  Windows, pas de Pillow) ; géométrie par taille + images en cache (44 px ~3 ms, 130 px ~27 ms la 1re fois).
+- Question de Joseph « mieux que tk ? » : réponse donnée = rester sur tk pour la 2.7 (tout le calage LV1, la
+  transparence `-transparentcolor` et le z-order y sont réglés) ; Qt (PySide6) possible pour une 3.0.
+- Tester les colonnes : script qui crée des `Strip` avec un faux `owner` (locked, sensitivity, send_gain, label,
+  value_pop, root) + capture BitBlt ; le float `--direct --sim` n'a pas d'EXP (colonnes transparentes).
 
 ## Reste à faire / idées
 

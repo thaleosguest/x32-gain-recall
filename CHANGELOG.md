@@ -2,6 +2,15 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [2.7.0] — 2026-10-14
+**Nouveau look du float** : potards lisses à la couleur du canal LV1.
+- **Potards redessinés** : bords lissés (anti-crénelage), arc de la couleur du canal LV1 qui suit le gain (on lit le niveau d'un coup d'œil), index blanc. Arc gris tant que la couleur du canal est inconnue. Aussi dans les cadres Edit et Channel.
+- **Valeur en dB** en blanc sur le fond de la colonne (au lieu du cyan sur noir).
+- **48V** : bouton entouré, **rouge** quand il est actif (comme sur la LV1 ; bleu avant).
+- **Croix ✕** : celle du panneau Scènes ne disparaît plus après avoir chargé, sauvegardé ou écrasé une scène ; la barre de connexion (⋮ → Console) a maintenant la sienne.
+- **« Lancer avec Windows » n'est plus réécrit tout seul** quand l'exe a été déplacé ou remplacé (nouvelle version téléchargée) : Windows Defender prenait ce geste pour un virus (« Behavior:Win32/Persistence.A!ml ») et bloquait l'exe. La case apparaît décochée avec le nouvel exe : la recocher une fois.
+- Fenêtres de la LV1 mieux reconnues : une fenêtre Windows au numéro élevé pouvait être sautée.
+
 ## [2.6.0] — 2026-10-14
 **Plusieurs consoles** : une carte par console dans le rack de la LV1, float, routing et scènes pour toutes ; profils M32C + X32 en stage box.
 - **Plusieurs consoles** (une carte DN32-WSG / X-WSG par console dans le rack de la LV1) : float ⋮ → *Consoles…* pour ajouter les consoles 2, 3… (adresse IP ou Scanner) et choisir la carte de chacune (position dans le rack, le « 2- » de « 2-EX 1 » ; choisie automatiquement si son nom dans la LV1 reprend celui de la console). Le float règle les préamplis de toutes les consoles, chacun sur sa tranche LV1 (repères « 2·A 5 = EXP 2·5 » pour la console 2). Consoles et cartes mémorisées. Une seule console : rien ne change.

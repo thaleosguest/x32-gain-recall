@@ -91,7 +91,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, LIVE_DB  # noqa: E402
 from brand_icon import ICON_PNG_B64  # noqa: E402
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL  # noqa: E402
 
-FLOAT_VERSION = "2.13.0"
+FLOAT_VERSION = "2.14.0"
 GAIN_DB_PER_PX = 0.05     # sensibilite par defaut du glisser (dB par pixel ; 0,10 avant la 2.2.0 : plus fin au
                           # doigt, demande de Joseph - 10 px par pas de 0,5 dB) ; --sensitivity pour ajuster
 STRIP_EXTRA_H = 116       # hauteur d'une voie = largeur + ceci (98 avant la 2.6.0 ; + le nom LV1)
@@ -218,7 +218,16 @@ def monitor_rect(x, y):
 def _user32():
     try:
         import ctypes
-        return ctypes, ctypes.windll.user32
+        u32 = ctypes.windll.user32
+        # handles en c_void_p : sans ça, un handle au-delà de 2^31 donnait « int too long to convert » dans
+        # le rappel d'EnumWindows (fenêtre sautée)
+        vp = ctypes.c_void_p
+        u32.IsWindow.argtypes = u32.IsWindowVisible.argtypes = [vp]
+        u32.GetWindow.argtypes = [vp, ctypes.c_uint]
+        u32.GetWindow.restype = vp
+        u32.GetWindowTextLengthW.argtypes = [vp]
+        u32.GetWindowTextW.argtypes = [vp, ctypes.c_wchar_p, ctypes.c_int]
+        return ctypes, u32
     except (AttributeError, OSError, ImportError):
         return None, None
 
@@ -1098,6 +1107,99 @@ class DirectBackend:
             self.sim.stop = True
 
 
+def _hex_rgb(c):
+    c = c.lstrip("#")
+    return int(c[0:2], 16), int(c[2:4], 16), int(c[4:6], 16)
+
+
+_KNOB_GEOM = {}        # taille -> géométrie précalculée par pixel
+_KNOB_IMG = {}         # (taille, angle, couleurs) -> PhotoImage
+KNOB_ARC = 135         # demi-ouverture de l'arc, en degrés (0 = tout en haut)
+
+
+def _knob_geom(size):
+    """Par pixel : (index, distance au centre, angle, couverture de l'arc, couverture du corps), sur les seuls
+    pixels touchés par l'arc ou le corps. Calculé une fois par taille."""
+    g = _KNOB_GEOM.get(size)
+    if g:
+        return g
+    c = size / 2.0
+    ring_w = max(2.0, size * 0.085)
+    r_ring = c - 1.0 - ring_w / 2
+    r_body = r_ring - ring_w / 2 - max(1.5, size * 0.07)
+    px = []
+    for y in range(size):
+        for x in range(size):
+            dx, dy = x + 0.5 - c, y + 0.5 - c
+            d = math.hypot(dx, dy)
+            ang = math.degrees(math.atan2(dx, -dy))
+            ring = min(1.0, max(0.0, ring_w / 2 - abs(d - r_ring) + 0.5))
+            if ring:
+                # extrémités de l'arc adoucies sur un pixel
+                ring *= min(1.0, max(0.0, (KNOB_ARC - abs(ang)) * math.pi / 180 * d + 0.5))
+            body = min(1.0, max(0.0, r_body - d + 0.5))
+            if ring or body:
+                px.append((y * size + x, d, ang, ring, body))
+    g = (px, r_body)
+    _KNOB_GEOM[size] = g
+    return g
+
+
+def knob_image(size, frac, color, bg, body, track, needle):
+    """Potard dessiné pixel par pixel avec anti-crénelage (le canevas de Tk ne lisse pas sous Windows, et
+    pas de Pillow) : arc de fond, arc de la couleur du canal jusqu'à la valeur, corps, index. frac = None :
+    pas de valeur (arc vide, pas d'index). Images gardées en mémoire (glisser fluide)."""
+    deg = None if frac is None else round(-KNOB_ARC + max(0.0, min(1.0, frac)) * 2 * KNOB_ARC, 1)
+    key = (size, deg, color, bg, body, track, needle)
+    img = _KNOB_IMG.get(key)
+    if img:
+        return img
+    if len(_KNOB_IMG) > 800:
+        _KNOB_IMG.clear()
+    px, r_body = _knob_geom(size)
+    bgc, bdc, tkc, ndc, clc = (_hex_rgb(v) for v in (bg, body, track, needle, color))
+    out = [bgc] * (size * size)
+    c = size / 2.0
+    if deg is not None:
+        th = math.radians(deg)
+        ux, uy = math.sin(th), -math.cos(th)
+        n0, n1 = r_body * 0.12, r_body * 0.86
+        nw = max(1.6, size * 0.075) / 2
+        # rectangle de l'index (seuls ces pixels sont testés)
+        bx0 = c + min(ux * n0, ux * n1) - nw - 1; bx1 = c + max(ux * n0, ux * n1) + nw + 1
+        by0 = c + min(uy * n0, uy * n1) - nw - 1; by1 = c + max(uy * n0, uy * n1) + nw + 1
+    for i, d, ang, ring, bodycov in px:
+        r, g_, b = bgc
+        if ring:
+            if deg is None:
+                rc = tkc
+            else:
+                f = min(1.0, max(0.0, (deg - ang) * math.pi / 180 * d + 0.5))
+                rc = tuple(t + (k - t) * f for t, k in zip(tkc, clc))
+            r, g_, b = r + (rc[0] - r) * ring, g_ + (rc[1] - g_) * ring, b + (rc[2] - b) * ring
+        if bodycov:
+            r, g_, b = r + (bdc[0] - r) * bodycov, g_ + (bdc[1] - g_) * bodycov, b + (bdc[2] - b) * bodycov
+            if deg is not None and bx0 <= i % size + 0.5 <= bx1 and by0 <= i // size + 0.5 <= by1:
+                x, y = i % size + 0.5 - c, i // size + 0.5 - c
+                t = min(n1, max(n0, x * ux + y * uy))
+                nd = math.hypot(x - ux * t, y - uy * t)
+                ncov = min(1.0, max(0.0, nw - nd + 0.5)) * bodycov
+                if ncov:
+                    r, g_, b = r + (ndc[0] - r) * ncov, g_ + (ndc[1] - g_) * ncov, b + (ndc[2] - b) * ncov
+        out[i] = (r, g_, b)
+    rows = []
+    for y in range(size):
+        rows.append("{" + " ".join("#%02x%02x%02x" % (int(p[0] + .5), int(p[1] + .5), int(p[2] + .5))
+                                   for p in out[y * size:(y + 1) * size]) + "}")
+    img = tk.PhotoImage(width=size, height=size)
+    img.put(" ".join(rows))
+    _KNOB_IMG[key] = img
+    return img
+
+
+PH_ON = "#d1343b"      # 48V actif : rouge, comme la LV1 (2.7.0 ; bleu avant)
+
+
 class Unit(tk.Frame):
     """Un préampli : diode de niveau, potard de gain (glisser verticalement), valeur en dB, bouton 48V.
     compact=True : demi-largeur, pour les deux préamplis d'un canal LV1 stéréo réunis dans une colonne
@@ -1128,14 +1230,17 @@ class Unit(tk.Frame):
             w.bind("<ButtonRelease-1>", lambda e: (setattr(self.owner, "_dragging", False), self._pop("hide")))
             w.configure(cursor="sb_v_double_arrow")
 
+        self.color = None              # couleur du canal LV1 (arc du potard), None = inconnue
         self._val_font = tkfont.Font(family="Consolas", size=8 if compact else 10, weight="bold")
-        self.val = tk.Label(self, text="—", bg="#000000", fg=CYAN, font=self._val_font, cursor="xterm")
-        self.val.pack(fill="x", padx=1 if compact else 4, pady=(3, 3))
+        self.val = tk.Label(self, text="—", bg=PANEL, fg=TXT, font=self._val_font, cursor="xterm")
+        self.val.pack(fill="x", padx=1 if compact else 4, pady=(2, 3))
         self.val.bind("<Button-1>", self._edit_value)
 
-        self.ph = tk.Button(self, text="48V", bg="#25282b", fg="#aeb6bd", bd=0, relief="flat",
-                             font=("Segoe UI", 7 if compact else 8, "bold"), activebackground="#33383c",
-                             command=self._phantom_click, state="disabled")
+        # 48V entouré (2.7.0) : un Label, le bouton natif de Windows ne dessine pas de bordure de couleur
+        self.ph = tk.Label(self, text="48V", bg=PANEL, fg=LINE2, bd=0, highlightthickness=1,
+                           highlightbackground=LINE2, highlightcolor=LINE2,
+                           font=("Segoe UI", 7 if compact else 8, "bold"), cursor="hand2")
+        self.ph.bind("<Button-1>", lambda e: self._phantom_click())
         self.ph.pack(fill="x", padx=1 if compact else 4, pady=(0, 4))
 
         self._drag_y0 = None
@@ -1168,20 +1273,22 @@ class Unit(tk.Frame):
 
     # -- rendu --------------------------------------------------------
     def _draw_knob(self):
+        # 2.7.0 (piste « liseré LV1 » choisie par Joseph) : arc de la couleur du canal LV1 qui suit le gain,
+        # gris tant que la couleur est inconnue (jamais une couleur inventée)
         c = self.knob
         c.delete("all")
         w = int(c["width"]); h = int(c["height"])
-        cx, cy, r = w / 2, h / 2, min(w, h) / 2 - 3
-        c.create_oval(cx - r, cy - r, cx + r, cy + r, outline=tc(LINE2), width=2)
+        size = min(w, h)
+        frac = None if self.db is None else (self.db - GAIN_MIN) / (GAIN_MAX - GAIN_MIN)
+        self._img = knob_image(size, frac, self.color or MUT, tc(PANEL), tc(LINE2), tc(BG), TXT)
+        c.create_image(w / 2, h / 2, image=self._img)
         if self.db is None:
-            c.create_text(cx, cy, text="?", fill=MUT, font=("Segoe UI", 8 if self.compact else 9))
-            return
-        frac = max(0.0, min(1.0, (self.db - GAIN_MIN) / (GAIN_MAX - GAIN_MIN)))
-        theta = math.radians(-135 + frac * 270)   # -135deg..+135deg, 0deg = tout en haut
-        dx, dy = math.sin(theta), -math.cos(theta)
-        c.create_line(cx, cy, cx + dx * r * 0.82, cy + dy * r * 0.82, fill=CYAN,
-                      width=2 if self.compact else 3, capstyle="round")
-        c.create_oval(cx - 2, cy - 2, cx + 2, cy + 2, fill=CYAN, outline="")
+            c.create_text(w / 2, h / 2, text="?", fill=MUT, font=("Segoe UI", 8 if self.compact else 9))
+
+    def set_color(self, color):
+        if color != self.color:
+            self.color = color
+            self._draw_knob()
 
     def _show_val(self):
         if self.db is None:
@@ -1202,11 +1309,11 @@ class Unit(tk.Frame):
 
     def set_phantom(self, on):
         self.phantom_state = on
-        self.ph.config(state="normal" if on is not None else "disabled")
         if on:
-            self.ph.config(bg="#1668e6", fg="#ffffff")
+            self.ph.config(bg=PH_ON, fg="#ffffff", highlightbackground=PH_ON, highlightcolor=PH_ON)
         else:
-            self.ph.config(bg=tc("#25282b"), fg="#aeb6bd")
+            fg = MUT if on is not None else tc(LINE2)
+            self.ph.config(bg=tc(PANEL), fg=fg, highlightbackground=tc(LINE2), highlightcolor=tc(LINE2))
 
     def set_led(self, lvl_db, clip_threshold):
         color = "#333333"
@@ -1261,7 +1368,7 @@ class Unit(tk.Frame):
         self._pop("hide")
 
     def _phantom_click(self):
-        if self.owner.locked:
+        if self.owner.locked or self.phantom_state is None:
             return
         if self.phantom_state:
             self.owner.send_phantom(self.idx, False)
@@ -1394,6 +1501,8 @@ class Strip(tk.Frame):
         bg = hex_color or tc(PANEL)
         if self.swatch.cget("bg") != bg:
             self.swatch.config(bg=bg)
+        for u in self.units:
+            u.set_color(hex_color)
 
 
 def exp_txt(e):
@@ -2037,6 +2146,10 @@ class FloatApp:
                   activebackground="#2a2c2e", relief="flat", padx=11, pady=6, highlightthickness=1,
                   highlightbackground=AMBER, cursor="hand2", command=self._demo).pack(side="left", padx=(2, 6), pady=4)
 
+        # croix pour refermer la barre (2.7.0, demande de Joseph : seulement par le menu ⋮ avant)
+        tk.Button(bar, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
+                  width=3, cursor="hand2", command=lambda: self._toggle_console(False)).pack(
+            side="right", padx=4, pady=4)
         self.status_lbl = tk.Label(bar, text="", bg="#111213", fg=MUT, font=("Segoe UI", 8))
         self.status_lbl.pack(side="left", padx=6)
 
@@ -2359,6 +2472,10 @@ class FloatApp:
         for s in self.strips:
             for u in s.units:
                 u._draw_knob()
+                u.set_phantom(u.phantom_state)
+        for u in self.sel_box.units + self.ch_box.units:
+            u._draw_knob()
+            u.set_phantom(u.phantom_state)
         self._save_cfg()
 
     def _follow_lv1(self):
@@ -2535,12 +2652,7 @@ class FloatApp:
         for w in self.panel.winfo_children():
             w.destroy()
         self.panel_mode = mode
-        # croix de fermeture, assez grosse pour le doigt (le « clic ailleurs » ne se voit pas toujours :
-        # Windows cache la souris à cette appli quand on touche la LV1, qui tourne en administrateur)
-        head = tk.Frame(self.panel, bg=PANEL)
-        head.pack(fill="x")
-        tk.Button(head, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
-                  width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
+        self._panel_head()
         if mode == "scenes":
             self._fill_scenes_panel()
         elif mode == "consoles":
@@ -2554,6 +2666,16 @@ class FloatApp:
         # Fermeture : croix ✕ seulement (2026-10-14, Joseph). La fermeture automatique « quand une autre fenêtre
         # devient active » fermait le panneau pendant qu'on tapait un nom de scène : le clavier tactile de
         # Windows est une autre appli. _watch_outside n'est plus lancé.
+
+    def _panel_head(self):
+        """Croix de fermeture du panneau, assez grosse pour le doigt (le « clic ailleurs » ne se voit pas
+        toujours : Windows cache la souris à cette appli quand on touche la LV1, qui tourne en administrateur).
+        À remettre à chaque fois que le contenu du panneau est refait (2.7.0 : elle disparaissait après avoir
+        chargé / sauvegardé une scène)."""
+        head = tk.Frame(self.panel, bg=PANEL)
+        head.pack(fill="x")
+        tk.Button(head, text="✕", bd=0, bg="#25282b", fg=TXT, activebackground=WARN, font=("Segoe UI", 13, "bold"),
+                  width=3, cursor="hand2", command=lambda: self._toggle_panel(None)).pack(side="right", padx=4, pady=(4, 0))
 
     def _watch_outside(self):
         """Panneau ouvert : toutes les 30 ms (un tapotement au doigt est bref), un clic ailleurs que dans
@@ -2894,7 +3016,9 @@ class FloatApp:
         if self.panel_mode == "scenes":
             for w in self.panel.winfo_children():
                 w.destroy()
+            self._panel_head()
             self._fill_scenes_panel()
+            apply_theme(self.panel_win)
 
     def _recall_scene(self, pid, name):
         if not messagebox.askyesno("Rappeler la scène ?",
@@ -3153,6 +3277,10 @@ class FloatApp:
                 self._toggle_collapse()
         if self.view == "lv1" and self._lv1_layout() != self._layout:
             self._build_strips()      # repatch dans la LV1 ou sur la X32 : colonnes à refaire
+        for box in (self.sel_box, self.ch_box):
+            bch = box.key[0] if box.key else None
+            for u in box.units:
+                u.set_color((lc.get(str(bch), lc.get(bch)) or {}).get("color") if bch else None)
         for u in self.sel_box.units + self.ch_box.units:
             u.set_gain(snap["gains"][u.idx] if snap.get("gains") else None)
             u.set_phantom(snap["phantom"][u.idx] if snap.get("phantom") else None)
