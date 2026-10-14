@@ -73,8 +73,27 @@ def read_layer(con, surface=SURFACE_MIXER1):
         preset = _mode_preset(con, surface, mode, page)
     except sqlite3.Error:
         return None
+    bays = preset[2] if preset else None
     return {"mode": mode, "page": page, "bank": bank, "channels": channels,
-            "preset": preset[0] if preset else None, "preset_name": preset[1] if preset else None}
+            "preset": preset[0] if preset else None, "preset_name": preset[1] if preset else None,
+            "bays": bays, "input_bay": _input_bay(bays)}
+
+
+SECTION_INPUT = 0         # ovv_section_mapping_type : 0 = Input (cadres Preamp / Gain / 48)
+
+
+def _input_bay(bays):
+    """Rangée où la section Input (cadres Preamp / Gain / 48) est VISIBLE : "top", "middle" ou None.
+    Relevé le 2026-10-14 (enregistreur + captures) : Big Fader masque Middle et Bottom (seul Top reste) ; Input en
+    Bottom est recouvert par les faders (seuls Polarity / Trim restent visibles) -> rien à régler à l'écran."""
+    if not bays:
+        return None
+    top, middle, _bottom, big = bays
+    if top == SECTION_INPUT:
+        return "top"
+    if middle == SECTION_INPUT and not big:
+        return "middle"
+    return None
 
 
 SURFACE_MIXER2 = 3
@@ -87,7 +106,7 @@ def read_layers(con):
 
 
 def _mode_preset(con, surface, mode, page):
-    """(id, nom) du mode affiché dans le panneau « Modes » de la LV1 (Home, Setup, SndChk, Edit, Fx,
+    """(id, nom, (top, middle, bottom, big_faders)) du mode affiché dans le panneau « Modes » de la LV1 (Home, Setup, SndChk, Edit, Fx,
     Monitor, Status, Dugan) pour la page courante, ou None.
     Établi le 2026-10-12 avec l'enregistreur : chaque clic dans « Modes » réécrit
     `ovv_page_data.selected_mode_preset_id` (-> `ovv_modes_presets`) ; 8 lignes par mode de couche
@@ -97,10 +116,15 @@ def _mode_preset(con, surface, mode, page):
                      (surface, mode)).fetchone()
     if not tm:
         return None
-    rows = [r[0] for r in con.execute(
-        "SELECT selected_mode_preset_id FROM ovv_page_data WHERE track_mode_id = ? ORDER BY id", (tm[0],))]
+    rows = con.execute(
+        "SELECT selected_mode_preset_id, section_mapping_type_top_bay, section_mapping_type_middle_bay, "
+        "section_mapping_type_bottom_bay, big_faders FROM ovv_page_data WHERE track_mode_id = ? ORDER BY id",
+        (tm[0],)).fetchall()
     if not rows:
         return None
-    pid = rows[page] if 0 <= page < len(rows) else rows[0]
+    row = rows[page] if 0 <= page < len(rows) else rows[0]
+    pid = row[0]
     name = con.execute("SELECT preset_name FROM ovv_modes_presets WHERE id = ?", (pid,)).fetchone()
-    return pid, (name[0] if name else None)
+    # sections Top / Middle / Bottom et Big Fader de la page (relevé 2026-10-14 : réécrits aussitôt, sans
+    # sauvegarde, à chaque changement dans le panneau « Modes » ; libellés dans ovv_section_mapping_type)
+    return pid, (name[0] if name else None), tuple(row[1:5])

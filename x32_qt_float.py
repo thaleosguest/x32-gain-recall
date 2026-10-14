@@ -37,7 +37,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialG
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a5"
+QT_FLOAT_VERSION = "3.0.0-a6"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -49,6 +49,9 @@ TAP_PX = 12                     # un toucher qui bouge moins que ça est un « t
 # le contour gris et le liseré jaune de la tranche sélectionnée restent visibles (demande de Joseph).
 CARD_L, CARD_R = 1 / 96.0, 93 / 96.0        # bords de la carte, en fraction du pas des tranches
 QT_AUTO_H = 132 / 1080.0
+# Rangée de la section Input (lv1/layers.py, « input_bay ») : cadres Preamp à y 184 en Top, 505 en Middle
+# (+321 px, même largeur ; relevé le 2026-10-14 en Home, 1920x1080)
+BAY_Y0 = {"top": AUTO_Y0, "middle": 505 / 1080.0}
 # Languette (v3) : dans l'espace vide de la barre du haut, entre « Setup » et le cadenas (x 1287..1370, boutons
 # y 8..49 en 1920x1080) ; calée par la droite (le cadenas ne bouge pas quand des pages sont détachées)
 TOOL_BOX = (1290 / 1920.0, 8 / 1080.0, 78 / 1920.0, 42 / 1080.0)
@@ -1143,10 +1146,17 @@ class QtFloat:
                 rebuild = True
         preset = lay.get("preset_name")
         has_inputs = any(lay.get("channels") or [])
-        state = (preset, has_inputs)
+        # déplié quand la section Input est visible (Top, ou Middle sans Big Fader), replié sinon ; appli
+        # d'avant (pas de « bays ») : SndChk / Setup comme le float tk. Seulement quand ça CHANGE : un repli /
+        # dépli à la main tient jusqu'au prochain changement dans la LV1.
+        bay = lay.get("input_bay")
+        state = (preset, bay, has_inputs)
         if preset and state != self._lv1_preset_seen:
             self._lv1_preset_seen = state
-            want_open = preset in AUTO_OPEN_MODES and has_inputs
+            if "bays" in lay:
+                want_open = bay is not None and has_inputs
+            else:
+                want_open = preset in AUTO_OPEN_MODES and has_inputs
             if want_open == self.collapsed:
                 self.toggle_collapse()
         if self.view == "lv1" and self.lv1_layout() != self._layout:
@@ -1304,12 +1314,13 @@ class QtFloat:
 
     def _auto_fit(self, lv1):
         rect = client_rect(lv1)
-        if not rect or rect[2] < 400 or rect == getattr(self, "_auto_geom", None):
+        y0 = BAY_Y0.get(self._lv1_lay.get("input_bay"), AUTO_Y0)      # Input en Top ou en Middle
+        if not rect or rect[2] < 400 or (rect, y0) == getattr(self, "_auto_geom", None):
             return
-        self._auto_geom = rect
+        self._auto_geom = (rect, y0)
         x, y, w, h = rect
         self.set_strip_size(w * AUTO_PITCH, round(h * QT_AUTO_H))
-        self.win.move(x + round(w * AUTO_X0), y + round(h * AUTO_Y0))
+        self.win.move(x + round(w * AUTO_X0), y + round(h * y0))
         self.save_soon()
 
     def _apply_screen_profile(self, x, y):

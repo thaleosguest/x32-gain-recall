@@ -101,8 +101,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   chaque mode dans les mêmes colonnes de `ovv_modes_presets` ; libellés dans `ovv_section_mapping_type` (0 Input,
   1 DynEQ, 2 Rack, 3 RouteGrp, 4 RouteMain, 5 Fx_1_8, 6 Mon_1_8, 7 Mon_9_16, 8 Channel, 9 Dugan, 10 Aux_1_16,
   11 Aux_9_24, 12 Mon_17_24, 13 IEM, 14 Fader). Ex. Home = top Rack, middle Input, bottom Fader, big faders.
-  PAS ENCORE vérifié : écriture en direct (enregistreur) et position des cadres Preamp quand Input est en Middle.
-  Idée : float visible dès que la section Input est affichée (top OU middle), calé sur la bonne rangée.
+  **Écrits en direct** (enregistreur, < 1 s, chaque réglage seul). La LV1 échange les sections entre rangées.
+  **Big Fader masque Middle et Bottom** (seul Top reste) ; **Input en Bottom = recouvert par les faders** (seuls
+  Polarity / Trim visibles). Cadres Preamp : y 184..315 en Top, **505..636 en Middle** (+321 px, même x).
+  `lv1/layers.py` : `bays` (top, middle, bottom, big) + `input_bay` ("top" / "middle" / None) dans chaque couche ;
+  float Qt : déplié quand `input_bay` existe (au lieu de SndChk/Setup), calé sur `BAY_Y0[input_bay]`.
 - **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
 - **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien
   pendant les clics). Lu à l'écran (`lv1_tab()` : ligne à 14/1080 de la zone client ; 7 boutons de
