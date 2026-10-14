@@ -411,8 +411,13 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Joseph) : plus de déplacement ni de redimensionnement à la main, toujours calé ; menu « Recaler sur la LV1 ».
   Languette = `ToolBar` dans l'espace vide de la barre du haut (`TOOL_BOX`, entre Setup et le cadenas) : logo
   (gris = pas de console, couleur = connectée), chevron (repli animé `FOLD_MS`), hamburger (menu).
-- Reste : étape 2 (cadres Edit / Channel, lectures d'écran sel/page, Mixers détachés à vérifier), étape 3
-  (panneaux Scènes / Routing / Consoles, barre de connexion ; en attendant ⋮ -> « ouvrir la page »), étape 4 bascule.
+- **Étapes 2 et 3 faites (3.0.0-a4)** : `Canvas` commun (FloatWindow 16 colonnes, BoxWindow cadres Edit / Channel) ;
+  lectures d'écran et vérification EMPRUNTÉES au float tk (`_screen_reader = xf.FloatApp._screen_reader`, etc. :
+  attributs de même nom) ; panneaux dans `x32_qt_panels.py` (Panel : scenes / routing / consoles / console,
+  RoutingEditor + MatrixView, pick_console). Animations (Joseph) : dépli seul (`FOLD_MS`), couche `SLIDE_MS` 150,
+  48V en fondu `PH_MS` rouge lumineux avec halo ; languette au style du cadenas LV1 (fond 17, contour 160).
+- Reste : étape 4 = bascule (Qt par défaut, PySide6 dans `build.yml`, `--hidden-import x32_qt_float/x32_qt_panels/
+  PySide6.QtSvg`), Mixers détachés à vérifier sur la LV1 (languette à gauche des colonnes).
 - (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
   couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
 

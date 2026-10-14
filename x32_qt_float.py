@@ -6,9 +6,9 @@ Toute la logique sans interface est reprise telle quelle de x32_gain_float (liai
 fenêtres et couches de la LV1, lectures d'écran, calage, configuration) : seuls l'affichage et le toucher
 changent. Configuration partagée avec le float tk (même fichier) : le calage est conservé.
 
-v3, étape 1 (2026-10-14) : colonnes, languette, suivi de la LV1, calage, 48V, bulle des dB, saisie d'une valeur,
-fonds, verrou. Pas encore : cadres Edit / Channel, panneaux Scènes / Routing / Consoles, barre de connexion
-(menu ⋮ -> « Ouvrir la page » en attendant).
+v3 (2026-10-14) : colonnes, languette, suivi de la LV1, calage, 48V, bulle des dB, saisie d'une valeur, fonds,
+verrou (étape 1) ; cadres Edit / Channel (étape 2) ; panneaux Scènes / Routing / Consoles et connexion
+(étape 3, x32_qt_panels.py).
 """
 import argparse
 import math
@@ -38,7 +38,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialG
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a3"
+QT_FLOAT_VERSION = "3.0.0-a4"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -825,6 +825,11 @@ class QtFloat:
         self._ph_timer.timeout.connect(self._ph_tick)
         self._bank_pos = None            # rang de la couche affichée (sens du glissement)
         self.conn_state = None
+        self.active_scene_id = None      # dernière scène chargée / sauvegardée (surlignée dans le panneau)
+        self.ip_text = args.ip or ""
+        self._consoles, self._lv1_cards = [], []
+        self._console_auto = None        # connexion ouverte d'office tant qu'aucune console (une fois)
+        self.editor = None
         self.update = None
         self.autostart = None
         self.lv1_sources, self.exp_map, self.lv1_map, self.lv1_channels = {}, {}, {}, {}
@@ -876,6 +881,9 @@ class QtFloat:
         self.sel_box = BoxWindow(self)
         self.ch_box = BoxWindow(self, big=True)
         self.pop = ValuePop(self)
+        import x32_qt_panels as qp       # ici : le module des panneaux importe celui-ci
+        self.qp = qp
+        self.panel = qp.Panel(self)
         try:
             icon = QIcon()
             for d in xf.ICON_PNG_B64:
@@ -1132,6 +1140,21 @@ class QtFloat:
         conn = "ok" if snap.get("connected") else ("trying" if snap.get("trying") else None)
         changed = conn != self.conn_state
         self.conn_state = conn
+        self._consoles = snap.get("consoles") or []
+        self._lv1_cards = snap.get("lv1_cards") or []
+        # connexion : ouverte d'office tant que la console n'est pas connectée (une fois), refermée toute seule
+        # dès la connexion si c'est elle qui s'était ouverte
+        if self._console_auto is None:
+            if snap.get("connected"):
+                self._console_auto = False
+            elif not snap.get("trying") and b.reachable:
+                self._console_auto = True
+                if not self.panel.mode:
+                    self.panel.open("console", auto=True)
+        elif self._console_auto and snap.get("connected"):
+            self._console_auto = False
+            if self.panel.mode == "console" and self.panel.auto:
+                self.panel.close_panel()
         if snap.get("autostart_ok"):
             self.autostart = bool(snap.get("autostart"))
         self.update = snap.get("update")
@@ -1246,7 +1269,9 @@ class QtFloat:
         self.ch_box.sync(self._ch_page if (lv1_up and not self.detached) else None, self._ch_hwnd, CH_BOX)
         if shown:
             self._place_tool(lv1)
-        hwnds = [int(w.winId()) for w in (self.win, self.tool, self.sel_box, self.ch_box) if w.isVisible()]
+        self.sync_panel()
+        hwnds = [int(w.winId()) for w in (self.win, self.tool, self.sel_box, self.ch_box, self.panel)
+                 if w.isVisible()]
         if hwnds:
             key = (len(hwnds),)
             if front:
@@ -1259,6 +1284,31 @@ class QtFloat:
                     set_topmost(h, False)
                     place_below(h, fg)
                 self._z_state = (fg,) + key
+
+    def sync_panel(self):
+        """Panneau (Scènes, Routing, Consoles, connexion) : visible avec les colonnes, caché sinon."""
+        pn = self.panel
+        show = bool(pn.mode) and bool(self._shown) and not self.collapsed
+        if show:
+            pn.place()
+            if not pn.isVisible():
+                pn.show()
+                self._z_state = None
+        elif pn.isVisible():
+            pn.hide()
+
+    def edit_routing(self, src):
+        r = self.backend.routing_model(src)
+        choices, slots = self.backend.routing_choices()
+        if not r.get("ok") or not choices:
+            Dialog(self, "Routing", r.get("error") or "Éditeur indisponible", "OK").ask()
+            return
+        if self.editor and self.editor.isVisible():
+            self.editor.close()
+        self.editor = self.qp.RoutingEditor(self, src, r, choices, slots)
+        self.editor.show()
+        self.editor.raise_()
+        self.editor.activateWindow()
 
     def _place_tool(self, lv1):
         """Languette dans l'espace vide de la barre du haut de la LV1 (fenêtre principale) ; Mixer détaché ou
@@ -1358,6 +1408,7 @@ class QtFloat:
         self.collapsed = not self.collapsed
         self.pop.hide()
         self._fold.stop()
+        QTimer.singleShot(0, self.sync_panel)
         if self.collapsed:
             self.open_k = 0.0
             self.win.hide()
@@ -1438,8 +1489,13 @@ class QtFloat:
         check("Bulle des dB en réglant", self.cfg.get("value_pop", True),
               lambda c: (self.cfg.__setitem__("value_pop", c), self.save_soon()))
         m.addSeparator()
+        m.addAction("Scènes…").triggered.connect(lambda: self.panel.toggle("scenes"))
+        m.addAction("Routing…").triggered.connect(lambda: self.panel.toggle("routing"))
+        if hasattr(self.backend, "consoles_add"):
+            m.addAction("Consoles…").triggered.connect(lambda: self.panel.toggle("consoles"))
+        check("Console (IP, connexion)", self.panel.mode == "console", lambda c: self.panel.toggle("console"))
         if not self.args.direct:
-            m.addAction("Scènes, routing, consoles : ouvrir la page").triggered.connect(
+            m.addAction("Ouvrir la page dans le navigateur").triggered.connect(
                 lambda: webbrowser.open("http://127.0.0.1:%d/" % self.args.port))
         check("Verrouiller l'édition", self.locked, lambda c: self.toggle_lock())
         themes = m.addMenu("Fond de la fenêtre")
@@ -1488,6 +1544,9 @@ class QtFloat:
             QTimer.singleShot(200, lambda: self._lv1_front(tries - 1))
 
     def quit(self):
+        if self.editor:
+            self.editor.orig = self.editor.model         # pas de question en quittant
+            self.editor.close()
         try:
             self.save_cfg()
         except Exception:
