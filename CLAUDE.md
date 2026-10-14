@@ -414,8 +414,12 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - **Étapes 2 et 3 faites (3.0.0-a4)** : `Canvas` commun (FloatWindow 16 colonnes, BoxWindow cadres Edit / Channel) ;
   lectures d'écran et vérification EMPRUNTÉES au float tk (`_screen_reader = xf.FloatApp._screen_reader`, etc. :
   attributs de même nom) ; panneaux dans `x32_qt_panels.py` (Panel : scenes / routing / consoles / console,
-  RoutingEditor + MatrixView, pick_console). Animations (Joseph) : dépli seul (`FOLD_MS`), couche `SLIDE_MS` 150,
-  48V en fondu `PH_MS` rouge lumineux avec halo ; languette au style du cadenas LV1 (fond 17, contour 160).
+  RoutingEditor + MatrixView, pick_console). Animations : AUCUNE sauf le 48V (fondu `PH_MS`, rouge lumineux avec
+  halo) — dépli et glissement de couche essayés puis retirés à la demande de Joseph ; languette au style du cadenas LV1 (fond 17, contour 160).
+- **Menu maison** (`x32_qt_panels.MenuPopup`) : le QMenu de Qt (popup) se refermait aussitôt / au hasard, la LV1
+  restant la fenêtre active. Ne pas revenir à QMenu. Piège PySide : `clicked` envoie un booléen qui écrase le 1er
+  argument par défaut d'un lambda (`lambda sub=act: ...`) -> toujours `lambda _checked=False, ...`.
+- Écrans : un écran OK (Edit et Channel validés par Joseph le 2026-10-14) ; deux écrans : soucis à voir ensemble.
 - Reste : étape 4 = bascule (Qt par défaut, PySide6 dans `build.yml`, `--hidden-import x32_qt_float/x32_qt_panels/
   PySide6.QtSvg`), Mixers détachés à vérifier sur la LV1 (languette à gauche des colonnes).
 - (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),

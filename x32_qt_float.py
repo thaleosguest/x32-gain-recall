@@ -29,16 +29,15 @@ from x32_gain_float import (                                  # noqa: E402
     foreground_window, join_tags, lv1_tab, lv1_windows, monitor_rect, place_below, quantize, set_theme_map,
     set_topmost, strip_tag, tc, window_alive, window_iconic, window_pid)
 
-from PySide6.QtCore import (Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteArray,  # noqa: E402
-                            QVariantAnimation, QEasingCurve)
+from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteArray  # noqa: E402
 from PySide6.QtSvg import QSvgRenderer                                         # noqa: E402
 from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialGradient,  # noqa: E402
-                           QPainterPath, QInputDevice, QEventPoint, QIcon, QPixmap, QAction, QActionGroup,
+                           QPainterPath, QInputDevice, QEventPoint, QIcon, QPixmap,
                            QImage, QLinearGradient)
-from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QDialog, QLabel, QLineEdit,   # noqa: E402
+from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a4"
+QT_FLOAT_VERSION = "3.0.0-a5"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -55,9 +54,6 @@ QT_AUTO_H = 132 / 1080.0
 TOOL_BOX = (1290 / 1920.0, 8 / 1080.0, 78 / 1920.0, 42 / 1080.0)
 TOOL_ITEMS = ("logo", "arrow", "more")
 TOOL_SPLIT = (0.40, 0.29, 0.31)  # parts de la largeur de la languette (logo plus large)
-FOLD_MS = 220                   # durée de l'animation de dépli (le repli est immédiat, demande de Joseph)
-SLIDE_MS = 150                  # changement de couche (1-16 -> 17-32...) : glissement + fondu
-SLIDE_PX = 40
 PH_MS = 260                     # 48V : allumage / extinction en fondu
 
 
@@ -440,15 +436,7 @@ class FloatWindow(Canvas):
         return self.app.strip_h
 
     def live(self):
-        return not self.app.collapsed and self.app.open_k >= 1 and self.app.slide_k >= 1
-
-    def effect(self):
-        a = self.app
-        if a.open_k < 1:                                   # dépli : les colonnes descendent en apparaissant
-            return a.open_k, 0.0, -(1 - a.open_k) * 28
-        if a.slide_k < 1:                                  # changement de couche : glissement + fondu
-            return 0.25 + 0.75 * a.slide_k, a.slide_dir * (1 - a.slide_k) * SLIDE_PX, 0.0
-        return 1.0, 0.0, 0.0
+        return not self.app.collapsed
 
 
 class BoxWindow(Canvas):
@@ -579,7 +567,7 @@ class ToolBar(QWidget):
         c = za.center()
         p.save()
         p.translate(c)
-        p.rotate(180 * (1 - app.open_k))
+        p.rotate(180 if app.collapsed else 0)
         p.setPen(QPen(QColor(TXT), 2.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
         p.drawPolyline([QPointF(-7, 3.5), QPointF(0, -3.5), QPointF(7, 3.5)])
@@ -809,21 +797,9 @@ class QtFloat:
         self.max_knob = None
         self.locked = False
         self.collapsed = False
-        self.open_k = 1.0                # 1 = déplié, 0 = replié (animé)
-        self._fold = QVariantAnimation()
-        self._fold.setDuration(FOLD_MS)
-        self._fold.setEasingCurve(QEasingCurve.OutCubic)
-        self._fold.valueChanged.connect(self._fold_step)
-        self._fold.finished.connect(self._fold_done)
-        self.slide_k, self.slide_dir = 1.0, 1
-        self._slide = QVariantAnimation()
-        self._slide.setDuration(SLIDE_MS)
-        self._slide.setEasingCurve(QEasingCurve.OutCubic)
-        self._slide.valueChanged.connect(self._slide_step)
         self._ph_k = {}                  # 48V affichés (fondu) : préampli -> 0..1
         self._ph_timer = QTimer()
         self._ph_timer.timeout.connect(self._ph_tick)
-        self._bank_pos = None            # rang de la couche affichée (sens du glissement)
         self.conn_state = None
         self.active_scene_id = None      # dernière scène chargée / sauvegardée (surlignée dans le panneau)
         self.ip_text = args.ip or ""
@@ -884,6 +860,7 @@ class QtFloat:
         import x32_qt_panels as qp       # ici : le module des panneaux importe celui-ci
         self.qp = qp
         self.panel = qp.Panel(self)
+        self.menu = qp.MenuPopup(self)
         try:
             icon = QIcon()
             for d in xf.ICON_PNG_B64:
@@ -1039,21 +1016,7 @@ class QtFloat:
         return [(ch or 0, [exp_to_idx[e] for e in (self.lv1_sources.get(ch, []) if ch else []) if e in exp_to_idx])
                 for ch in chans]
 
-    def _bank_rank(self):
-        if self.view != "lv1":
-            return 100 + self.bank
-        return 200 + (self._lv1_lay.get("page") or 0) if self.lv1_custom is not None else self.lv1_bank
-
-    def build_cols(self, animate=False):
-        rank = self._bank_rank()
-        if animate and self._bank_pos is not None and rank != self._bank_pos and not self.collapsed:
-            self.slide_dir = 1 if rank > self._bank_pos else -1        # couche suivante : arrive par la droite
-            self._slide.stop()
-            self._slide.setStartValue(0.0)
-            self._slide.setEndValue(1.0)
-            self.slide_k = 0.0
-            self._slide.start()
-        self._bank_pos = rank
+    def build_cols(self):
         if self.view == "lv1":
             self._layout = self.lv1_layout()
             self.cols = [Col(idxs, ch) for ch, idxs in self._layout]
@@ -1083,10 +1046,6 @@ class QtFloat:
         self.strip_w, self.strip_h = w, h
         self._relayout()
         self.save_soon()
-
-    def _slide_step(self, v):
-        self.slide_k = float(v)
-        self.win.update()
 
     def _refresh_cols(self):
         for col in self.cols:
@@ -1193,7 +1152,7 @@ class QtFloat:
         if self.view == "lv1" and self.lv1_layout() != self._layout:
             rebuild = True
         if rebuild:
-            self.build_cols(animate=True)
+            self.build_cols()
         else:
             self._refresh_cols()
         self.win.update()
@@ -1270,7 +1229,9 @@ class QtFloat:
         if shown:
             self._place_tool(lv1)
         self.sync_panel()
-        hwnds = [int(w.winId()) for w in (self.win, self.tool, self.sel_box, self.ch_box, self.panel)
+        if not shown and self.menu.isVisible():
+            self.menu.hide()
+        hwnds = [int(w.winId()) for w in (self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu)
                  if w.isVisible()]
         if hwnds:
             key = (len(hwnds),)
@@ -1404,35 +1365,15 @@ class QtFloat:
 
     # -- languette et menu -------------------------------------------------------
     def toggle_collapse(self):
-        """Repli immédiat ; dépli animé (les colonnes descendent en apparaissant). La languette reste."""
+        """Repli / dépli des colonnes (sans animation, demande de Joseph). La languette reste."""
         self.collapsed = not self.collapsed
         self.pop.hide()
-        self._fold.stop()
-        QTimer.singleShot(0, self.sync_panel)
-        if self.collapsed:
-            self.open_k = 0.0
-            self.win.hide()
-        else:
-            if self._shown:
-                self.win.show()
-                self._z_state = None
-            self.open_k = 0.0
-            self._fold.setStartValue(0.0)
-            self._fold.setEndValue(1.0)
-            self._fold.start()
-        self.win.update()
-        self.tool.update()
-
-    def _fold_step(self, v):
-        self.open_k = float(v)
-        self.win.update()
-        self.tool.update()
-
-    def _fold_done(self):
-        self.open_k = 0.0 if self.collapsed else 1.0
         if self.collapsed:
             self.win.hide()
-        self.win.update()
+        elif self._shown:
+            self.win.show()
+            self._z_state = None
+        self.sync_panel()
         self.tool.update()
 
     def toggle_lock(self):
@@ -1449,7 +1390,7 @@ class QtFloat:
                         self.lv1_bank = i
                     else:
                         self.bank = i
-                    self.build_cols(animate=True)
+                    self.build_cols()
                     self.save_cfg()
                     return
 
@@ -1459,65 +1400,46 @@ class QtFloat:
         self.win.update()
         self.save_cfg()
 
-    def more_menu(self, gpos):
-        m = QMenu()
-        m.setStyleSheet("QMenu { background:%s; color:%s; font: 13pt 'Segoe UI'; border:1px solid %s; }"
-                        "QMenu::item { padding: 7px 26px 7px 22px; }"
-                        "QMenu::item:selected { background:%s; color:#032; }"
-                        "QMenu::item:disabled { color:%s; }"
-                        "QMenu::separator { height:1px; background:%s; margin:4px 8px; }"
-                        % (tc("#15171a"), TXT, tc(LINE2), TEAL, MUT, tc(LINE2)))
-        banks = m.addMenu("Banque : %s" % self.bank_name())
-        grp = QActionGroup(banks)
-        for group in (LV1_BANKS, BANKS):
-            if group is BANKS:
-                banks.addSeparator()
-            for name, _s in group:
-                a = banks.addAction(name)
-                a.setCheckable(True)
-                a.setChecked(name == self.bank_name())
-                grp.addAction(a)
-                a.triggered.connect(lambda _c=False, n=name: self.select_bank(n))
+    def more_menu(self, gpos=None):
+        """Menu de la languette (hamburger) : retoucher le hamburger le referme."""
+        if self.menu.isVisible():
+            self.menu.hide()
+        else:
+            self.menu.show_entries(self._menu_entries())
 
-        def check(label, on, fn):
-            a = m.addAction(label)
-            a.setCheckable(True)
-            a.setChecked(bool(on))
-            a.triggered.connect(fn)
-            return a
-        m.addAction("Recaler sur la LV1").triggered.connect(self.recalibrate)
-        check("Bulle des dB en réglant", self.cfg.get("value_pop", True),
-              lambda c: (self.cfg.__setitem__("value_pop", c), self.save_soon()))
-        m.addSeparator()
-        m.addAction("Scènes…").triggered.connect(lambda: self.panel.toggle("scenes"))
-        m.addAction("Routing…").triggered.connect(lambda: self.panel.toggle("routing"))
+    def _menu_entries(self):
+        """Entrées : (texte, action) ; (texte, action, coché) ; (texte, [sous-menu]) ; (texte, None) = info ; "-"."""
+        bank = self.bank_name()
+        banks = ([(n, lambda n=n: self.select_bank(n), n == bank, "radio") for n, _s in LV1_BANKS] + ["-"]
+                 + [(n, lambda n=n: self.select_bank(n), n == bank, "radio") for n, _s in BANKS])
+        themes = [(n + ("  (défaut)" if n == DEFAULT_THEME else ""), lambda n=n: self.set_theme(n), n == self.theme, "radio")
+                  for n in THEMES]
+        e = [("Banque : %s" % bank, banks),
+             ("Recaler sur la LV1", self.recalibrate),
+             ("Bulle des dB en réglant", lambda: (self.cfg.__setitem__("value_pop", not self.cfg.get("value_pop", True)),
+                                                  self.save_soon()), self.cfg.get("value_pop", True)),
+             "-",
+             ("Scènes…", lambda: self.panel.toggle("scenes")),
+             ("Routing…", lambda: self.panel.toggle("routing"))]
         if hasattr(self.backend, "consoles_add"):
-            m.addAction("Consoles…").triggered.connect(lambda: self.panel.toggle("consoles"))
-        check("Console (IP, connexion)", self.panel.mode == "console", lambda c: self.panel.toggle("console"))
+            e.append(("Consoles…", lambda: self.panel.toggle("consoles")))
+        e.append(("Console (IP, connexion)", lambda: self.panel.toggle("console"), self.panel.mode == "console"))
         if not self.args.direct:
-            m.addAction("Ouvrir la page dans le navigateur").triggered.connect(
-                lambda: webbrowser.open("http://127.0.0.1:%d/" % self.args.port))
-        check("Verrouiller l'édition", self.locked, lambda c: self.toggle_lock())
-        themes = m.addMenu("Fond de la fenêtre")
-        tg = QActionGroup(themes)
-        for name in THEMES:
-            a = themes.addAction(name + ("  (défaut)" if name == DEFAULT_THEME else ""))
-            a.setCheckable(True)
-            a.setChecked(name == self.theme)
-            tg.addAction(a)
-            a.triggered.connect(lambda _c=False, n=name: self.set_theme(n))
-        m.addSeparator()
-        a = m.addAction("%s v%s (float Qt %s) — by %s" % (APP_SHORT, APP_VERSION, QT_FLOAT_VERSION, APP_AUTHOR))
-        a.setEnabled(False)
+            e.append(("Ouvrir la page dans le navigateur",
+                      lambda: webbrowser.open("http://127.0.0.1:%d/" % self.args.port)))
+        e += [("Verrouiller l'édition", self.toggle_lock, self.locked),
+              ("Fond de la fenêtre", themes),
+              "-",
+              ("%s v%s (float Qt %s)" % (APP_SHORT, APP_VERSION, QT_FLOAT_VERSION), None)]
         if self.update and self.update.get("url"):
-            m.addAction("⬆ Mise à jour %s disponible…" % self.update.get("version")).triggered.connect(
-                lambda: webbrowser.open(self.update["url"]))
-        m.addAction("Fermer le float").triggered.connect(self.quit)
+            e.append(("⬆ Mise à jour %s disponible…" % self.update.get("version"),
+                      lambda: webbrowser.open(self.update["url"])))
+        e.append(("Fermer le float", self.quit))
         if not self.args.direct:
             if self.autostart is not None:
-                check("Lancer avec Windows", self.autostart, self._toggle_autostart)
-            m.addAction("Quitter l'appli").triggered.connect(self._quit_app)
-        m.exec(gpos)
+                e.append(("Lancer avec Windows", lambda: self._toggle_autostart(not self.autostart), self.autostart))
+            e.append(("Quitter l'appli", self._quit_app))
+        return e
 
     def _toggle_autostart(self, on):
         r = self.backend.set_autostart(on)

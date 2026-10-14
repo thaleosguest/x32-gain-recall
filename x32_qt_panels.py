@@ -65,7 +65,7 @@ def button(text, cb=None, kind=None):
         b.setProperty("kind", kind)
     b.setFocusPolicy(Qt.NoFocus)
     if cb:
-        b.clicked.connect(cb)
+        b.clicked.connect(lambda _checked=False, cb=cb: cb())     # clicked envoie un booléen : on l'ignore
     return b
 
 
@@ -121,6 +121,117 @@ def pick_console(app, title):
     d.move(c0.x() - d.width() // 2, max(0, c0.y() - d.height() // 2))
     d.exec()
     return res["n"]
+
+
+# --------------------------------------------------------------------------
+#  Menu de la languette
+# --------------------------------------------------------------------------
+MENU_CSS = """
+QFrame#menu { background: rgb(17,17,17); border: 1px solid rgb(160,160,160); border-radius: 6px; }
+QPushButton { background: transparent; color: %(txt)s; border: 0; border-radius: 6px; text-align: left;
+              padding: 9px 14px; font: 13pt "Segoe UI"; }
+QPushButton:pressed { background: %(teal)s; color: #032; }
+QPushButton[kind="info"] { color: %(mut)s; font: 9pt "Segoe UI"; }
+QPushButton#close { font: bold 13pt "Segoe UI"; text-align: center; padding: 4px 12px; }
+QFrame#sep { background: rgb(60,60,60); max-height: 1px; min-height: 1px; margin: 3px 8px; }
+"""
+
+
+class MenuPopup(QWidget):
+    """Menu maison, au style de la languette (et du cadenas de la LV1). Le menu « popup » de Qt se refermait
+    aussitôt (la LV1 reste la fenêtre active : le float ne prend jamais le focus). Celui-ci ne prend pas le focus
+    et se ferme quand on choisit une entrée, qu'on retouche le hamburger ou sa croix ✕."""
+
+    W = 330
+
+    def __init__(self, app):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.app = app
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setStyleSheet(MENU_CSS % {"txt": TXT, "mut": MUT, "teal": TEAL})
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.frame = QFrame()
+        self.frame.setObjectName("menu")
+        outer.addWidget(self.frame)
+        self.lay = QVBoxLayout(self.frame)
+        self.lay.setContentsMargins(6, 4, 6, 6)
+        self.lay.setSpacing(0)
+        self.setFixedWidth(self.W)
+
+    def show_entries(self, entries, parent=None):
+        while self.lay.count():
+            it = self.lay.takeAt(0)
+            ws = [it.widget()] if it.widget() else []
+            if it.layout():
+                while it.layout().count():
+                    ws.append(it.layout().takeAt(0).widget())
+            for w in ws:
+                if w:
+                    w.hide()
+                    w.setParent(None)
+                    w.deleteLater()
+        head = QHBoxLayout()
+        if parent is not None:
+            head.addWidget(self._btn("◂  Retour", lambda: self.show_entries(parent)), 1)
+        else:
+            head.addStretch(1)
+        x = QPushButton("✕")
+        x.setObjectName("close")
+        x.setFocusPolicy(Qt.NoFocus)
+        x.clicked.connect(self.hide)
+        head.addWidget(x)
+        self.lay.addLayout(head)
+        for e in entries:
+            if e == "-":
+                sep = QFrame()
+                sep.setObjectName("sep")
+                self.lay.addWidget(sep)
+                continue
+            text, act = e[0], e[1]
+            if isinstance(act, list):
+                self.lay.addWidget(self._btn(text + "   ▸", lambda sub=act: self.show_entries(sub, entries)))
+            elif act is None:
+                b = self._btn(text, None)
+                b.setProperty("kind", "info")
+                self.lay.addWidget(b)
+            else:
+                checked = e[2] if len(e) > 2 else None
+                if checked is None:
+                    mark = ""
+                elif len(e) > 3 and e[3] == "radio":         # choix dans un sous-menu : coche sur le courant
+                    mark = "✓   " if checked else "      "
+                else:                                         # option à cocher : case
+                    mark = "☑  " if checked else "☐  "
+                self.lay.addWidget(self._btn(mark + text, lambda act=act: self._run(act)))
+        self.adjustSize()
+        self.place()
+        self.show()
+        self.raise_()
+        self.app._z_state = None
+
+    def _btn(self, text, cb):
+        b = QPushButton(text)
+        b.setFocusPolicy(Qt.NoFocus)
+        if cb:
+            b.clicked.connect(lambda _checked=False, cb=cb: cb())     # clicked envoie un booléen : on l'ignore
+        return b
+
+    def _run(self, act):
+        self.hide()
+        QTimer.singleShot(0, act)             # après la fermeture (l'action peut ouvrir une fenêtre)
+
+    def place(self):
+        """Sous la languette, calé sur son bord droit, dans l'écran."""
+        t = self.app.tool
+        x, y = t.x() + t.width() - self.width(), t.y() + t.height() + 4
+        scr = t.screen().availableGeometry() if t.screen() else None
+        if scr:
+            x = max(scr.left(), min(x, scr.right() - self.width()))
+            if y + self.height() > scr.bottom():
+                y = max(scr.top(), t.y() - self.height() - 4)
+        self.move(x, y)
 
 
 # --------------------------------------------------------------------------
