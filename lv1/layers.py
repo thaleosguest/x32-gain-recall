@@ -80,19 +80,24 @@ def read_layer(con, surface=SURFACE_MIXER1):
 
 
 SECTION_INPUT = 0         # ovv_section_mapping_type : 0 = Input (cadres Preamp / Gain / 48)
+SECTION_FADER = 14        # 14 = Fader
 
 
 def _input_bay(bays):
-    """Rangée où la section Input (cadres Preamp / Gain / 48) est VISIBLE : "top", "middle" ou None.
-    Relevé le 2026-10-14 (enregistreur + captures) : Big Fader masque Middle et Bottom (seul Top reste) ; Input en
-    Bottom est recouvert par les faders (seuls Polarity / Trim restent visibles) -> rien à régler à l'écran."""
+    """Rangée où la section Input (cadres Preamp / Gain / 48) est VISIBLE : "top", "middle", "bottom" ou None.
+    Relevé le 2026-10-14 (enregistreur + captures) : Big Fader masque Middle et Bottom (seul Top reste) ; des faders
+    en Middle débordent sur le Bottom et y cachent les cadres Preamp (seuls Polarity / Trim restent visibles)."""
     if not bays:
         return None
-    top, middle, _bottom, big = bays
+    top, middle, bottom, big = bays
     if top == SECTION_INPUT:
         return "top"
-    if middle == SECTION_INPUT and not big:
+    if big:
+        return None
+    if middle == SECTION_INPUT:
         return "middle"
+    if bottom == SECTION_INPUT and middle != SECTION_FADER:
+        return "bottom"
     return None
 
 

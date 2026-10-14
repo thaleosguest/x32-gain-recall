@@ -102,9 +102,10 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   1 DynEQ, 2 Rack, 3 RouteGrp, 4 RouteMain, 5 Fx_1_8, 6 Mon_1_8, 7 Mon_9_16, 8 Channel, 9 Dugan, 10 Aux_1_16,
   11 Aux_9_24, 12 Mon_17_24, 13 IEM, 14 Fader). Ex. Home = top Rack, middle Input, bottom Fader, big faders.
   **Écrits en direct** (enregistreur, < 1 s, chaque réglage seul). La LV1 échange les sections entre rangées.
-  **Big Fader masque Middle et Bottom** (seul Top reste) ; **Input en Bottom = recouvert par les faders** (seuls
-  Polarity / Trim visibles). Cadres Preamp : y 184..315 en Top, **505..636 en Middle** (+321 px, même x).
-  `lv1/layers.py` : `bays` (top, middle, bottom, big) + `input_bay` ("top" / "middle" / None) dans chaque couche ;
+  **Big Fader masque Middle et Bottom** (seul Top reste) ; **faders (14) en Middle = débordent sur le Bottom** et y
+  cachent les cadres Preamp (seuls Polarity / Trim visibles). Cadres Preamp : y 184..315 en Top, **505..636 en
+  Middle**, **781..912 en Bottom** (mêmes x). `lv1/layers.py` : `bays` (top, middle, bottom, big) + `input_bay`
+  ("top" / "middle" / "bottom" / None) dans chaque couche ;
   float Qt : déplié quand `input_bay` existe (au lieu de SndChk/Setup), calé sur `BAY_Y0[input_bay]`.
 - **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
 - **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien

@@ -37,7 +37,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialG
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a6"
+QT_FLOAT_VERSION = "3.0.0-a7"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -49,9 +49,9 @@ TAP_PX = 12                     # un toucher qui bouge moins que ça est un « t
 # le contour gris et le liseré jaune de la tranche sélectionnée restent visibles (demande de Joseph).
 CARD_L, CARD_R = 1 / 96.0, 93 / 96.0        # bords de la carte, en fraction du pas des tranches
 QT_AUTO_H = 132 / 1080.0
-# Rangée de la section Input (lv1/layers.py, « input_bay ») : cadres Preamp à y 184 en Top, 505 en Middle
-# (+321 px, même largeur ; relevé le 2026-10-14 en Home, 1920x1080)
-BAY_Y0 = {"top": AUTO_Y0, "middle": 505 / 1080.0}
+# Rangée de la section Input (lv1/layers.py, « input_bay ») : cadres Preamp à y 184 en Top, 505 en Middle, 781 en
+# Bottom (mêmes colonnes ; relevé le 2026-10-14 en 1920x1080 : Home et Monitor)
+BAY_Y0 = {"top": AUTO_Y0, "middle": 505 / 1080.0, "bottom": 781 / 1080.0}
 # Languette (v3) : dans l'espace vide de la barre du haut, entre « Setup » et le cadenas (x 1287..1370, boutons
 # y 8..49 en 1920x1080) ; calée par la droite (le cadenas ne bouge pas quand des pages sont détachées)
 TOOL_BOX = (1290 / 1920.0, 8 / 1080.0, 78 / 1920.0, 42 / 1080.0)
