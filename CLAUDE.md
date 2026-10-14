@@ -96,6 +96,13 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   1 Home, 2 Setup, 3 SndChk, 4 Edit, 5 Fx, 6 Monitor, 7 Status, 8 Dugan) ; 8 lignes par
   `ovv_track_mode` (surface + mode de couche), une par page, ordre des id. Custom : par page ; couches
   d'entrée : les 8 pages changent ensemble. Float : déplié en SndChk/Setup, replié sinon (`AUTO_OPEN_MODES`).
+- **Sections Top / Middle / Bottom + Big Fader (relevé 2026-10-14)** : `ovv_page_data` (une ligne par page, comme le
+  mode) a `section_mapping_type_top_bay` / `_middle_bay` / `_bottom_bay` et `big_faders` ; valeurs par défaut de
+  chaque mode dans les mêmes colonnes de `ovv_modes_presets` ; libellés dans `ovv_section_mapping_type` (0 Input,
+  1 DynEQ, 2 Rack, 3 RouteGrp, 4 RouteMain, 5 Fx_1_8, 6 Mon_1_8, 7 Mon_9_16, 8 Channel, 9 Dugan, 10 Aux_1_16,
+  11 Aux_9_24, 12 Mon_17_24, 13 IEM, 14 Fader). Ex. Home = top Rack, middle Input, bottom Fader, big faders.
+  PAS ENCORE vérifié : écriture en direct (enregistreur) et position des cadres Preamp quand Input est en Middle.
+  Idée : float visible dès que la section Input est affichée (top OU middle), calé sur la bonne rangée.
 - **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
 - **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien
   pendant les clics). Lu à l'écran (`lv1_tab()` : ligne à 14/1080 de la zone client ; 7 boutons de
