@@ -25,7 +25,7 @@ from brand_icon import LOGO_SVG                               # noqa: E402
 from x32_gain_float import (                                  # noqa: E402
     APP_SHORT, APP_VERSION, APP_AUTHOR, AUTO_H, AUTO_OPEN_MODES, AUTO_PITCH, AUTO_X0, AUTO_Y0, BANKS,
     DEFAULT_THEME, GAIN_DB_PER_PX, GAIN_MAX, GAIN_MIN, LAYOUT_VERSION, LV1_BANKS, LV1_TABS, MIXER_TABS,
-    OLD_TAB_W, OLD_TITLE_H, STRIP_EXTRA_H, TAB_W, THEMES, client_rect, exp_txt, find_lv1_window,
+    CH_BOX, OLD_TAB_W, OLD_TITLE_H, SEL_BOX, STRIP_EXTRA_H, TAB_W, THEMES, client_rect, exp_txt, find_lv1_window,
     foreground_window, join_tags, lv1_tab, lv1_windows, monitor_rect, place_below, quantize, set_theme_map,
     set_topmost, strip_tag, tc, window_alive, window_iconic, window_pid)
 
@@ -34,7 +34,7 @@ from PySide6.QtCore import (Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteAr
 from PySide6.QtSvg import QSvgRenderer                                         # noqa: E402
 from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialGradient,  # noqa: E402
                            QPainterPath, QInputDevice, QEventPoint, QIcon, QPixmap, QAction, QActionGroup,
-                           QImage)
+                           QImage, QLinearGradient)
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
@@ -55,7 +55,10 @@ QT_AUTO_H = 132 / 1080.0
 TOOL_BOX = (1290 / 1920.0, 8 / 1080.0, 78 / 1920.0, 42 / 1080.0)
 TOOL_ITEMS = ("logo", "arrow", "more")
 TOOL_SPLIT = (0.40, 0.29, 0.31)  # parts de la largeur de la languette (logo plus large)
-FOLD_MS = 220                   # durée de l'animation de repli / dépli
+FOLD_MS = 220                   # durée de l'animation de dépli (le repli est immédiat, demande de Joseph)
+SLIDE_MS = 150                  # changement de couche (1-16 -> 17-32...) : glissement + fondu
+SLIDE_PX = 40
+PH_MS = 260                     # 48V : allumage / extinction en fondu
 
 
 def qc(color):
@@ -120,6 +123,7 @@ class Col:
         self.name = ""
         self.x = self.w = 0              # zone de la colonne (pas des tranches) : prise au doigt
         self.cx = self.cw = 0            # carte, DANS le cadre de la tranche LV1
+        self.full = False                # cadre Channel : un préampli mono prend toute la largeur
 
 
 def draw_knob(p, kr, db, color, held):
@@ -154,8 +158,48 @@ def draw_knob(p, kr, db, color, held):
         p.drawText(b, Qt.AlignCenter, "?")
 
 
-class FloatWindow(QWidget):
-    """Les colonnes, dessinées dans une seule fenêtre transparente (trous = traversables)."""
+def _mix(a, b, k):
+    return QColor(round(a.red() + (b.red() - a.red()) * k), round(a.green() + (b.green() - a.green()) * k),
+                  round(a.blue() + (b.blue() - a.blue()) * k))
+
+
+def draw_phantom(p, ph, k, known, font):
+    """Bouton 48V : k = 0 éteint (contour), 1 allumé (rouge lumineux avec halo) ; entre les deux : fondu."""
+    r = ph.height() / 2
+    p.setPen(Qt.NoPen)
+    if k > 0:
+        for grow, a in ((7, 0.07), (5, 0.11), (3, 0.17), (1.5, 0.26)):        # halo
+            c = QColor(255, 45, 45)
+            c.setAlphaF(a * k)
+            p.setBrush(c)
+            p.drawRoundedRect(ph.adjusted(-grow, -grow, grow, grow), r + grow, r + grow)
+        g = QLinearGradient(ph.topLeft(), ph.bottomLeft())
+        top, bot = QColor(255, 120, 105), QColor(225, 22, 32)
+        top.setAlphaF(k)
+        bot.setAlphaF(k)
+        g.setColorAt(0, top)
+        g.setColorAt(1, bot)
+        p.setBrush(g)
+        p.drawRoundedRect(ph, r, r)
+        hi = QColor(255, 255, 255)
+        hi.setAlphaF(0.28 * k)                           # reflet en haut
+        p.setBrush(hi)
+        p.drawRoundedRect(QRectF(ph.left() + r * 0.6, ph.top() + 1.5, ph.width() - r * 1.2, ph.height() * 0.32),
+                          2, 2)
+    if k < 1:
+        c = qc(LINE2)
+        c.setAlphaF(1 - k)
+        p.setPen(QPen(c, 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(ph, r, r)
+    p.setPen(_mix(QColor(MUT if known else tc(LINE2)), QColor("#ffffff"), k))
+    p.setFont(font)
+    p.drawText(ph, Qt.AlignCenter, "48V")
+
+
+class Canvas(QWidget):
+    """Colonnes de préamplis dessinées et touchables (multi-touch : un doigt = un potard). Base du float et
+    des cadres posés sur les pages Edit / Channel de la LV1. Fenêtre transparente : un trou est traversable."""
 
     def __init__(self, app):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -169,22 +213,43 @@ class FloatWindow(QWidget):
         self.f_val = QFont("Consolas", 9, QFont.Bold)
         self.f_val_s = QFont("Consolas", 8, QFont.Bold)
         self.f_ph = QFont("Segoe UI", 7, QFont.Bold)
+        self.f_val_l = QFont("Consolas", 15, QFont.Bold)
+        self.f_ph_l = QFont("Segoe UI", 10, QFont.Bold)
         self.points = {}                 # id du point (doigt / souris) -> état du geste
+
+    # à préciser par les sous-classes
+    def columns(self):
+        return []
+
+    def col_h(self):
+        return self.height()
+
+    def knob_cap(self):
+        return None
+
+    def live(self):
+        """Gestes acceptés (pas pendant une animation)."""
+        return True
+
+    def effect(self):
+        """(opacité, décalage x, décalage y) des colonnes : animations."""
+        return 1.0, 0.0, 0.0
 
     # -- géométrie -------------------------------------------------------------
     def unit_rects(self, col):
         """[(idx, zone du préampli, potard, valeur, 48V, diode)] d'une colonne."""
-        app = self.app
+        h = self.col_h()
         top = 5 + QFontMetrics(self.f_tag).height() + 3
         if col.ch is None:
             top += QFontMetrics(self.f_name).height()
-        uw = col.cw / 2.0
-        n = len(col.idxs)
-        body_h = app.strip_h - top - 2
-        fixed = 7 + 4 + 16 + 4 + 15 + 6
+        n = len(col.idxs[:2])
+        uw = col.cw / float(n if col.full else 2)
+        body_h = h - top - 2
+        vh, phh = (26, 22) if col.full else (16, 15)      # cadre Channel : valeur et 48V plus gros
+        fixed = 7 + 4 + vh + 4 + phh + 6
         ksz = max(14, min(uw - 6, body_h - fixed))
-        if app.max_knob:
-            ksz = min(ksz, app.max_knob)
+        if self.knob_cap():
+            ksz = min(ksz, self.knob_cap())
         block = fixed + ksz
         y0 = top + max(0, (body_h - block) / 2)
         x0 = col.cx + (col.cw - uw * n) / 2
@@ -194,32 +259,31 @@ class FloatWindow(QWidget):
             cx = ux + uw / 2
             led = QRectF(cx - 4, y0, 8, 7)
             kr = QRectF(cx - ksz / 2, y0 + 11, ksz, ksz)
-            val = QRectF(ux, kr.bottom() + 3, uw, 16)
-            pw = max(20, min(uw - 8, 38))
-            ph = QRectF(cx - pw / 2, val.bottom() + 3, pw, 15)
-            out.append((idx, QRectF(ux, top, uw, app.strip_h - top), kr, val, ph, led))
+            val = QRectF(ux, kr.bottom() + 3, uw, vh)
+            pw = max(20, min(uw - 8, 64 if col.full else 38))
+            ph = QRectF(cx - pw / 2, val.bottom() + 3, pw, phh)
+            out.append((idx, QRectF(ux, top, uw, h - top), kr, val, ph, led))
         return out
 
     # -- dessin ----------------------------------------------------------------
     def paintEvent(self, e):
-        app = self.app
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.TextAntialiasing)
-        k = app.open_k                   # 1 = déplié ; entre les deux : animation de repli / dépli
-        if k > 0:
-            if k < 1:
-                p.setOpacity(k)
-                p.translate(0, -(1 - k) * 28)       # les colonnes remontent en s'effaçant
+        op, dx, dy = self.effect()
+        if op > 0:
+            p.setOpacity(op)
+            p.translate(dx, dy)
             clip = e.rect()
-            for col in app.cols:
-                if col.idxs and clip.intersects(QRectF(col.x, 0, col.w, app.strip_h).toAlignedRect()):
+            h = self.col_h()
+            for col in self.columns():
+                if col.idxs and (dx or clip.intersects(QRectF(col.x, 0, col.w, h).toAlignedRect())):
                     self._paint_col(p, col)
         p.end()
 
     def _paint_col(self, p, col):
         app = self.app
-        r = QRectF(col.cx, 0, col.cw, app.strip_h)
+        r = QRectF(col.cx, 0, col.cw, self.col_h())
         card = QPainterPath()
         card.addRoundedRect(r, 5, 5)
         p.fillPath(card, qc(PANEL))
@@ -244,23 +308,14 @@ class FloatWindow(QWidget):
             p.drawEllipse(led.center(), 3.5, 3.5)
             draw_knob(p, kr, db, col.color, idx in held)
             p.setPen(QColor(TXT))
-            f = self.f_val if val.width() >= 34 else self.f_val_s
+            f = self.f_val_l if val.height() >= 24 else (self.f_val if val.width() >= 34 else self.f_val_s)
             text = "—" if db is None else "%.1f" % db
             if QFontMetrics(f).horizontalAdvance(text) > val.width() - 2 and db is not None:
                 text = "%.0f" % db
             p.setFont(f)
             p.drawText(val, Qt.AlignCenter, text)
-            on = app.phantom(idx)
-            if on:
-                p.setPen(Qt.NoPen)
-                p.setBrush(QColor(PH_ON))
-            else:
-                p.setPen(QPen(qc(LINE2), 1))
-                p.setBrush(Qt.NoBrush)
-            p.drawRoundedRect(ph, ph.height() / 2, ph.height() / 2)
-            p.setPen(QColor("#ffffff" if on else (MUT if on is not None else tc(LINE2))))
-            p.setFont(self.f_ph)
-            p.drawText(ph, Qt.AlignCenter, "48V")
+            draw_phantom(p, ph, app.ph_level(idx), app.phantom(idx) is not None,
+                         self.f_ph_l if ph.height() >= 20 else self.f_ph)
 
     def _fit_tag(self, one, avail):
         """« L 15 = EXP 15 », raccourci si la colonne est étroite (comme le float tk)."""
@@ -277,9 +332,9 @@ class FloatWindow(QWidget):
 
     # -- toucher / souris ------------------------------------------------------
     def _hit(self, pos):
-        if self.app.collapsed or self.app.open_k < 1:
+        if not self.live():
             return None
-        for col in self.app.cols:
+        for col in self.columns():
             if col.idxs and col.x <= pos.x() < col.x + col.w:
                 for idx, zone, kr, val, ph, led in self.unit_rects(col):
                     if ph.adjusted(-3, -3, 3, 3).contains(pos):
@@ -375,6 +430,73 @@ class FloatWindow(QWidget):
             self._release("mouse", e.globalPosition())
 
 
+class FloatWindow(Canvas):
+    """Les 16 colonnes, calées sur les tranches de la LV1."""
+
+    def columns(self):
+        return self.app.cols
+
+    def col_h(self):
+        return self.app.strip_h
+
+    def live(self):
+        return not self.app.collapsed and self.app.open_k >= 1 and self.app.slide_k >= 1
+
+    def effect(self):
+        a = self.app
+        if a.open_k < 1:                                   # dépli : les colonnes descendent en apparaissant
+            return a.open_k, 0.0, -(1 - a.open_k) * 28
+        if a.slide_k < 1:                                  # changement de couche : glissement + fondu
+            return 0.25 + 0.75 * a.slide_k, a.slide_dir * (1 - a.slide_k) * SLIDE_PX, 0.0
+        return 1.0, 0.0, 0.0
+
+
+class BoxWindow(Canvas):
+    """Préampli(s) d'un canal posé(s) dans une zone de la LV1 (fractions de sa zone client) : cadre « Input » de la
+    page Edit (tranche sélectionnée), zone Preamp de la page Channel (big : potards grand format)."""
+
+    def __init__(self, app, big=False):
+        super().__init__(app)
+        self.big = big
+        self.col = None
+        self.key = None
+        self.geom = None
+
+    def columns(self):
+        return [self.col] if self.col else []
+
+    def knob_cap(self):
+        if self.big and self.col:
+            return 130 if len(self.col.idxs) == 1 else 96
+        return None
+
+    def sync(self, sel, hwnd, box):
+        """sel = (canal, [préamplis]) ou None (cadre caché) ; hwnd = fenêtre LV1 où se poser ; box = fractions."""
+        rect = client_rect(hwnd) if (sel and hwnd) else None
+        if not rect:
+            if self.isVisible():
+                self.hide()
+            return
+        x, y, w, h = rect
+        geom = (x + round(w * box[0]), y + round(h * box[1]), max(40, round(w * box[2])), max(60, round(h * box[3])))
+        if sel != self.key or geom[2:] != (self.geom or (0, 0, 0, 0))[2:]:
+            self.key = sel
+            ch, idxs = sel
+            col = Col(idxs[:2], ch)
+            col.full = self.big
+            col.x = col.cx = 0
+            col.w = col.cw = geom[2]
+            self.col = col
+            self.app.refresh_col(col)
+        if geom != self.geom:
+            self.geom = geom
+            self.setGeometry(*geom)
+        if not self.isVisible():
+            self.show()
+            self.app._z_state = None
+        self.update()
+
+
 _LOGOS = {}
 
 
@@ -432,16 +554,18 @@ class ToolBar(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         w, h = self.width(), self.height()
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), h / 2 - 1, h / 2 - 1)
-        p.fillPath(path, QColor(24, 26, 29, 235))
-        p.setPen(QPen(QColor(255, 255, 255, 38), 1))
+        # même style que le bouton cadenas de la LV1 juste à droite (relevé : fond (17,17,17), contour
+        # (160,160,160), coins de ~6 px) : la languette fait partie de la barre du haut (demande de Joseph)
+        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 6, 6)
+        p.fillPath(path, QColor(17, 17, 17))
+        p.setPen(QPen(QColor(160, 160, 160), 1))
         p.drawPath(path)
         zl, za, zm = self.zones()
         pressed = {g["item"] for g in self.points.values()}
         for item, z in zip(TOOL_ITEMS, (zl, za, zm)):
             if item in pressed:
                 hl = QPainterPath()
-                hl.addRoundedRect(z.adjusted(2, 3, -2, -3), (h - 6) / 2, (h - 6) / 2)
+                hl.addRoundedRect(z.adjusted(3, 4, -3, -4), 4, 4)
                 p.fillPath(hl, QColor(255, 255, 255, 40))
         # logo : couleur = console connectée, gris sinon
         ls = int(min(zl.width() - 6, h - 12))
@@ -550,7 +674,7 @@ class ValuePop(QWidget):
         self.idx = idx
         self.sub = "Gain " + self.app.label(idx)
         self.color = self.app.color_of(idx)
-        for col in self.app.cols:
+        for col in fw.columns():
             for r in fw.unit_rects(col) if idx in col.idxs else ():
                 if r[0] == idx:
                     c = fw.mapToGlobal(r[2].center().toPoint())
@@ -691,6 +815,15 @@ class QtFloat:
         self._fold.setEasingCurve(QEasingCurve.OutCubic)
         self._fold.valueChanged.connect(self._fold_step)
         self._fold.finished.connect(self._fold_done)
+        self.slide_k, self.slide_dir = 1.0, 1
+        self._slide = QVariantAnimation()
+        self._slide.setDuration(SLIDE_MS)
+        self._slide.setEasingCurve(QEasingCurve.OutCubic)
+        self._slide.valueChanged.connect(self._slide_step)
+        self._ph_k = {}                  # 48V affichés (fondu) : préampli -> 0..1
+        self._ph_timer = QTimer()
+        self._ph_timer.timeout.connect(self._ph_tick)
+        self._bank_pos = None            # rang de la couche affichée (sens du glissement)
         self.conn_state = None
         self.update = None
         self.autostart = None
@@ -719,6 +852,12 @@ class QtFloat:
         self._shown = None
         self._z_state = None
         self._reader_args = self._reader_res = None
+        # page Edit (tranche sélectionnée) et page Channel : lus à l'écran comme dans le float tk
+        self._sel_col = None
+        self._ch_page = None
+        self._ch_hwnd = None
+        self._lv1_channels = {}
+        self._digits_learned = xf.load_learned_digits()
         self._server_seen = False
         self._refused_since = None
 
@@ -734,6 +873,8 @@ class QtFloat:
 
         self.win = FloatWindow(self)
         self.tool = ToolBar(self)
+        self.sel_box = BoxWindow(self)
+        self.ch_box = BoxWindow(self, big=True)
         self.pop = ValuePop(self)
         try:
             icon = QIcon()
@@ -784,11 +925,38 @@ class QtFloat:
             return AMBER
         return OK if v > -60 else "#333333"
 
+    def canvases(self):
+        return (self.win, self.sel_box, self.ch_box)
+
     def color_of(self, idx):
-        for col in self.cols:
-            if idx in col.idxs:
-                return col.color
+        for cv in self.canvases():
+            for col in cv.columns():
+                if idx in col.idxs:
+                    return col.color
         return None
+
+    def ph_level(self, idx):
+        """48V affiché, de 0 (éteint) à 1 (allumé) : suit l'état de la console en fondu (PH_MS)."""
+        k = self._ph_k.get(idx)
+        return k if k is not None else (1.0 if self.phantom(idx) else 0.0)
+
+    def _ph_tick(self):
+        step = self._ph_timer.interval() / float(PH_MS)
+        moving = False
+        for cv in self.canvases():
+            for col in cv.columns():
+                for idx in col.idxs:
+                    target = 1.0 if self.phantom(idx) else 0.0
+                    k = self._ph_k.get(idx, target)
+                    if k != target:
+                        k = min(target, k + step) if target > k else max(target, k - step)
+                        moving = True
+                    self._ph_k[idx] = k
+        if moving:
+            for cv in self.canvases():
+                cv.update()
+        else:
+            self._ph_timer.stop()
 
     def label(self, idx):
         return strip_tag(idx)
@@ -807,12 +975,16 @@ class QtFloat:
         QTimer.singleShot(800, lambda: self.local.pop(idx, None) if not self._held(idx) else None)
 
     def _held(self, idx):
-        return any(g.get("mode") == "gain" and g.get("idx") == idx for g in self.win.points.values())
+        return any(g.get("mode") == "gain" and g.get("idx") == idx
+                   for cv in self.canvases() for g in cv.points.values())
 
     def _update_col_of(self, idx):
         for col in self.cols:
             if idx in col.idxs:
                 self.win.update(QRectF(col.x, 0, col.w, self.strip_h).toAlignedRect())
+        for box in (self.sel_box, self.ch_box):
+            if box.col and idx in box.col.idxs:
+                box.update()
 
     def phantom_tap(self, idx):
         if self.locked:
@@ -859,7 +1031,21 @@ class QtFloat:
         return [(ch or 0, [exp_to_idx[e] for e in (self.lv1_sources.get(ch, []) if ch else []) if e in exp_to_idx])
                 for ch in chans]
 
-    def build_cols(self):
+    def _bank_rank(self):
+        if self.view != "lv1":
+            return 100 + self.bank
+        return 200 + (self._lv1_lay.get("page") or 0) if self.lv1_custom is not None else self.lv1_bank
+
+    def build_cols(self, animate=False):
+        rank = self._bank_rank()
+        if animate and self._bank_pos is not None and rank != self._bank_pos and not self.collapsed:
+            self.slide_dir = 1 if rank > self._bank_pos else -1        # couche suivante : arrive par la droite
+            self._slide.stop()
+            self._slide.setStartValue(0.0)
+            self._slide.setEndValue(1.0)
+            self.slide_k = 0.0
+            self._slide.start()
+        self._bank_pos = rank
         if self.view == "lv1":
             self._layout = self.lv1_layout()
             self.cols = [Col(idxs, ch) for ch, idxs in self._layout]
@@ -890,26 +1076,37 @@ class QtFloat:
         self._relayout()
         self.save_soon()
 
+    def _slide_step(self, v):
+        self.slide_k = float(v)
+        self.win.update()
+
     def _refresh_cols(self):
-        """Repères, couleurs et noms (vue LV1 : la colonne EST le canal ; vue X32 : canal qui reçoit l'EXP)."""
-        em, lc = self.exp_map or {}, self.lv1_channels or {}
         for col in self.cols:
-            if col.ch == 0:
-                col.tag, col.color, col.name = "", None, ""
-                continue
-            if col.ch is not None:
-                ch = col.ch
-                exps = self.lv1_sources.get(ch, [])
-                col.tag = ("%s = EXP %s" % (join_tags(col.idxs), "/".join(exp_txt(e) for e in exps)) if col.idxs
-                           else ("EXP %s" % "/".join(exp_txt(e) for e in exps) if exps else ""))
-            else:
-                exp = em.get(str(col.idxs[0]), em.get(col.idxs[0]))
-                col.tag = strip_tag(col.idxs[0]) + (" = EXP %s" % exp_txt(exp) if exp else "")
-                lm = self.lv1_map or {}
-                ch = (lm.get(str(exp), lm.get(exp)) if exp else None)
-            info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}
-            col.color = info.get("color")
-            col.name = info.get("label") or ("In %d" % ch if ch else "")
+            self.refresh_col(col)
+        for box in (self.sel_box, self.ch_box):
+            if box.col:
+                self.refresh_col(box.col)
+                box.update()
+
+    def refresh_col(self, col):
+        """Repère, couleur et nom (vue LV1 : la colonne EST le canal ; vue X32 : canal qui reçoit l'EXP)."""
+        em, lc = self.exp_map or {}, self.lv1_channels or {}
+        if col.ch == 0:
+            col.tag, col.color, col.name = "", None, ""
+            return
+        if col.ch is not None:
+            ch = col.ch
+            exps = self.lv1_sources.get(ch, [])
+            col.tag = ("%s = EXP %s" % (join_tags(col.idxs), "/".join(exp_txt(e) for e in exps)) if col.idxs
+                       else ("EXP %s" % "/".join(exp_txt(e) for e in exps) if exps else ""))
+        else:
+            exp = em.get(str(col.idxs[0]), em.get(col.idxs[0]))
+            col.tag = strip_tag(col.idxs[0]) + (" = EXP %s" % exp_txt(exp) if exp else "")
+            lm = self.lv1_map or {}
+            ch = (lm.get(str(exp), lm.get(exp)) if exp else None)
+        info = (lc.get(str(ch), lc.get(ch)) or {}) if ch else {}
+        col.color = info.get("color")
+        col.name = info.get("label") or ("In %d" % ch if ch else "")
 
     # -- boucle d'état (200 ms) --------------------------------------------------
     def apply_state(self):
@@ -941,6 +1138,7 @@ class QtFloat:
         self.exp_map = snap.get("exp_map") or {}
         self.lv1_map = snap.get("lv1_map") or {}
         self.lv1_channels = snap.get("lv1_channels") or {}
+        self._lv1_channels = self.lv1_channels          # nom utilisé par les méthodes reprises du float tk
         self.lv1_sources = {int(k): [int(e) for e in v] for k, v in (snap.get("lv1_sources") or {}).items()}
         lay = (snap.get("lv1_layers") or {}).get(self._surface) or (
             snap.get("lv1_layer") if self._surface == "mixer1" else None) or {}
@@ -972,10 +1170,12 @@ class QtFloat:
         if self.view == "lv1" and self.lv1_layout() != self._layout:
             rebuild = True
         if rebuild:
-            self.build_cols()
+            self.build_cols(animate=True)
         else:
             self._refresh_cols()
         self.win.update()
+        if not self._ph_timer.isActive():
+            self._ph_timer.start(16)
         if changed:
             self.tool.update()
 
@@ -1004,14 +1204,22 @@ class QtFloat:
         fg = foreground_window()
         front = (not lv1) or (fg and window_pid(fg) in (self._lv1_pid, os.getpid()))
         res, self._reader_res = self._reader_res, None
-        if res and res.get("tab"):
-            self._lv1_tab = res["tab"]
-            if res["tab"] in MIXER_TABS:
-                self._surface = "mixer2" if res["tab"] == "Mixer 2" else "mixer1"
+        if res:
+            tab = res.get("tab")                  # illisible : on garde le dernier connu
+            if tab:
+                self._lv1_tab = tab
+                if tab in MIXER_TABS:
+                    self._surface = "mixer2" if tab == "Mixer 2" else "mixer1"
+            if "sel" in res:                      # tranche désélectionnée -> cadre vide
+                self._sel_col = res["sel"]
+            if "page" in res:
+                self._ch_hwnd = res["page"]
+                self._ch_page = self._resolve_channel(res["ch"]) if res.get("ch") else None
         if lv1 and not window_iconic(lv1) and front and not self._drags and self._reader_args is None:
-            self._reader_args = {"hwnd": lv1, "detached": self.detached,
-                                 "names": tuple(t for t in LV1_TABS
-                                                if t.replace(" ", "").upper() not in self._detached_now)}
+            self._reader_args = {
+                "hwnd": lv1, "detached": self.detached, "tab": self._lv1_tab, "found": dict(self._lv1_found),
+                "names": tuple(t for t in LV1_TABS if t.replace(" ", "").upper() not in self._detached_now),
+                "edit": self._lv1_lay.get("preset_name") == "Edit"}
         if lv1:
             self._wait_lv1 = True
         shown = not (lv1 and (window_iconic(lv1) or (self._lv1_tab and self._lv1_tab not in MIXER_TABS)))
@@ -1030,9 +1238,16 @@ class QtFloat:
                 self.pop.hide()
         if shown and lv1 and self.auto_place and not window_iconic(lv1):
             self._auto_fit(lv1)
+        lv1_up = bool(lv1) and not window_iconic(lv1)
+        sel = None
+        if shown and lv1_up and self._lv1_tab in MIXER_TABS and self._lv1_lay.get("preset_name") == "Edit":
+            sel = self._sel_channel()
+        self.sel_box.sync(sel, lv1, SEL_BOX)
+        self.ch_box.sync(self._ch_page if (lv1_up and not self.detached) else None, self._ch_hwnd, CH_BOX)
         if shown:
             self._place_tool(lv1)
-            hwnds = [int(w.winId()) for w in (self.win, self.tool) if w.isVisible()]
+        hwnds = [int(w.winId()) for w in (self.win, self.tool, self.sel_box, self.ch_box) if w.isVisible()]
+        if hwnds:
             key = (len(hwnds),)
             if front:
                 if self._z_state != ("top",) + key:
@@ -1059,17 +1274,15 @@ class QtFloat:
         if (self.tool.x(), self.tool.y(), self.tool.width(), self.tool.height()) != geom:
             self.tool.setGeometry(*geom)
 
-    def _screen_reader(self):
-        """Lecture de l'onglet de la LV1 (captures de 15-45 ms) sur un fil à part, jamais pendant un glisser."""
-        while True:
-            args, self._reader_args = self._reader_args, None
-            if args:
-                try:
-                    tab = None if args["detached"] else lv1_tab(args["hwnd"], args["names"])
-                    self._reader_res = {"tab": tab}
-                except Exception as e:
-                    print("Lecture d'écran : %s" % e)
-            time.sleep(0.3)
+    # Lectures d'écran (onglet, tranche sélectionnée en mode Edit, page Channel) et vérification contre le patch :
+    # reprises telles quelles du float tk (validées sur la LV1 de Joseph). Elles n'utilisent que des données
+    # (exp_map, lv1_sources, _lv1_channels, _lv1_lay, _sel_col, _digits_learned), pas d'interface.
+    _screen_reader = xf.FloatApp._screen_reader
+    _resolve_channel = xf.FloatApp._resolve_channel
+    _learn_digits = xf.FloatApp._learn_digits
+    _preamps = xf.FloatApp._preamps
+    _sel_channel = xf.FloatApp._sel_channel
+    _channel_color = xf.FloatApp._channel_color
 
     # -- calage ------------------------------------------------------------------
     def recalibrate(self):
@@ -1141,16 +1354,23 @@ class QtFloat:
 
     # -- languette et menu -------------------------------------------------------
     def toggle_collapse(self):
-        """Repli / dépli animé (les colonnes remontent en s'effaçant, le chevron tourne) ; la languette reste."""
+        """Repli immédiat ; dépli animé (les colonnes descendent en apparaissant). La languette reste."""
         self.collapsed = not self.collapsed
         self.pop.hide()
-        if not self.collapsed and self._shown:
-            self.win.show()
-            self._z_state = None
         self._fold.stop()
-        self._fold.setStartValue(float(self.open_k))
-        self._fold.setEndValue(0.0 if self.collapsed else 1.0)
-        self._fold.start()
+        if self.collapsed:
+            self.open_k = 0.0
+            self.win.hide()
+        else:
+            if self._shown:
+                self.win.show()
+                self._z_state = None
+            self.open_k = 0.0
+            self._fold.setStartValue(0.0)
+            self._fold.setEndValue(1.0)
+            self._fold.start()
+        self.win.update()
+        self.tool.update()
 
     def _fold_step(self, v):
         self.open_k = float(v)
@@ -1178,7 +1398,7 @@ class QtFloat:
                         self.lv1_bank = i
                     else:
                         self.bank = i
-                    self.build_cols()
+                    self.build_cols(animate=True)
                     self.save_cfg()
                     return
 
