@@ -37,7 +37,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialG
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a8"
+QT_FLOAT_VERSION = "3.0.0-a9"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -1150,14 +1150,13 @@ class QtFloat:
         # d'avant (pas de « bays ») : SndChk / Setup comme le float tk. Seulement quand ça CHANGE : un repli /
         # dépli à la main tient jusqu'au prochain changement dans la LV1.
         bay = lay.get("input_bay")
-        covered = lay.get("input_covered")
-        state = (preset, bay, covered, has_inputs)
+        state = (preset, bay, has_inputs)
         if preset and state != self._lv1_preset_seen:
             self._lv1_preset_seen = state
             if "bays" in lay:
-                # Input en Bottom sous les faders (Small Fader en Middle) : replié d'office, mais déplié à la main
-                # il se pose quand même sur les cadres du bas, par-dessus le bas des faders (choix de Joseph)
-                want_open = bay is not None and not covered and has_inputs
+                # déplié dès que la section Input est affichée, y compris en Bottom sous les faders (Small Fader en
+                # Middle) : posé sur les cadres du bas, par-dessus le bas des faders (choix de Joseph, 2026-10-14)
+                want_open = bay is not None and has_inputs
             else:
                 want_open = preset in AUTO_OPEN_MODES and has_inputs
             if want_open == self.collapsed:

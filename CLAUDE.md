@@ -106,7 +106,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   cachent les cadres Preamp (seuls Polarity / Trim visibles). Cadres Preamp : y 184..315 en Top, **505..636 en
   Middle**, **781..912 en Bottom** (mêmes x). `lv1/layers.py` : `bays` (top, middle, bottom, big) + `input_bay`
   ("top" / "middle" / "bottom" / None) + `input_covered` (Bottom sous des faders en Middle : rails jusqu'à y 892) ;
-  float Qt : replié d'office si covered, mais déplié à la main il se pose quand même sur les cadres du bas ;
+  float Qt : déplié aussi dans ce cas, posé sur les cadres du bas par-dessus le bas des faders (choix de Joseph) ;
   float Qt : déplié quand `input_bay` existe (au lieu de SndChk/Setup), calé sur `BAY_Y0[input_bay]`.
 - **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
 - **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien
