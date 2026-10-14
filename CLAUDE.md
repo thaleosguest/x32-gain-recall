@@ -406,6 +406,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   des fonctions sans interface). Lancement : appli avec l'option cachée `--qt-float` -> floats lancés avec
   `--float --qt`. Même fichier de config que le float tk. Tests : `QTest.touchEvent` prend des coordonnées ÉCRAN
   (`mapToGlobal`), et la LV1 de ce PC cache le float -> remplacer `x32_qt_float.lv1_windows` par `lambda: {}`.
+- **Calage v3 (2026-10-14)** : cartes DANS les cadres des tranches (`CARD_L/CARD_R` = 1/96 et 93/96 du pas, hauteur
+  `QT_AUTO_H` 132/1080), relevé au pixel sur la LV1 de Joseph (1920x1080 et fenêtré OK). **Float fixe** (choix de
+  Joseph) : plus de déplacement ni de redimensionnement à la main, toujours calé ; menu « Recaler sur la LV1 ».
+  Languette = `ToolBar` dans l'espace vide de la barre du haut (`TOOL_BOX`, entre Setup et le cadenas) : logo
+  (gris = pas de console, couleur = connectée), chevron (repli animé `FOLD_MS`), hamburger (menu).
 - Reste : étape 2 (cadres Edit / Channel, lectures d'écran sel/page, Mixers détachés à vérifier), étape 3
   (panneaux Scènes / Routing / Consoles, barre de connexion ; en attendant ⋮ -> « ouvrir la page »), étape 4 bascule.
 - (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),

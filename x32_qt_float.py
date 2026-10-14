@@ -21,6 +21,7 @@ import webbrowser
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")     # pixels Qt = pixels écran (calage sur la LV1)
 
 import x32_gain_float as xf                                   # noqa: E402
+from brand_icon import LOGO_SVG                               # noqa: E402
 from x32_gain_float import (                                  # noqa: E402
     APP_SHORT, APP_VERSION, APP_AUTHOR, AUTO_H, AUTO_OPEN_MODES, AUTO_PITCH, AUTO_X0, AUTO_Y0, BANKS,
     DEFAULT_THEME, GAIN_DB_PER_PX, GAIN_MAX, GAIN_MIN, LAYOUT_VERSION, LV1_BANKS, LV1_TABS, MIXER_TABS,
@@ -28,13 +29,16 @@ from x32_gain_float import (                                  # noqa: E402
     foreground_window, join_tags, lv1_tab, lv1_windows, monitor_rect, place_below, quantize, set_theme_map,
     set_topmost, strip_tag, tc, window_alive, window_iconic, window_pid)
 
-from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, QTimer, QEvent        # noqa: E402
+from PySide6.QtCore import (Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteArray,  # noqa: E402
+                            QVariantAnimation, QEasingCurve)
+from PySide6.QtSvg import QSvgRenderer                                         # noqa: E402
 from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialGradient,  # noqa: E402
-                           QPainterPath, QInputDevice, QEventPoint, QIcon, QPixmap, QAction, QActionGroup)
+                           QPainterPath, QInputDevice, QEventPoint, QIcon, QPixmap, QAction, QActionGroup,
+                           QImage)
 from PySide6.QtWidgets import (QApplication, QWidget, QMenu, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0-a2"
+QT_FLOAT_VERSION = "3.0.0-a3"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -48,8 +52,10 @@ CARD_L, CARD_R = 1 / 96.0, 93 / 96.0        # bords de la carte, en fraction du 
 QT_AUTO_H = 132 / 1080.0
 # Languette (v3) : dans l'espace vide de la barre du haut, entre « Setup » et le cadenas (x 1287..1370, boutons
 # y 8..49 en 1920x1080) ; calée par la droite (le cadenas ne bouge pas quand des pages sont détachées)
-TOOL_BOX = (1292 / 1920.0, 8 / 1080.0, 74 / 1920.0, 42 / 1080.0)
-TOOL_ITEMS = ("conn", "arrow", "more")
+TOOL_BOX = (1290 / 1920.0, 8 / 1080.0, 78 / 1920.0, 42 / 1080.0)
+TOOL_ITEMS = ("logo", "arrow", "more")
+TOOL_SPLIT = (0.40, 0.29, 0.31)  # parts de la largeur de la languette (logo plus large)
+FOLD_MS = 220                   # durée de l'animation de repli / dépli
 
 
 def qc(color):
@@ -200,16 +206,15 @@ class FloatWindow(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.TextAntialiasing)
-        if not app.collapsed:
+        k = app.open_k                   # 1 = déplié ; entre les deux : animation de repli / dépli
+        if k > 0:
+            if k < 1:
+                p.setOpacity(k)
+                p.translate(0, -(1 - k) * 28)       # les colonnes remontent en s'effaçant
             clip = e.rect()
             for col in app.cols:
                 if col.idxs and clip.intersects(QRectF(col.x, 0, col.w, app.strip_h).toAlignedRect()):
                     self._paint_col(p, col)
-            # coin bas-droit : redimensionnement à la main
-            r = self.width() - 1, app.strip_h - 1
-            p.setPen(QPen(QColor(MUT), 1))
-            p.drawLine(QPointF(r[0] - 8, r[1]), QPointF(r[0], r[1] - 8))
-            p.drawLine(QPointF(r[0] - 4, r[1]), QPointF(r[0], r[1] - 4))
         p.end()
 
     def _paint_col(self, p, col):
@@ -272,10 +277,8 @@ class FloatWindow(QWidget):
 
     # -- toucher / souris ------------------------------------------------------
     def _hit(self, pos):
-        if self.app.collapsed:
+        if self.app.collapsed or self.app.open_k < 1:
             return None
-        if pos.x() > self.width() - 12 and pos.y() > self.app.strip_h - 12:
-            return ("grip", None)
         for col in self.app.cols:
             if col.idxs and col.x <= pos.x() < col.x + col.w:
                 for idx, zone, kr, val, ph, led in self.unit_rects(col):
@@ -306,8 +309,6 @@ class FloatWindow(QWidget):
             g["db0"] = db
             self.app.dragging_start()
             self.app.pop.show_for(self, what)
-        elif kind == "grip":
-            g["size0"] = (self.app.strip_w, self.app.strip_h)
         self.points[pid] = g
         self.update()
 
@@ -323,11 +324,6 @@ class FloatWindow(QWidget):
             if db != self.app.local.get(g["idx"]):
                 self.app.set_gain_local(g["idx"], db)
                 self.app.pop.show_for(self, g["idx"])
-        elif g["mode"] == "grip" and g["moved"]:
-            w0, h0 = g["size0"]
-            self.app.set_auto_place(False)
-            n = max(1, len(self.app.cols))
-            self.app.set_strip_size(w0 + d.x() / n, h0 + d.y())
 
     def _release(self, pid, gpos):
         g = self.points.pop(pid, None)
@@ -379,9 +375,34 @@ class FloatWindow(QWidget):
             self._release("mouse", e.globalPosition())
 
 
+_LOGOS = {}
+
+
+def logo_image(size, color):
+    """Logo de l'appli (assets/logo.svg) à la taille voulue ; en gris (color False) : pas de console connectée."""
+    key = (size, color)
+    if key not in _LOGOS:
+        img = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+        img.fill(Qt.transparent)
+        p = QPainter(img)
+        p.setRenderHint(QPainter.Antialiasing)
+        QSvgRenderer(QByteArray(LOGO_SVG.encode("utf-8"))).render(p, QRectF(0, 0, size, size))
+        p.end()
+        if not color:
+            img = img.convertToFormat(QImage.Format_ARGB32)
+            for y in range(size):
+                for x in range(size):
+                    c = img.pixelColor(x, y)
+                    g = int(0.30 * c.red() + 0.59 * c.green() + 0.11 * c.blue())
+                    img.setPixelColor(x, y, QColor(g, g, g, int(c.alpha() * 0.85)))
+        _LOGOS[key] = img
+    return _LOGOS[key]
+
+
 class ToolBar(QWidget):
-    """Languette (v3) : point de connexion (glisser = déplacer le float), flèche de repli, menu ⋮, cadenas.
-    Posée dans l'espace vide de la barre du haut de la LV1 (demande de Joseph) ; sans LV1 : à gauche du float."""
+    """Languette (v3) : logo de l'appli (en couleur = console connectée, gris sinon), chevron de repli, menu.
+    Posée dans l'espace vide de la barre du haut de la LV1 (demande de Joseph) ; sans LV1 : à gauche du float.
+    Le float est fixe (calé sur la LV1) : plus rien ne se déplace à la main."""
 
     def __init__(self, app):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
@@ -390,63 +411,80 @@ class ToolBar(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_AcceptTouchEvents)
         self.points = {}
-        self.resize(74, 42)
+        self.resize(78, 42)
+
+    def zones(self):
+        x, out = 0.0, []
+        for f in TOOL_SPLIT:
+            out.append(QRectF(x, 0, self.width() * f, self.height()))
+            x += self.width() * f
+        return out
 
     def item_at(self, pos):
-        i = int(pos.x() * len(TOOL_ITEMS) / max(1, self.width()))
-        return TOOL_ITEMS[max(0, min(len(TOOL_ITEMS) - 1, i))]
+        for item, z in zip(TOOL_ITEMS, self.zones()):
+            if pos.x() < z.right():
+                return item
+        return TOOL_ITEMS[-1]
 
     def paintEvent(self, _e):
         app = self.app
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
         path = QPainterPath()
-        path.addRoundedRect(QRectF(0.5, 0.5, self.width() - 1, self.height() - 1), 6, 6)
-        p.fillPath(path, qc(PANEL))
-        p.setPen(QPen(qc(LINE2), 1))
+        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), h / 2 - 1, h / 2 - 1)
+        p.fillPath(path, QColor(24, 26, 29, 235))
+        p.setPen(QPen(QColor(255, 255, 255, 38), 1))
         p.drawPath(path)
-        cw = self.width() / float(len(TOOL_ITEMS))
-        h = self.height()
-        dot = OK if app.conn_state == "ok" else (AMBER if app.conn_state == "trying" else "#555555")
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor(dot))
-        p.drawEllipse(QPointF(cw / 2, h / 2), 5, 5)
+        zl, za, zm = self.zones()
+        pressed = {g["item"] for g in self.points.values()}
+        for item, z in zip(TOOL_ITEMS, (zl, za, zm)):
+            if item in pressed:
+                hl = QPainterPath()
+                hl.addRoundedRect(z.adjusted(2, 3, -2, -3), (h - 6) / 2, (h - 6) / 2)
+                p.fillPath(hl, QColor(255, 255, 255, 40))
+        # logo : couleur = console connectée, gris sinon
+        ls = int(min(zl.width() - 6, h - 12))
+        lc = QPointF(zl.center().x() + 2, h / 2)
+        p.drawImage(QRectF(lc.x() - ls / 2, lc.y() - ls / 2, ls, ls), logo_image(ls, app.conn_state == "ok"))
         if app.locked:
-            p.setPen(QColor(WARN))
-            p.setFont(QFont("Segoe UI", 6))
-            p.drawText(QRectF(0, h - 13, cw, 12), Qt.AlignCenter, "🔒")
-        p.setPen(QColor(TXT))
-        p.setFont(QFont("Segoe UI", 13, QFont.Bold))
-        p.drawText(QRectF(cw, 0, cw, h), Qt.AlignCenter, "▾" if app.collapsed else "▴")
-        p.setFont(QFont("Segoe UI", 16, QFont.Bold))
-        p.drawText(QRectF(2 * cw, 0, cw, h), Qt.AlignCenter, "⋮")
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(WARN))
+            p.drawEllipse(QPointF(lc.x() + ls / 2 - 1, lc.y() - ls / 2 + 1), 3.5, 3.5)
+        # chevron : tourne avec l'animation de repli
+        c = za.center()
+        p.save()
+        p.translate(c)
+        p.rotate(180 * (1 - app.open_k))
+        p.setPen(QPen(QColor(TXT), 2.6, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        p.drawPolyline([QPointF(-7, 3.5), QPointF(0, -3.5), QPointF(7, 3.5)])
+        p.restore()
+        # menu (hamburger)
+        x0, x1 = zm.center().x() - 8, zm.center().x() + 7
+        p.setPen(QPen(QColor(TXT), 2.4, Qt.SolidLine, Qt.RoundCap))
+        for dy in (-6, 0, 6):
+            p.drawLine(QPointF(x0, h / 2 + dy), QPointF(x1, h / 2 + dy))
         p.end()
 
     def _press(self, pid, pos, gpos):
-        self.points[pid] = {"item": self.item_at(pos), "p0": QPointF(gpos), "moved": False,
-                            "win0": self.app.win.pos()}
+        self.points[pid] = {"item": self.item_at(pos), "p0": QPointF(gpos), "moved": False}
+        self.update()
 
     def _move(self, pid, pos, gpos):
         g = self.points.get(pid)
-        if not g:
-            return
-        d = QPointF(gpos) - g["p0"]
-        if abs(d.x()) + abs(d.y()) > TAP_PX:
+        if g and abs(QPointF(gpos).x() - g["p0"].x()) + abs(QPointF(gpos).y() - g["p0"].y()) > TAP_PX:
             g["moved"] = True
-        if g["item"] == "conn" and g["moved"] and not self.app.collapsed:
-            self.app.set_auto_place(False)          # déplacement à la main : calage manuel
-            self.app.win.move(g["win0"] + QPoint(round(d.x()), round(d.y())))
-            self.app.save_soon()
 
     def _release(self, pid):
         g = self.points.pop(pid, None)
+        self.update()
         if not g or g["moved"]:
             return
         if g["item"] == "arrow":
             self.app.toggle_collapse()
         elif g["item"] == "more":
-            self.app.more_menu(self.mapToGlobal(QPoint(0, self.height())))
-        self.update()
+            self.app.more_menu(self.mapToGlobal(QPoint(0, self.height() + 2)))
 
     def event(self, e):
         t = e.type()
@@ -639,7 +677,7 @@ class QtFloat:
         self.lv1_bank = cfg.get("lv1_bank", 0) if 0 <= cfg.get("lv1_bank", 0) < len(LV1_BANKS) else 0
         self.strip_w = float(cfg.get("strip_w", 46))
         self.strip_h = int(cfg.get("strip_h") or round(self.strip_w) + STRIP_EXTRA_H)
-        self.auto_place = cfg.get("auto_place", True)
+        self.auto_place = True           # v3 : float fixe, toujours calé sur la LV1 (demande de Joseph)
         self.theme = cfg.get("theme") if cfg.get("theme") in THEMES else DEFAULT_THEME
         set_theme_map(self.theme)
         self.sensitivity = args.sensitivity
@@ -647,6 +685,12 @@ class QtFloat:
         self.max_knob = None
         self.locked = False
         self.collapsed = False
+        self.open_k = 1.0                # 1 = déplié, 0 = replié (animé)
+        self._fold = QVariantAnimation()
+        self._fold.setDuration(FOLD_MS)
+        self._fold.setEasingCurve(QEasingCurve.OutCubic)
+        self._fold.valueChanged.connect(self._fold_step)
+        self._fold.finished.connect(self._fold_done)
         self.conn_state = None
         self.update = None
         self.autostart = None
@@ -1011,7 +1055,7 @@ class QtFloat:
                     max(60, round(w * TOOL_BOX[2])), max(32, round(h * TOOL_BOX[3])))
         else:
             p = self.win.pos()
-            geom = (p.x() - 76, p.y(), 74, 42)
+            geom = (p.x() - 80, p.y(), 78, 42)
         if (self.tool.x(), self.tool.y(), self.tool.width(), self.tool.height()) != geom:
             self.tool.setGeometry(*geom)
 
@@ -1028,12 +1072,11 @@ class QtFloat:
             time.sleep(0.3)
 
     # -- calage ------------------------------------------------------------------
-    def set_auto_place(self, on):
-        if on == self.auto_place:
-            return
-        self.auto_place = on
+    def recalibrate(self):
+        """Menu « Recaler sur la LV1 » : refait le calage même si la fenêtre de la LV1 n'a pas bougé."""
         self._auto_geom = None
-        self.save_soon()
+        self._lv1_seek = 0.0
+        self._lv1_hwnd = None
 
     def _auto_fit(self, lv1):
         rect = client_rect(lv1)
@@ -1092,20 +1135,33 @@ class QtFloat:
         cfg.update({"bank": self.bank, "view": self.view, "lv1_bank": self.lv1_bank,
                     "strip_w": round(self.strip_w, 3), "strip_h": self.strip_h, "theme": self.theme, "x": x, "y": y,
                     "screens": screens, "last_screen": last, "layout": LAYOUT_VERSION,
-                    "auto_place": self.auto_place, "value_pop": self.cfg.get("value_pop", True)})
+                    "auto_place": True, "value_pop": self.cfg.get("value_pop", True)})
         self.cfg = cfg
         xf.save_cfg(cfg)
 
     # -- languette et menu -------------------------------------------------------
     def toggle_collapse(self):
-        """Repli : les colonnes disparaissent, la languette reste."""
+        """Repli / dépli animé (les colonnes remontent en s'effaçant, le chevron tourne) ; la languette reste."""
         self.collapsed = not self.collapsed
-        if self.collapsed:
-            self.pop.hide()
-            self.win.hide()
-        elif self._shown:
+        self.pop.hide()
+        if not self.collapsed and self._shown:
             self.win.show()
             self._z_state = None
+        self._fold.stop()
+        self._fold.setStartValue(float(self.open_k))
+        self._fold.setEndValue(0.0 if self.collapsed else 1.0)
+        self._fold.start()
+
+    def _fold_step(self, v):
+        self.open_k = float(v)
+        self.win.update()
+        self.tool.update()
+
+    def _fold_done(self):
+        self.open_k = 0.0 if self.collapsed else 1.0
+        if self.collapsed:
+            self.win.hide()
+        self.win.update()
         self.tool.update()
 
     def toggle_lock(self):
@@ -1158,11 +1214,9 @@ class QtFloat:
             a.setChecked(bool(on))
             a.triggered.connect(fn)
             return a
-        check("Caler sur la LV1 (auto)", self.auto_place, lambda c: self.set_auto_place(c))
+        m.addAction("Recaler sur la LV1").triggered.connect(self.recalibrate)
         check("Bulle des dB en réglant", self.cfg.get("value_pop", True),
               lambda c: (self.cfg.__setitem__("value_pop", c), self.save_soon()))
-        m.addAction("Plus large  (+)").triggered.connect(lambda: self._nudge(2))
-        m.addAction("Plus étroit  (−)").triggered.connect(lambda: self._nudge(-2))
         m.addSeparator()
         if not self.args.direct:
             m.addAction("Scènes, routing, consoles : ouvrir la page").triggered.connect(
@@ -1188,10 +1242,6 @@ class QtFloat:
                 check("Lancer avec Windows", self.autostart, self._toggle_autostart)
             m.addAction("Quitter l'appli").triggered.connect(self._quit_app)
         m.exec(gpos)
-
-    def _nudge(self, delta):
-        self.set_auto_place(False)
-        self.set_strip_size(self.strip_w + delta / 8.0)
 
     def _toggle_autostart(self, on):
         r = self.backend.set_autostart(on)
