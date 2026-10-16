@@ -24,6 +24,7 @@ Sources du protocole : "UNOFFICIAL X32/M32 OSC REMOTE PROTOCOL" (P.-G. Maillot),
   - /xremote a renouveler avant 10 s pour recevoir les changements faits sur la console
 """
 import argparse
+import x32_i18n
 import hmac
 import json
 import math
@@ -1911,21 +1912,24 @@ def start_tray():
         import tray
     except ImportError:
         return
+    from x32_i18n import T
+    # libellés en fonctions : menu reconstruit à chaque ouverture, dans la langue choisie (3.0.1)
+    lbl_autostart = lambda: T("Lancer avec Windows")
     TRAY = tray.TrayIcon(
         "%s v%s" % (APP_SHORT, APP_VERSION),
-        [("Ouvrir la page", lambda: webbrowser.open(LOCAL_URL)),
-         ("Afficher le float", launch_float_window),
-         (lambda: ("Mise a jour %s disponible..." % UPDATE["version"]) if UPDATE["version"] else None,
+        [(lambda: T("Ouvrir la page"), lambda: webbrowser.open(LOCAL_URL)),
+         (lambda: T("Afficher le float"), launch_float_window),
+         (lambda: (T("Mise a jour %s disponible...") % UPDATE["version"]) if UPDATE["version"] else None,
           open_update),
          None,
-         ("Lancer avec Windows", lambda: autostart_set(not AUTOSTART["on"])),
+         (lbl_autostart, lambda: autostart_set(not AUTOSTART["on"])),
          None,
-         ("Quitter", quit_app)],
-        checked={"Lancer avec Windows": lambda: AUTOSTART["on"]},
+         (lambda: T("Quitter"), quit_app)],
+        checked={lbl_autostart: lambda: AUTOSTART["on"]},
         icon_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.ico"),
     ).start()
     if autostart_command() is None:   # version Python : pas de lancement avec Windows
-        TRAY.items = [i for i in TRAY.items if not (i and i[0] == "Lancer avec Windows")]
+        TRAY.items = [i for i in TRAY.items if not (i and i[0] is lbl_autostart)]
         TRAY.items = [i for n, i in enumerate(TRAY.items) if not (i is None and n and TRAY.items[n - 1] is None)]
 
 
@@ -2089,6 +2093,7 @@ class Handler(BaseHTTPRequestHandler):
             snap["autostart"] = AUTOSTART["on"]
             snap["update"] = dict(UPDATE) if UPDATE["version"] else None
             snap["autostart_ok"] = autostart_command() is not None
+            snap["lang"] = x32_i18n.LANG
             self._json(snap)
         elif path == "/api/meters":
             self._json(merged_meters())
@@ -2272,6 +2277,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok, "error": err, "on": AUTOSTART["on"]})
             show_app()
             return self._json({"ok": True})
+        if p == "/api/lang":
+            s = load_settings()
+            s["lang"] = x32_i18n.set_lang(str(d.get("lang", "en")))
+            try:
+                save_settings(s)
+            except OSError:
+                pass
+            return self._json({"ok": True, "lang": x32_i18n.LANG})
         if p == "/api/launch-float":
             ok, err = launch_float_window()
             return self._json({"ok": ok, "error": err})
@@ -3632,6 +3645,7 @@ def main():
     a = ap.parse_args()
     global FLOAT_QT
     FLOAT_QT = not a.tk_float
+    x32_i18n.set_lang(load_settings().get("lang", "en"))     # 3.0.1 : anglais par défaut, français au choix
     if a.at_login:
         a.no_browser = True
     if not a.sim and already_running(a.web_port):

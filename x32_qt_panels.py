@@ -5,11 +5,12 @@ _edit_routing), en version tactile : gros boutons, listes qui défilent au doigt
 du float. Le panneau s'ouvre sous les colonnes (au-dessus s'il n'y a pas la place) et se ferme par sa croix ✕.
 """
 from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
-from PySide6.QtGui import QPainter, QColor, QPen, QFont
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QPainterPath
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea, QScroller,
                                QVBoxLayout, QHBoxLayout, QGridLayout, QCheckBox, QDialog, QStackedWidget)
 
 import x32_qt_float as qf
+from x32_i18n import T
 from x32_qt_float import TXT, MUT, OK, AMBER, WARN, TEAL, PANEL, LINE2, Dialog, tc
 
 BLUE = "#31b6f7"
@@ -109,13 +110,13 @@ def pick_console(app, title):
         res["n"] = n
         d.accept()
     for c in cs:
-        st = "" if c.get("connected") else "  (non connectée)"
-        b = button("Console %d — %s%s" % (c["n"] + 1, c.get("name") or c.get("ip") or "?", st),
+        st = "" if c.get("connected") else T("  (non connectée)")
+        b = button(T("Console %d — %s%s") % (c["n"] + 1, c.get("name") or c.get("ip") or "?", st),
                    lambda _c=False, n=c["n"]: pick(n), "ok" if c.get("connected") else None)
         b.setEnabled(bool(c.get("connected")))
         b.setStyleSheet("text-align: left; font: bold 12pt 'Segoe UI'; padding: 10px 16px;")
         v.addWidget(b)
-    v.addWidget(button("Annuler", d.reject))
+    v.addWidget(button(T("Annuler"), d.reject))
     d.adjustSize()
     c0 = app.win.mapToGlobal(app.win.rect().center())
     d.move(c0.x() - d.width() // 2, max(0, c0.y() - d.height() // 2))
@@ -174,7 +175,7 @@ class MenuPopup(QWidget):
                     w.deleteLater()
         head = QHBoxLayout()
         if parent is not None:
-            head.addWidget(self._btn("◂  Retour", lambda: self.show_entries(parent)), 1)
+            head.addWidget(self._btn(T("◂  Retour"), lambda: self.show_entries(parent)), 1)
         else:
             head.addStretch(1)
         x = QPushButton("✕")
@@ -300,6 +301,94 @@ class PatchButton(QWidget):
         self.update()
 
 
+class ShowButton(QWidget):
+    """Page Show de la LV1 (3.0.1, demande de Joseph) : bouton « X32 Gains » dans la colonne de gauche, sous
+    « Sessions », au style de ses boutons (relevé : 92x54 px en 1920x1080, fond (17,17,17), contour (160,160,160),
+    texte (231,231,231) gras ; actif = fond bleu (56,201,255)). Ouvre le panneau des scènes de gains."""
+
+    def __init__(self, app):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.app = app
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.down = False
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        k = w / 92.0
+        on = (self.app.panel.mode == "scenes" and self.app.panel.isVisible()) or self.down
+        r = QRectF(0.5, 0.5, w - 1, h - 1)
+        p.setPen(Qt.NoPen if on else QPen(QColor(160, 160, 160), 1))
+        p.setBrush(QColor(56, 201, 255) if on else QColor(17, 17, 17))
+        p.drawRoundedRect(r, 6 * k, 6 * k)
+        p.setPen(QColor(17, 17, 17) if on else QColor(231, 231, 231))
+        p.setFont(QFont("Segoe UI", max(7, round(11 * k)), QFont.Bold))
+        p.drawText(r, Qt.AlignCenter, T("Gains\nX32"))
+        p.end()
+
+    def mousePressEvent(self, _e):
+        self.down = True
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        self.down = False
+        if self.rect().contains(e.position().toPoint()):
+            self.app.panel.toggle("scenes")
+            self.app.raise_now(self.app.panel)
+        self.update()
+
+
+class Toast(QWidget):
+    """Petit message en bas à droite de l'écran au démarrage (3.0.1) : l'appli est active, consoles trouvées.
+    Se ferme seul après quelques secondes, ou au toucher."""
+
+    def __init__(self, app):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus
+                         | Qt.WindowStaysOnTopHint)
+        self.app = app
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.title = self.text = ""
+        self.ok = False
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.hide)
+        self.setFixedSize(380, 78)
+
+    def say(self, title, text, ok=True, ms=7000):
+        self.title, self.text, self.ok = title, text, ok
+        scr = self.app.qapp.primaryScreen().availableGeometry()
+        self.move(scr.right() - self.width() - 16, scr.bottom() - self.height() - 16)
+        self.show()
+        self.raise_()
+        self.update()
+        self.timer.start(ms)
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), 8, 8)
+        p.fillPath(path, QColor(17, 17, 17))
+        p.setPen(QPen(QColor(160, 160, 160), 1))
+        p.drawPath(path)
+        ls = 46
+        p.drawImage(QRectF(14, (h - ls) / 2, ls, ls), qf.logo_image(ls, self.ok))
+        p.setPen(QColor(TXT))
+        p.setFont(QFont("Segoe UI", 11, QFont.Bold))
+        p.drawText(QRectF(74, 12, w - 86, 24), Qt.AlignVCenter | Qt.AlignLeft, self.title)
+        p.setPen(QColor(OK if self.ok else MUT))
+        p.setFont(QFont("Segoe UI", 9))
+        p.drawText(QRectF(74, 38, w - 86, 28), Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap, self.text)
+        p.end()
+
+    def mouseReleaseEvent(self, _e):
+        self.hide()
+
+
 # --------------------------------------------------------------------------
 #  Panneau (sous les colonnes)
 # --------------------------------------------------------------------------
@@ -351,7 +440,7 @@ class Panel(QWidget):
             self.say("")
         self.mode = mode
         self.auto = auto
-        self.title.setText(TITLES[mode])
+        self.title.setText(T(TITLES[mode]))
         self.setStyleSheet(css())                      # fond choisi (thème) appliqué à l'ouverture
         self.rebuild()
         self.app.sync_panel()
@@ -382,9 +471,11 @@ class Panel(QWidget):
         """Sous les colonnes, au-dessus s'il n'y a pas la place en bas ; page Patch de la LV1 : sous la tuile
         « X32 Routing », calé sur son bord droit."""
         fw = self.app.win
-        pb = self.app.patch_btn
+        pb, sb = self.app.patch_btn, self.app.show_btn
         if pb.isVisible() and self.mode == "routing":
             x, y = pb.x() + pb.width() - self.width(), pb.y() + pb.height() + 8
+        elif sb.isVisible() and self.mode == "scenes":       # page Show : à droite du bouton, calé sur son bas
+            x, y = sb.x() + sb.width() + 10, max(0, sb.y() + sb.height() - self.height())
         else:
             x, y = fw.x(), fw.y() + fw.height() + 6
         scr = self.screen().availableGeometry() if self.screen() else None
@@ -425,94 +516,94 @@ class Panel(QWidget):
         app, b = self.app, self.app.backend
         save = QHBoxLayout()
         name = QLineEdit()
-        name.setPlaceholderText("Nom de la nouvelle scène")
+        name.setPlaceholderText(T("Nom de la nouvelle scène"))
         name.returnPressed.connect(lambda: self.save_scene(name.text().strip()))
         save.addWidget(name, 1)
-        save.addWidget(button("Sauvegarder", lambda: self.save_scene(name.text().strip()), "ok"))
+        save.addWidget(button(T("Sauvegarder"), lambda: self.save_scene(name.text().strip()), "ok"))
         v.addLayout(save)
         items = b.presets() if hasattr(b, "presets") else []
         if not items:
-            v.addWidget(label("Aucune scène pour l'instant — tapez un nom ci-dessus et « Sauvegarder » pour créer "
-                              "la première, à partir des gains actuels.", mut=True))
+            v.addWidget(label(T("Aucune scène pour l'instant — tapez un nom ci-dessus et « Sauvegarder » pour créer "
+                              "la première, à partir des gains actuels."), mut=True))
         for p in items:
             pid, nm = p["id"], p.get("name", "?")
-            self._item(v, nm, p.get("created", ""), pid == app.active_scene_id, "ACTIVE", [
-                ("Charger", lambda _c=False, pid=pid, nm=nm: self.recall_scene(pid, nm), "ok"),
-                ("Écraser", lambda _c=False, pid=pid, nm=nm: self.overwrite_scene(pid, nm), "amber"),
-                ("Renommer", lambda _c=False, pid=pid, nm=nm: self.rename_scene(pid, nm), None),
-                ("Supprimer", lambda _c=False, pid=pid, nm=nm: self.delete_scene(pid, nm), "warn")])
+            self._item(v, nm, p.get("created", ""), pid == app.active_scene_id, T("ACTIVE"), [
+                (T("Charger"), lambda _c=False, pid=pid, nm=nm: self.recall_scene(pid, nm), "ok"),
+                (T("Écraser"), lambda _c=False, pid=pid, nm=nm: self.overwrite_scene(pid, nm), "amber"),
+                (T("Renommer"), lambda _c=False, pid=pid, nm=nm: self.rename_scene(pid, nm), None),
+                (T("Supprimer"), lambda _c=False, pid=pid, nm=nm: self.delete_scene(pid, nm), "warn")])
 
     def save_scene(self, name):
         app = self.app
         if not name:
-            self.say("Entrez un nom pour la scène.", WARN)
+            self.say(T("Entrez un nom pour la scène."), WARN)
             return
-        if not Dialog(app, "Sauvegarder cette scène ?", "Sauvegarder « %s » avec TOUS les gains actuellement lus sur "
-                      "la console (pas seulement la banque affichée) ?" % name, "Sauvegarder").ask():
+        if not Dialog(app, T("Sauvegarder cette scène ?"), T("Sauvegarder « %s » avec TOUS les gains actuellement lus sur "
+                      "la console (pas seulement la banque affichée) ?") % name, T("Sauvegarder")).ask():
             return
         r = app.backend.save_preset(name)
         if not r.get("ok"):
-            self.say(r.get("error", "Échec"), WARN)
+            self.say(r.get("error", T("Échec")), WARN)
         else:
             app.active_scene_id = r.get("id")
-            self.say("Scène « %s » sauvegardée" % name, OK)
+            self.say(T("Scène « %s » sauvegardée") % name, OK)
             self.rebuild(True)
 
     def recall_scene(self, pid, name):
         app = self.app
-        if not Dialog(app, "Rappeler la scène ?", "Rappeler « %s » ? Seuls les gains sont rappelés (pas le 48V, "
-                      "comme dans le navigateur par défaut)." % name, "Rappeler").ask():
+        if not Dialog(app, T("Rappeler la scène ?"), T("Rappeler « %s » ? Seuls les gains sont rappelés (pas le 48V, "
+                      "comme dans le navigateur par défaut).") % name, T("Rappeler")).ask():
             return
         r = app.backend.recall_preset(pid)
         if not r.get("ok"):
-            self.say(r.get("error", "Échec"), WARN)
+            self.say(r.get("error", T("Échec")), WARN)
         else:
             app.active_scene_id = pid
-            self.say("Scène « %s » rappelée" % name, OK)
+            self.say(T("Scène « %s » rappelée") % name, OK)
             self.rebuild(True)
 
     def overwrite_scene(self, pid, name):
         app = self.app
-        if not Dialog(app, "Écraser la scène ?", "Remplacer le contenu de « %s » par les gains actuellement lus sur "
-                      "la console (TOUS les gains) ? Cette action est irréversible." % name, "Écraser",
+        if not Dialog(app, T("Écraser la scène ?"), T("Remplacer le contenu de « %s » par les gains actuellement lus sur "
+                      "la console (TOUS les gains) ? Cette action est irréversible.") % name, T("Écraser"),
                       danger=True).ask():
             return
         r = app.backend.overwrite_preset(pid)
         if not r.get("ok"):
-            self.say(r.get("error", "Échec"), WARN)
+            self.say(r.get("error", T("Échec")), WARN)
         else:
             app.active_scene_id = pid
-            self.say("Scène « %s » mise à jour" % name, OK)
+            self.say(T("Scène « %s » mise à jour") % name, OK)
             self.rebuild(True)
 
     def rename_scene(self, pid, name):
         app = self.app
-        r = Dialog(app, "Renommer la scène", "Nouveau nom :", "Renommer", edit=name).ask()
+        r = Dialog(app, T("Renommer la scène"), T("Nouveau nom :"), T("Renommer"), edit=name).ask()
         if r is None:
             return
         new = r.strip()[:60]
         if not new:
-            self.say("Le nom ne peut pas être vide.", WARN)
+            self.say(T("Le nom ne peut pas être vide."), WARN)
             return
         res = app.backend.rename_preset(pid, new)
         if not res.get("ok"):
-            self.say(res.get("error", "Échec"), WARN)
+            self.say(res.get("error", T("Échec")), WARN)
         else:
-            self.say("Scène renommée en « %s »" % new, OK)
+            self.say(T("Scène renommée en « %s »") % new, OK)
             self.rebuild(True)
 
     def delete_scene(self, pid, name):
         app = self.app
-        if not Dialog(app, "Supprimer définitivement ?", "Supprimer la scène « %s » ? Cette action est "
-                      "irréversible." % name, "Supprimer", danger=True).ask():
+        if not Dialog(app, T("Supprimer définitivement ?"), T("Supprimer la scène « %s » ? Cette action est "
+                      "irréversible.") % name, T("Supprimer"), danger=True).ask():
             return
         r = app.backend.delete_preset(pid)
         if not r.get("ok"):
-            self.say(r.get("error", "Échec"), WARN)
+            self.say(r.get("error", T("Échec")), WARN)
         else:
             if app.active_scene_id == pid:
                 app.active_scene_id = None
-            self.say("Scène « %s » supprimée" % name, OK)
+            self.say(T("Scène « %s » supprimée") % name, OK)
             self.rebuild(True)
 
     # -- routing ---------------------------------------------------------------
@@ -531,61 +622,62 @@ class Panel(QWidget):
         editable = hasattr(b, "routing_model")
         if editable:
             def from_console():
-                t = pick_console(self.app, "Partir du routing de quelle console ?")
+                t = pick_console(self.app, T("Partir du routing de quelle console ?"))
                 if t is not None:
                     self.app.edit_routing({"console": True, "target": t})
-            v.addWidget(button("Créer un nouveau routing", from_console, "ok"))
+            v.addWidget(button(T("Créer un nouveau routing"), from_console, "ok"))
         if not items:
-            v.addWidget(label("Aucun profil (ou appli principale non connectée).", mut=True))
+            v.addWidget(label(T("Aucun profil (ou appli principale non connectée)."), mut=True))
             return
         active = self._active_routings()
         several = len(self.app._consoles or []) > 1
         for p in items:
             pid, nm = p["id"], p.get("name", "?")
             cons = active.get(pid, [])
-            badge = "ACTIF" + ((" (console %s)" % ", ".join(str(n + 1) for n in cons)) if several else "")
+            badge = T("ACTIF") + ((T(" (console %s)") % ", ".join(str(n + 1) for n in cons)) if several else "")
             counts = p.get("counts", {})
-            buttons = [("Charger", lambda _c=False, pid=pid, nm=nm: self.apply_routing(pid, nm), "ok")]
+            buttons = [(T("Charger"), lambda _c=False, pid=pid, nm=nm: self.apply_routing(pid, nm), "ok")]
             if editable:
-                buttons.append(("Modifier", lambda _c=False, pid=pid: self.app.edit_routing({"id": pid}), None))
+                buttons.append((T("Modifier"), lambda _c=False, pid=pid: self.app.edit_routing({"id": pid}), None))
             if hasattr(b, "_post"):
-                buttons += [("Renommer", lambda _c=False, pid=pid, nm=nm: self.rename_routing(pid, nm), None),
-                            ("Supprimer", lambda _c=False, pid=pid, nm=nm: self.delete_routing(pid, nm), "warn")]
-            self._item(v, nm, "%d lignes E/S · %s" % (counts.get("io", 0), p.get("source", "")), bool(cons),
+                buttons += [(T("Renommer"), lambda _c=False, pid=pid, nm=nm: self.rename_routing(pid, nm), None),
+                            (T("Supprimer"), lambda _c=False, pid=pid, nm=nm: self.delete_routing(pid, nm), "warn")]
+            self._item(v, nm, T("%d lignes E/S · %s") % (counts.get("io", 0), p.get("source", "").replace("intégré", T("intégré"))
+                       .replace("éditeur", T("éditeur"))), bool(cons),
                        badge, buttons)
 
     def apply_routing(self, pid, name):
         app = self.app
-        target = pick_console(app, "Charger « %s » sur quelle console ?" % name)
+        target = pick_console(app, T("Charger « %s » sur quelle console ?") % name)
         if target is None:
             return
-        where = " sur la console %d" % (target + 1) if len(app._consoles or []) > 1 else ""
-        if not Dialog(app, "Charger ce routing ?", "Charger « %s »%s ? Seul le routing E/S est touché (pas le patch de "
-                      "sortie). À faire de préférence hors signal : ça peut couper l'audio en cours." % (name, where),
-                      "Charger", danger=True).ask():
+        where = T(" sur la console %d") % (target + 1) if len(app._consoles or []) > 1 else ""
+        if not Dialog(app, T("Charger ce routing ?"), T("Charger « %s »%s ? Seul le routing E/S est touché (pas le patch de "
+                      "sortie). À faire de préférence hors signal : ça peut couper l'audio en cours.") % (name, where),
+                      T("Charger"), danger=True).ask():
             return
         r = app.backend.apply_routing(pid, target)
-        self.say(*(("Routing « %s » envoyé" % name, OK) if r.get("ok") else (r.get("error", "Échec"), WARN)))
+        self.say(*((T("Routing « %s » envoyé") % name, OK) if r.get("ok") else (r.get("error", T("Échec")), WARN)))
         QTimer.singleShot(600, lambda: self.rebuild(True) if self.mode == "routing" else None)
 
     def rename_routing(self, pid, name):
-        r = Dialog(self.app, "Renommer le routing", "Nouveau nom :", "Renommer", edit=name).ask()
+        r = Dialog(self.app, T("Renommer le routing"), T("Nouveau nom :"), T("Renommer"), edit=name).ask()
         if r is None:
             return
         new = r.strip()[:60]
         if not new:
-            self.say("Le nom ne peut pas être vide.", WARN)
+            self.say(T("Le nom ne peut pas être vide."), WARN)
             return
         res = self.app.backend._post("/api/routings/rename", {"id": pid, "name": new}) or {}
-        self.say(*(("Routing renommé en « %s »" % new, OK) if res.get("ok") else ("Renommage impossible", WARN)))
+        self.say(*((T("Routing renommé en « %s »") % new, OK) if res.get("ok") else (T("Renommage impossible"), WARN)))
         self.rebuild(True)
 
     def delete_routing(self, pid, name):
-        if not Dialog(self.app, "Supprimer définitivement ?", "Supprimer le routing « %s » de la liste ? La console "
-                      "n'est pas touchée. Cette action est irréversible." % name, "Supprimer", danger=True).ask():
+        if not Dialog(self.app, T("Supprimer définitivement ?"), T("Supprimer le routing « %s » de la liste ? La console "
+                      "n'est pas touchée. Cette action est irréversible.") % name, T("Supprimer"), danger=True).ask():
             return
         res = self.app.backend._post("/api/routings/delete", {"id": pid}) or {}
-        self.say(*(("Routing « %s » supprimé" % name, OK) if res.get("ok") else ("Suppression impossible", WARN)))
+        self.say(*((T("Routing « %s » supprimé") % name, OK) if res.get("ok") else (T("Suppression impossible"), WARN)))
         self.rebuild(True)
 
     def say_pair(self, pair):
@@ -595,7 +687,7 @@ class Panel(QWidget):
     def _fill_consoles(self, v):
         app, b = self.app, self.app.backend
         cards = app._lv1_cards or []
-        labels = ["(automatique / non choisie)"] + ["%d - %s" % (c["slot"], c["name"]) for c in cards]
+        labels = [T("(automatique / non choisie)")] + ["%d - %s" % (c["slot"], c["name"]) for c in cards]
         slots = [None] + [c["slot"] for c in cards]
         for c in app._consoles or []:
             f = row_frame()
@@ -606,14 +698,14 @@ class Panel(QWidget):
             d = QLabel("●")
             d.setStyleSheet("color: %s; font: 12pt 'Segoe UI';" % dot)
             top.addWidget(d)
-            top.addWidget(label("Console %d — %s (%s)" % (c["n"] + 1, c.get("name") or "?", c.get("ip") or "—"),
+            top.addWidget(label(T("Console %d — %s (%s)") % (c["n"] + 1, c.get("name") or "?", c.get("ip") or "—"),
                                 prop="name"), 1)
             if c["n"] > 0:
-                top.addWidget(button("Retirer", lambda _c=False, n=c["n"]: self._console_do(b.consoles_remove(n)),
+                top.addWidget(button(T("Retirer"), lambda _c=False, n=c["n"]: self._console_do(b.consoles_remove(n)),
                                      "warn"))
             g.addLayout(top)
             line = QHBoxLayout()
-            line.addWidget(label("Carte LV1 :", mut=True))
+            line.addWidget(label(T("Carte LV1 :"), mut=True))
             cb = QComboBox()
             cb.addItems(labels)
             cur = c.get("card")
@@ -624,25 +716,25 @@ class Panel(QWidget):
             v.addWidget(f)
         add = QHBoxLayout()
         ip = QLineEdit()
-        ip.setPlaceholderText("Adresse IP d'une autre console")
+        ip.setPlaceholderText(T("Adresse IP d'une autre console"))
         ip.returnPressed.connect(lambda: self._console_do(b.consoles_add(ip.text().strip())))
         add.addWidget(ip, 1)
-        add.addWidget(button("Ajouter", lambda: self._console_do(b.consoles_add(ip.text().strip())), "ok"))
+        add.addWidget(button(T("Ajouter"), lambda: self._console_do(b.consoles_add(ip.text().strip())), "ok"))
         v.addLayout(add)
         self._found = QVBoxLayout()
         v.addLayout(self._found)
-        v.addWidget(button("Scanner le réseau", self._scan_more))
-        v.addWidget(label("Chaque console règle les préamplis de SA carte (position dans le rack de la LV1, le « 2- » "
+        v.addWidget(button(T("Scanner le réseau"), self._scan_more))
+        v.addWidget(label(T("Chaque console règle les préamplis de SA carte (position dans le rack de la LV1, le « 2- » "
                           "de « 2-EX 1 »). Carte choisie automatiquement si son nom dans la LV1 reprend celui de la "
-                          "console.", mut=True))
+                          "console."), mut=True))
 
     def _console_do(self, r):
         if r is not None and not r.get("ok"):
-            self.say(r.get("error") or "Impossible", WARN)
+            self.say(r.get("error") or T("Impossible"), WARN)
         QTimer.singleShot(400, lambda: self.rebuild(True))
 
     def _scan_more(self):
-        self.say("Recherche…")
+        self.say(T("Recherche…"))
         QTimer.singleShot(30, self._scan_more_now)
 
     def _scan_more_now(self):
@@ -654,7 +746,7 @@ class Panel(QWidget):
             if w:
                 w.deleteLater()
         if not res:
-            self.say("Aucune autre console trouvée sur le réseau.")
+            self.say(T("Aucune autre console trouvée sur le réseau."))
             return
         self.say("")
         for c in res:
@@ -662,7 +754,7 @@ class Panel(QWidget):
             h = QHBoxLayout(f)
             h.setContentsMargins(10, 4, 6, 4)
             h.addWidget(label("%s (%s) %s" % (c.get("name", "?"), c["ip"], c.get("model", ""))), 1)
-            h.addWidget(button("Ajouter", lambda _c=False, ip=c["ip"]: self._console_do(app.backend.consoles_add(ip)),
+            h.addWidget(button(T("Ajouter"), lambda _c=False, ip=c["ip"]: self._console_do(app.backend.consoles_add(ip)),
                                "ok"))
             self._found.addWidget(f)
 
@@ -671,45 +763,45 @@ class Panel(QWidget):
         app = self.app
         row = QHBoxLayout()
         self.ip = QLineEdit(app.ip_text)
-        self.ip.setPlaceholderText("Adresse IP de la console")
+        self.ip.setPlaceholderText(T("Adresse IP de la console"))
         self.ip.returnPressed.connect(self.connect)
         row.addWidget(self.ip, 1)
-        row.addWidget(button("Connecter", self.connect, "blue"))
+        row.addWidget(button(T("Connecter"), self.connect, "blue"))
         v.addLayout(row)
         row2 = QHBoxLayout()
-        row2.addWidget(button("Scanner", self.scan))
-        row2.addWidget(button("Démo", self.demo, "amber"))
+        row2.addWidget(button(T("Scanner"), self.scan))
+        row2.addWidget(button(T("Démo"), self.demo, "amber"))
         row2.addStretch(1)
         v.addLayout(row2)
         self._scan_rows = QVBoxLayout()
         v.addLayout(self._scan_rows)
         snap = app.link.snap or {}
         if not app.backend.reachable and not app.args.direct:
-            self.say("Appli principale non trouvée sur le port %d" % app.args.port, WARN)
+            self.say(T("Appli principale non trouvée sur le port %d") % app.args.port, WARN)
         elif not snap.get("connected") and not snap.get("trying") and not self.status.text():
-            self.say("Non connecté à la console")
+            self.say(T("Non connecté à la console"))
 
     def connect(self):
         ip = self.ip.text().strip()
         if not ip:
-            self.say("Entrez une IP", WARN)
+            self.say(T("Entrez une IP"), WARN)
             return
         self.app.ip_text = ip
-        self.say("Connexion…")
+        self.say(T("Connexion…"))
         r = self.app.backend.connect(ip)
         if not r.get("ok"):
-            self.say(r.get("error") or "Échec", WARN)
+            self.say(r.get("error") or T("Échec"), WARN)
 
     def demo(self):
         r = self.app.backend.demo()
         if r.get("ok"):
             self.ip.setText("127.0.0.1")
-            self.say("Démo (simulateur)", OK)
+            self.say(T("Démo (simulateur)"), OK)
         else:
-            self.say(r.get("error") or "Échec", WARN)
+            self.say(r.get("error") or T("Échec"), WARN)
 
     def scan(self):
-        self.say("Recherche…")
+        self.say(T("Recherche…"))
         QTimer.singleShot(30, self._scan_now)
 
     def _scan_now(self):
@@ -719,16 +811,16 @@ class Panel(QWidget):
             if w:
                 w.deleteLater()
         if not found:
-            self.say("Rien trouvé — IP manuelle", WARN)
+            self.say(T("Rien trouvé — IP manuelle"), WARN)
             return
         self.ip.setText(found[0]["ip"])
-        self.say("%d console(s) trouvée(s)" % len(found), OK)
+        self.say(T("%d console(s) trouvée(s)") % len(found), OK)
         for c in found:
             f = row_frame()
             h = QHBoxLayout(f)
             h.setContentsMargins(10, 4, 6, 4)
             h.addWidget(label("%s — %s (%s)" % (c["ip"], c.get("name", "?"), c.get("model", "?"))), 1)
-            h.addWidget(button("Choisir", lambda _c=False, ip=c["ip"]: (self.ip.setText(ip), self.connect()), "blue"))
+            h.addWidget(button(T("Choisir"), lambda _c=False, ip=c["ip"]: (self.ip.setText(ip), self.connect()), "blue"))
             self._scan_rows.addWidget(f)
 
 
@@ -785,8 +877,8 @@ class MatrixView(QWidget):
     def relayout(self):
         C, H = self.C, self.HEAD
         y, self.sections = 4, []
-        for kind, title in (("in", "ENTRÉES → LV1 : une case par EXP (colonne)"),
-                            ("out", "SORTIES ← RETOURS LV1 : une case par sortie (ligne)")):
+        for kind, title in (("in", T("ENTRÉES → LV1 : une case par EXP (colonne)")),
+                            ("out", T("SORTIES ← RETOURS LV1 : une case par sortie (ligne)"))):
             rows = self.rows(kind)
             y += 20
             head = y
@@ -862,10 +954,10 @@ class MatrixView(QWidget):
             key, lab = rows[r]
             if kind == "in":
                 cur = ed.lab["in"].get(ed.model["in"][c - 1], "OFF")
-                ed.info.setText("%s → EXP %d     (EXP %d reçoit aujourd'hui : %s)" % (lab, c, c, cur))
+                ed.info.setText(T("%s → EXP %d     (EXP %d reçoit aujourd'hui : %s)") % (lab, c, c, cur))
             else:
                 cur = ed.lab["out"].get(ed.model["out"][key], "OFF")
-                ed.info.setText("EXP %d → %s     (%s reçoit aujourd'hui : %s)" % (c, lab, lab, cur))
+                ed.info.setText(T("EXP %d → %s     (%s reçoit aujourd'hui : %s)") % (c, lab, lab, cur))
         else:
             ed.info.setText(" ")
         self.update()
@@ -904,26 +996,26 @@ class RoutingEditor(QWidget):
     def __init__(self, app, src, r, choices, slots):
         super().__init__(None, Qt.Window | Qt.WindowStaysOnTopHint)
         self.app = app
-        self.setWindowTitle("Éditeur de routing — %s" % qf.APP_SHORT)
+        self.setWindowTitle(T("Éditeur de routing — %s") % qf.APP_SHORT)
         self.setStyleSheet(css() + "RoutingEditor { background: %s; }" % tc(PANEL))
         self.setAttribute(Qt.WA_StyledBackground)
         self.model = {"in": list(r["model"]["in"]), "out": list(r["model"]["out"])}
         self.orig = {"in": list(self.model["in"]), "out": list(self.model["out"])}
         self.pid = src.get("id") if r.get("editable") else None
-        name0 = r["name"] if r.get("editable") else ("Routing perso" if src.get("console") else r["name"] + " (perso)")
+        name0 = r["name"] if r.get("editable") else (T("Routing perso") if src.get("console") else r["name"] + T(" (perso)"))
         self.choices, self.slots = choices, slots or ["Sortie %d" % (i + 1) for i in range(48)]
         self.lab = {k: {v: t for v, t in choices[k]} for k in ("in", "out")}
         self.val = {k: {t: v for v, t in choices[k]} for k in ("in", "out")}
         v = QVBoxLayout(self)
         v.setContentsMargins(12, 10, 12, 10)
         top = QHBoxLayout()
-        top.addWidget(label("Nom", mut=True))
+        top.addWidget(label(T("Nom"), mut=True))
         self.name = QLineEdit(name0)
         top.addWidget(self.name, 1)
         v.addLayout(top)
         tabs = QHBoxLayout()
         self.tab_btns = {}
-        for text, key in (("Matrice", "mx"), ("Listes", "list")):
+        for text, key in ((T("Matrice"), "mx"), (T("Listes"), "list")):
             b = button(text, lambda _c=False, k=key: self.show_view(k), "tab")
             tabs.addWidget(b)
             self.tab_btns[key] = b
@@ -938,7 +1030,7 @@ class RoutingEditor(QWidget):
         self.info = QLabel(" ")
         self.info.setStyleSheet("color: %s; font: bold 10pt 'Segoe UI';" % AMBER)
         mv.addWidget(self.info)
-        self.show_all = QCheckBox("Toutes les sources (+ AES50 33-48, Aux, Talkback)")
+        self.show_all = QCheckBox(T("Toutes les sources (+ AES50 33-48, Aux, Talkback)"))
         self.show_all.toggled.connect(lambda _on: self.mx.relayout())
         mv.addWidget(self.show_all)
         self.mx = MatrixView(self)
@@ -954,8 +1046,8 @@ class RoutingEditor(QWidget):
         # listes
         lw = QWidget()
         grid = QGridLayout(lw)
-        grid.addWidget(label("ENTRÉES → LV1", mut=True), 0, 0, 1, 2)
-        grid.addWidget(label("SORTIES ← RETOURS LV1", mut=True), 0, 2, 1, 2)
+        grid.addWidget(label(T("ENTRÉES → LV1"), mut=True), 0, 0, 1, 2)
+        grid.addWidget(label(T("SORTIES ← RETOURS LV1"), mut=True), 0, 2, 1, 2)
         self.combos = []
         for col, kind, names in ((0, "in", ["EXP %d" % (i + 1) for i in range(32)]), (2, "out", self.slots)):
             for i, text in enumerate(names):
@@ -972,16 +1064,16 @@ class RoutingEditor(QWidget):
         ls.setFrameShape(QFrame.NoFrame)
         touch_scroll(ls)
         self.stack.addWidget(ls)
-        v.addWidget(label("X32R : seules OUT 1-8 sont physiques. S16 : voies 1-8 ou 9-16 selon son sélecteur de "
+        v.addWidget(label(T("X32R : seules OUT 1-8 sont physiques. S16 : voies 1-8 ou 9-16 selon son sélecteur de "
                           "sorties (même retour sur les deux = marche dans les deux positions). L'enregistrement ne "
-                          "touche pas la console : « Charger » ensuite.", mut=True))
+                          "touche pas la console : « Charger » ensuite."), mut=True))
         bar = QHBoxLayout()
-        bar.addWidget(button("Enregistrer" if self.pid else "Enregistrer comme nouveau profil",
+        bar.addWidget(button(T("Enregistrer") if self.pid else T("Enregistrer comme nouveau profil"),
                              lambda: self.save(False), "ok"))
         if self.pid:
-            bar.addWidget(button("Enregistrer sous…", lambda: self.save(True)))
+            bar.addWidget(button(T("Enregistrer sous…"), lambda: self.save(True)))
         bar.addStretch(1)
-        bar.addWidget(button("Fermer", self.close))
+        bar.addWidget(button(T("Fermer"), self.close))
         v.addLayout(bar)
         self.show_view(app.cfg.get("routing_view", "mx"))
         self.resize(self.mx.width() + 60, 720)
@@ -1004,17 +1096,17 @@ class RoutingEditor(QWidget):
     def save(self, as_new):
         res = self.app.backend.save_routing(None if as_new else self.pid, self.name.text().strip(), self.model)
         if not res.get("ok"):
-            Dialog(self.app, "Routing", res.get("error") or "Échec", "OK").ask()
+            Dialog(self.app, "Routing", res.get("error") or T("Échec"), T("OK")).ask()
             return
         self.orig = {"in": list(self.model["in"]), "out": list(self.model["out"])}
         self.close()
         pn = self.app.panel
-        pn.say("Routing « %s » enregistré" % res.get("name"), OK)
+        pn.say(T("Routing « %s » enregistré") % res.get("name"), OK)
         if pn.mode == "routing":
             pn.rebuild(True)
 
     def closeEvent(self, e):
-        if self.model != self.orig and not Dialog(self.app, "Routing", "Fermer sans enregistrer ?", "Fermer",
+        if self.model != self.orig and not Dialog(self.app, "Routing", T("Fermer sans enregistrer ?"), T("Fermer"),
                                                    danger=True).ask():
             e.ignore()
             return

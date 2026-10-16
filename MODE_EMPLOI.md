@@ -157,6 +157,11 @@ doigt et se ferment avec leur croix **✕** (en haut à droite).
 > En cas de souci avec le nouveau float, l'ancien (2.x) reste disponible : lancez
 > `XM32_Gain_Recall_LV1.exe --tk-float`.
 
+## Language / Langue
+
+The app is in **English** by default. Float menu → **Language / Langue** → *Français* to switch (kept for the next
+launches). *L'appli est en anglais par défaut : menu du float → Language / Langue → Français.*
+
 ## 5. Le routing de la console
 
 **Depuis la LV1** : sur la page **Patch**, une tuile **X32 Routing** (à droite des appareils du rack, au même
@@ -201,6 +206,9 @@ par sortie. Pour revenir au standard, rechargez simplement un autre profil. Les 
 noms LV1 du float suivent tout seuls (EXP 2 affichera le préampli A18).
 
 ## 6. Les scènes de gains
+
+**Depuis la LV1** : sur la page **Show**, un bouton **X32 Gains** (colonne de gauche, sous *Sessions*, au même
+style) ouvre les scènes de gains à côté de lui. Aussi : menu du float → **Scènes…**.
 
 Une scène ne contient **que les consoles** (X32 / M32) : gains, 48 V, noms des voies, de toutes les consoles
 connectées. La LV1 garde sa propre session, comme d'habitude.

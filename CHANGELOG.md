@@ -3,11 +3,15 @@
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
 ## [3.0.1] — 2026-10-16
-**Tout depuis le float** : plus de page au lancement, routing depuis la page Patch de la LV1.
+**Tout depuis le float, en anglais** : plus de page au lancement, routing depuis la page Patch, scènes depuis la page Show.
+- **Anglais par défaut, français au choix** : menu du float → *Language / Langue* (float, panneaux, icône près de l'horloge ; choix gardé). La page web reste en français pour l'instant.
+- **Bouton « X32 Gains » sur la page Show de la LV1**, sous *Sessions*, au style de ses boutons : il ouvre les scènes de gains, à côté du bouton.
+- **Message de démarrage** en bas à droite de l'écran : l'appli est active, console(s) connectée(s) (ou aucune console trouvée au bout de 20 s).
+- **Changements de page de la LV1 suivis plus vite** : l'onglet affiché est relu toutes les 60 ms (au lieu de 300 ms + 100 ms), et le float réagit dès qu'il change.
 - **Plus de page dans le navigateur au lancement** : le float s'ouvre directement, tout se fait dans ses menus. La page reste accessible (icône près de l'horloge → *Ouvrir la page*, ou menu du float). Relancer l'exe ré-affiche le float.
 - **Tuile « X32 Routing » sur la page Patch de la LV1**, à côté des appareils du rack et au même style : elle ouvre le panneau Routing.
 - **Panneau Routing** : boutons en toutes lettres (*Charger*, *Modifier*, *Renommer*, *Supprimer*), **routing actif** surligné (dernier chargé sur chaque console, mémorisé d'une session à l'autre), *Créer un nouveau routing* en haut de la liste. Panneau Scènes au même style (*Charger*, *Écraser*, *Renommer*, *Supprimer*).
-- **Float mieux intégré** : quand une autre appli est active, le float passe derrière toutes les fenêtres (avant : juste sous l'appli active, donc au-dessus de Reaper par exemple) ; il réagit tout de suite au changement de fenêtre active (au lieu d'attendre jusqu'à 0,1 s) ; menus et panneaux passent au premier plan dès leur ouverture ; un doigt qui glisse un peu sur la languette ouvre quand même le menu.
+- **Float mieux intégré** : quand une autre appli est active, le float se range **juste au-dessus de la LV1**, sous l'appli qui la recouvre (avant : juste sous l'appli active, donc au-dessus de Reaper par exemple) : les gains restent visibles partout où la LV1 l'est ; il réagit tout de suite au changement de fenêtre active (au lieu d'attendre jusqu'à 0,1 s) ; menus et panneaux passent au premier plan dès leur ouverture ; un doigt qui glisse un peu sur la languette ouvre quand même le menu.
 
 ## [3.0.0] — 2026-10-16
 **Nouveau float, multi-touch** : réécrit en Qt pour suivre la LV1 au doigt, plusieurs potards à la fois.

@@ -21,6 +21,8 @@ import webbrowser
 os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "0")     # pixels Qt = pixels écran (calage sur la LV1)
 
 import x32_gain_float as xf                                   # noqa: E402
+import x32_i18n                                               # noqa: E402
+from x32_i18n import T                                        # noqa: E402
 from brand_icon import LOGO_SVG                               # noqa: E402
 from x32_gain_float import (                                  # noqa: E402
     APP_SHORT, APP_VERSION, APP_AUTHOR, AUTO_H, AUTO_OPEN_MODES, AUTO_PITCH, AUTO_X0, AUTO_Y0, BANKS,
@@ -29,7 +31,7 @@ from x32_gain_float import (                                  # noqa: E402
     foreground_window, join_tags, lv1_tab, lv1_windows, monitor_rect, quantize, set_theme_map,
     set_topmost, strip_tag, tc, window_alive, window_iconic, window_pid)
 
-from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteArray  # noqa: E402
+from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteArray, QObject, Signal  # noqa: E402
 from PySide6.QtSvg import QSvgRenderer                                         # noqa: E402
 from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialGradient,  # noqa: E402
                            QPainterPath, QInputDevice, QEventPoint, QIcon, QPixmap,
@@ -60,8 +62,30 @@ TOOL_TAP_PX = 28                # languette : un doigt qui glisse un peu reste u
 # Tuile « X32 Routing » de la page Patch : place des tuiles d'appareils (96x96 à y 110 en 1920x1080), dans l'espace
 # vide à droite (x 1771..1887, relevé sur capture de Joseph le 2026-10-16)
 PATCH_BOX = (1782 / 1920.0, 110 / 1080.0, 96 / 1920.0, 96 / 1080.0)
+# Bouton « X32 Gains » de la page Show : colonne de gauche, sous « Sessions » (boutons 92x54 à x 17 ; espace vide
+# vers y 866..950 en 1920x1080, relevé sur capture de Joseph le 2026-10-16)
+SHOW_BOX = (17 / 1920.0, 884 / 1080.0, 92 / 1920.0, 54 / 1080.0)
+TOAST_WAIT = 20.0      # pas de console après ce délai : message « aucune console trouvée »
 TOOL_SPLIT = (0.40, 0.29, 0.31)  # parts de la largeur de la languette (logo plus large)
 PH_MS = 260                     # 48V : allumage / extinction en fondu
+
+
+class _Poke(QObject):
+    """Signal envoyé par le fil de lecture d'écran quand l'onglet de la LV1 change : le float réagit aussitôt
+    (reçu sur le fil de l'interface)."""
+    poke = Signal()
+
+
+TAB_EVERY = 0.06       # onglet de la LV1 relu toutes les 60 ms (~23 ms par lecture) : changement de page suivi vite
+FULL_EVERY = 0.3       # tranche sélectionnée (Edit) et page Channel : toutes les 300 ms, comme avant
+
+
+def place_after(me, other):
+    """Range `me` juste sous la fenêtre `other` (0 = HWND_TOP), sans l'activer."""
+    ctypes, u32 = xf._user32()
+    if u32:
+        xf._wintypes(u32, ctypes)
+        u32.SetWindowPos(me, other, 0, 0, 0, 0, xf._SWP)
 
 
 def place_bottom(me):
@@ -675,7 +699,7 @@ class ValuePop(QWidget):
             self.update()
             return
         self.idx = idx
-        self.sub = "Gain " + self.app.label(idx)
+        self.sub = T("Gain ") + self.app.label(idx)
         self.color = self.app.color_of(idx)
         for col in fw.columns():
             for r in fw.unit_rects(col) if idx in col.idxs else ():
@@ -758,7 +782,7 @@ class Dialog(QDialog):
             self.edit.returnPressed.connect(self.accept)
             lay.addWidget(self.edit)
         row = QHBoxLayout()
-        c = QPushButton("Annuler")
+        c = QPushButton(T("Annuler"))
         c.setObjectName("cancel")
         c.clicked.connect(self.reject)
         o = QPushButton(ok_text)
@@ -807,6 +831,7 @@ class QtFloat:
         self.auto_place = True           # v3 : float fixe, toujours calé sur la LV1 (demande de Joseph)
         self.theme = cfg.get("theme") if cfg.get("theme") in THEMES else DEFAULT_THEME
         set_theme_map(self.theme)
+        x32_i18n.set_lang(cfg.get("lang", "en"))
         self.sensitivity = args.sensitivity
         self.clip_db = args.clip_db
         self.max_knob = None
@@ -854,6 +879,8 @@ class QtFloat:
         self._ch_hwnd = None
         self._lv1_channels = {}
         self._digits_learned = xf.load_learned_digits()
+        self._poker = _Poke()
+        self._poker.poke.connect(self.follow_lv1)
         self._server_seen = False
         self._refused_since = None
 
@@ -877,6 +904,10 @@ class QtFloat:
         self.panel = qp.Panel(self)
         self.menu = qp.MenuPopup(self)
         self.patch_btn = qp.PatchButton(self)
+        self.show_btn = qp.ShowButton(self)
+        self.toast = qp.Toast(self)
+        self._toast_state = None if not args.lv1_window else "done"     # message de démarrage : une fois
+        self._t_start = time.time()
         self._fg_hook = None
         self._install_fg_hook()
         try:
@@ -997,23 +1028,23 @@ class QtFloat:
             return
         if on:
             self.link.set_phantom(idx, False)
-        elif Dialog(self, "Activer le +48 V ?",
-                    "Voie %s : vérifiez qu'aucun micro ruban / dynamique non protégé n'est branché avant "
-                    "d'activer l'alimentation fantôme." % self.label(idx), "Activer +48 V", danger=True).ask():
+        elif Dialog(self, T("Activer le +48 V ?"),
+                    T("Voie %s : vérifiez qu'aucun micro ruban / dynamique non protégé n'est branché avant "
+                    "d'activer l'alimentation fantôme.") % self.label(idx), T("Activer +48 V"), danger=True).ask():
             self.link.set_phantom(idx, True)
 
     def edit_value(self, idx):
         if self.locked:
             return
         cur = self.gain(idx)
-        r = Dialog(self, "Gain — voie %s" % self.label(idx), "Valeur en dB (%.0f à +%.0f) :" % (GAIN_MIN, GAIN_MAX),
-                   "OK", edit="%.1f" % (cur if cur is not None else 0.0)).ask()
+        r = Dialog(self, T("Gain — voie %s") % self.label(idx), T("Valeur en dB (%.0f à +%.0f) :") % (GAIN_MIN, GAIN_MAX),
+                   T("OK"), edit="%.1f" % (cur if cur is not None else 0.0)).ask()
         if r is None:
             return
         try:
             db = quantize(float(r.replace(",", ".")))
         except ValueError:
-            Dialog(self, "Gain", "« %s » n'est pas un nombre valide." % r, "OK").ask()
+            Dialog(self, "Gain", T("« %s » n'est pas un nombre valide.") % r, T("OK")).ask()
             return
         self.set_gain_local(idx, db)
         QTimer.singleShot(1500, lambda: self.local.pop(idx, None) if not self._held(idx) else None)
@@ -1098,7 +1129,7 @@ class QtFloat:
         b = self.backend
         if b.needs_login and not getattr(self, "_login_open", False):
             self._login_open = True
-            code = Dialog(self, "Code d'accès", "Code d'accès de l'appli (affiché sur la page) :", "OK",
+            code = Dialog(self, T("Code d'accès"), T("Code d'accès de l'appli (affiché sur la page) :"), T("OK"),
                           edit="").ask()
             if code:
                 b.login(code)
@@ -1132,6 +1163,9 @@ class QtFloat:
             self._console_auto = False
             if self.panel.mode == "console" and self.panel.auto:
                 self.panel.close_panel()
+        if snap.get("lang"):
+            self._apply_language(snap["lang"])
+        self._startup_toast(snap)
         if snap.get("autostart_ok"):
             self.autostart = bool(snap.get("autostart"))
         self.update = snap.get("update")
@@ -1224,7 +1258,9 @@ class QtFloat:
             if "page" in res:
                 self._ch_hwnd = res["page"]
                 self._ch_page = self._resolve_channel(res["ch"]) if res.get("ch") else None
-        if lv1 and not window_iconic(lv1) and front and not self._drags and self._reader_args is None:
+        if not (lv1 and not window_iconic(lv1) and front and not self._drags):
+            self._reader_args = None              # pas de lecture d'écran : LV1 absente / derrière, ou glisser
+        else:
             self._reader_args = {
                 "hwnd": lv1, "detached": self.detached, "tab": self._lv1_tab, "found": dict(self._lv1_found),
                 "names": tuple(t for t in LV1_TABS if t.replace(" ", "").upper() not in self._detached_now),
@@ -1255,7 +1291,9 @@ class QtFloat:
         self.ch_box.sync(self._ch_page if (lv1_up and not self.detached) else None, self._ch_hwnd, CH_BOX)
         if shown:
             self._place_tool(lv1)
-        self._sync_patch_btn(lv1 if (lv1_up and not self.detached and self._lv1_tab == "Patch") else None)
+        main_lv1 = lv1 if (lv1_up and not self.detached) else None
+        self._sync_tile(self.patch_btn, PATCH_BOX, main_lv1 if self._lv1_tab == "Patch" else None)
+        self._sync_tile(self.show_btn, SHOW_BOX, main_lv1 if self._lv1_tab == "Show" else None)
         self.sync_panel()
         if not shown and self.menu.isVisible():
             self.menu.hide()
@@ -1268,16 +1306,43 @@ class QtFloat:
                     for h in hwnds:
                         set_topmost(h, True)
                     self._z_state = ("top",) + key
-            elif self._z_state != ("bottom",) + key:
-                # autre appli active : tout en dessous (derrière la LV1 aussi). Avant (3.0.0) : juste sous l'appli
-                # active, donc au-dessus de toutes les autres fenêtres (vu par Joseph au-dessus de Reaper)
-                for h in hwnds:
-                    set_topmost(h, False)
-                    place_bottom(h)
-                self._z_state = ("bottom",) + key
+            else:
+                # autre appli active : JUSTE AU-DESSUS DE LA LV1, sous la fenêtre qui la recouvre (3.0.1). Se placer
+                # par rapport à la LV1 elle-même est refusé (administrateur) ; sous la fenêtre au-dessus d'elle, non.
+                # Essayé avant : sous l'appli active (3.0.0 : float au-dessus de Reaper) puis tout en dessous (gains
+                # invisibles dès qu'une appli est devant).
+                above = self._window_above(lv1, set(hwnds)) if lv1 else None
+                if self._z_state != ("above", above) + key:
+                    for h in hwnds:
+                        set_topmost(h, False)
+                        if above:
+                            place_after(h, above)
+                        else:
+                            place_after(h, 0)          # rien au-dessus de la LV1 : en haut des fenêtres normales
+                    self._z_state = ("above", above) + key
+
+    @staticmethod
+    def _window_above(lv1, mine):
+        """Première fenêtre visible, normale (pas « toujours devant ») et pas à nous, au-dessus de la LV1."""
+        ctypes, u32 = xf._user32()
+        if not u32:
+            return None
+        u32.GetWindowLongW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        h, n = lv1, 0
+        while n < 400:
+            n += 1
+            h = u32.GetWindow(h, 3)                    # GW_HWNDPREV : fenêtre juste au-dessus
+            if not h:
+                return None
+            if h in mine or not u32.IsWindowVisible(h):
+                continue
+            if u32.GetWindowLongW(h, -20) & 0x8:       # WS_EX_TOPMOST : on s'arrête sous les « toujours devant »
+                return None
+            return h
+        return None
 
     def _windows(self):
-        return (self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu, self.patch_btn)
+        return (self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu, self.patch_btn, self.show_btn)
 
     def raise_now(self, w):
         """Fenêtre qui vient de s'ouvrir (menu, panneau...) : au premier plan tout de suite si la LV1 ou le float
@@ -1304,17 +1369,17 @@ class QtFloat:
         except (AttributeError, OSError):
             self._fg_hook = None
 
-    def _sync_patch_btn(self, lv1):
-        """Tuile « X32 Routing » sur la page Patch de la LV1 (fenêtre principale)."""
-        pb = self.patch_btn
+    def _sync_tile(self, pb, box, lv1):
+        """Bouton posé sur une page de la LV1 (fenêtre principale) : tuile « X32 Routing » (Patch), « X32 Gains »
+        (Show). lv1 None = caché."""
         rect = client_rect(lv1) if lv1 else None
         if not rect or rect[2] < 400:
             if pb.isVisible():
                 pb.hide()
             return
         x, y, w, h = rect
-        geom = (x + round(w * PATCH_BOX[0]), y + round(h * PATCH_BOX[1]), round(w * PATCH_BOX[2]),
-                round(h * PATCH_BOX[3]))
+        geom = (x + round(w * box[0]), y + round(h * box[1]), round(w * box[2]),
+                round(h * box[3]))
         if (pb.x(), pb.y(), pb.width(), pb.height()) != geom:
             pb.setGeometry(*geom)
         if not pb.isVisible():
@@ -1325,8 +1390,9 @@ class QtFloat:
     def sync_panel(self):
         """Panneau (Scènes, Routing, Consoles, connexion) : visible avec les colonnes, caché sinon."""
         pn = self.panel
-        on_patch = pn.mode == "routing" and self.patch_btn.isVisible()     # page Patch : sous la tuile Routing
-        show = bool(pn.mode) and ((bool(self._shown) and not self.collapsed) or on_patch)
+        on_page = ((pn.mode == "routing" and self.patch_btn.isVisible())      # page Patch : sous la tuile Routing
+                   or (pn.mode == "scenes" and self.show_btn.isVisible()))    # page Show : à côté du bouton
+        show = bool(pn.mode) and ((bool(self._shown) and not self.collapsed) or on_page)
         if show:
             pn.place()
             if not pn.isVisible():
@@ -1339,7 +1405,7 @@ class QtFloat:
         r = self.backend.routing_model(src)
         choices, slots = self.backend.routing_choices()
         if not r.get("ok") or not choices:
-            Dialog(self, "Routing", r.get("error") or "Éditeur indisponible", "OK").ask()
+            Dialog(self, "Routing", r.get("error") or T("Éditeur indisponible"), T("OK")).ask()
             return
         if self.editor and self.editor.isVisible():
             self.editor.close()
@@ -1365,7 +1431,42 @@ class QtFloat:
     # Lectures d'écran (onglet, tranche sélectionnée en mode Edit, page Channel) et vérification contre le patch :
     # reprises telles quelles du float tk (validées sur la LV1 de Joseph). Elles n'utilisent que des données
     # (exp_map, lv1_sources, _lv1_channels, _lv1_lay, _sel_col, _digits_learned), pas d'interface.
-    _screen_reader = xf.FloatApp._screen_reader
+    def _screen_reader(self):
+        """Fil des lectures d'écran (3.0.1, deux vitesses) : l'onglet toutes les TAB_EVERY (le float suivait les
+        changements de page avec un retard visible : lecture toutes les 0,3 s + tour de 0,1 s), le reste toutes les
+        FULL_EVERY. Ne touche jamais à l'interface : dépose ses résultats dans _reader_res (fusionnés), et prévient
+        le float tout de suite quand l'onglet change."""
+        cache, last_full, last_tab = {}, 0.0, None
+        while True:
+            args = self._reader_args
+            if not args:
+                time.sleep(0.05)
+                continue
+            try:
+                lv1 = args["hwnd"]
+                tab = None if args["detached"] else lv1_tab(lv1, args["names"])
+                res = {"tab": tab}
+                now = time.time()
+                if now - last_full >= FULL_EVERY:
+                    last_full = now
+                    if args["edit"]:
+                        col = xf.lv1_selected_column_top(lv1)
+                        res["sel"] = col if col is not None else xf.lv1_selected_column(lv1)
+                    if not args["detached"]:
+                        found = args["found"]
+                        page = found.get("CHANNEL") or (
+                            found.get("main") if (tab or args["tab"]) == "Channel" else None)
+                        res["page"] = page
+                        res["ch"] = (xf.lv1_channel_page(page, cache, self._digits_learned)
+                                     if page and not window_iconic(page) else None)
+                self._reader_res = dict(self._reader_res or {}, **res)
+                if tab and tab != last_tab:
+                    last_tab = tab
+                    self._poker.poke.emit()
+            except Exception as e:          # une lecture ratée ne doit pas arrêter le fil
+                print("Lecture d'écran : %s" % e)
+            time.sleep(TAB_EVERY)
+
     _resolve_channel = xf.FloatApp._resolve_channel
     _learn_digits = xf.FloatApp._learn_digits
     _preamps = xf.FloatApp._preamps
@@ -1490,45 +1591,85 @@ class QtFloat:
         bank = self.bank_name()
         banks = ([(n, lambda n=n: self.select_bank(n), n == bank, "radio") for n, _s in LV1_BANKS] + ["-"]
                  + [(n, lambda n=n: self.select_bank(n), n == bank, "radio") for n, _s in BANKS])
-        themes = [(n + ("  (défaut)" if n == DEFAULT_THEME else ""), lambda n=n: self.set_theme(n), n == self.theme, "radio")
+        themes = [(T(n) + (T("  (défaut)") if n == DEFAULT_THEME else ""), lambda n=n: self.set_theme(n), n == self.theme, "radio")
                   for n in THEMES]
-        e = [("Banque : %s" % bank, banks),
-             ("Recaler sur la LV1", self.recalibrate),
-             ("Bulle des dB en réglant", lambda: (self.cfg.__setitem__("value_pop", not self.cfg.get("value_pop", True)),
+        e = [(T("Banque : %s") % bank, banks),
+             (T("Recaler sur la LV1"), self.recalibrate),
+             (T("Bulle des dB en réglant"), lambda: (self.cfg.__setitem__("value_pop", not self.cfg.get("value_pop", True)),
                                                   self.save_soon()), self.cfg.get("value_pop", True)),
              "-",
-             ("Scènes…", lambda: self.panel.toggle("scenes")),
-             ("Routing…", lambda: self.panel.toggle("routing"))]
+             (T("Scènes…"), lambda: self.panel.toggle("scenes")),
+             (T("Routing…"), lambda: self.panel.toggle("routing"))]
         if hasattr(self.backend, "consoles_add"):
-            e.append(("Consoles…", lambda: self.panel.toggle("consoles")))
-        e.append(("Console (IP, connexion)", lambda: self.panel.toggle("console"), self.panel.mode == "console"))
+            e.append((T("Consoles…"), lambda: self.panel.toggle("consoles")))
+        e.append((T("Console (IP, connexion)"), lambda: self.panel.toggle("console"), self.panel.mode == "console"))
         if not self.args.direct:
-            e.append(("Ouvrir la page dans le navigateur",
+            e.append((T("Ouvrir la page dans le navigateur"),
                       lambda: webbrowser.open("http://127.0.0.1:%d/" % self.args.port)))
-        e += [("Verrouiller l'édition", self.toggle_lock, self.locked),
-              ("Fond de la fenêtre", themes),
+        e += [(T("Verrouiller l'édition"), self.toggle_lock, self.locked),
+              (T("Fond de la fenêtre"), themes),
+              ("Language / Langue", [(name, lambda c=code: self.set_language(c), code == x32_i18n.LANG, "radio")
+                                     for code, name in x32_i18n.LANGS]),
               "-",
               ("%s v%s (float Qt %s)" % (APP_SHORT, APP_VERSION, QT_FLOAT_VERSION), None)]
         if self.update and self.update.get("url"):
-            e.append(("⬆ Mise à jour %s disponible…" % self.update.get("version"),
+            e.append((T("⬆ Mise à jour %s disponible…") % self.update.get("version"),
                       lambda: webbrowser.open(self.update["url"])))
-        e.append(("Fermer le float", self.quit))
+        e.append((T("Fermer le float"), self.quit))
         if not self.args.direct:
             if self.autostart is not None:
-                e.append(("Lancer avec Windows", lambda: self._toggle_autostart(not self.autostart), self.autostart))
-            e.append(("Quitter l'appli", self._quit_app))
+                e.append((T("Lancer avec Windows"), lambda: self._toggle_autostart(not self.autostart), self.autostart))
+            e.append((T("Quitter l'appli"), self._quit_app))
         return e
+
+    def _startup_toast(self, snap):
+        """Au démarrage (3.0.1, demande de Joseph) : petit message en bas à droite, l'appli est active et les
+        consoles trouvées ; ou, faute de console au bout de TOAST_WAIT, comment en choisir une."""
+        if self._toast_state == "done":
+            return
+        cons = [c for c in (snap.get("consoles") or []) if c.get("connected")]
+        if snap.get("connected") and cons:
+            if len(cons) == 1:
+                c = cons[0]
+                text = T("Connecté à %s (%s)") % (c.get("name") or "X32", c.get("ip") or "?")
+            else:
+                text = T("%d consoles connectées") % len(cons)
+            self.toast.say(T("X/M32 Gain Recall est actif"), text, ok=True)
+            self._toast_state = "done"
+        elif time.time() - self._t_start > TOAST_WAIT and self._toast_state is None:
+            self.toast.say(T("X/M32 Gain Recall est actif"),
+                           T("Aucune console trouvée pour l'instant : menu → Console."), ok=False, ms=9000)
+            self._toast_state = "waiting"          # le message « connecté » viendra quand même ensuite
+
+    def set_language(self, lang):
+        """Anglais / français : enregistré par l'appli principale (aussi pour l'icône près de l'horloge et les
+        floats des Mixers détachés), ou dans la configuration du float en --direct."""
+        self._apply_language(lang)
+        self.cfg["lang"] = x32_i18n.LANG
+        self.save_soon()
+        if hasattr(self.backend, "_post"):
+            self.backend._post("/api/lang", {"lang": x32_i18n.LANG})
+
+    def _apply_language(self, lang):
+        if lang == x32_i18n.LANG:
+            return
+        x32_i18n.set_lang(lang)
+        if self.panel.mode:
+            self.panel.open(self.panel.mode, self.panel.auto)
+        for w in (self.win, self.tool, self.patch_btn, self.show_btn):
+            if w:
+                w.update()
 
     def _toggle_autostart(self, on):
         r = self.backend.set_autostart(on)
         if r.get("ok"):
             self.autostart = r.get("on")
         else:
-            Dialog(self, "Lancer avec Windows", r.get("error") or "Impossible", "OK").ask()
+            Dialog(self, T("Lancer avec Windows"), r.get("error") or T("Impossible"), T("OK")).ask()
 
     def _quit_app(self):
-        if Dialog(self, "Quitter l'appli ?", "Le float, la page et la connexion à la console s'arrêtent.",
-                  "Quitter", danger=True).ask():
+        if Dialog(self, T("Quitter l'appli ?"), T("Le float, la page et la connexion à la console s'arrêtent."),
+                  T("Quitter"), danger=True).ask():
             self.backend.quit_app()
             self.quit()
 
