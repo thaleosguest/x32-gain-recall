@@ -14,10 +14,15 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.7.0 publiée (2026-10-14)
+## État actuel : v3.0.0 (2026-10-16)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.7.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.7.0 (branche `dev-2.7`) fusionnée dans `main` ; avant : #9 (v2.6.0), #8 (v2.5.0), #7 (v2.4.0), #6 (v2.3.0)...
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+Branche `dev-3.0` ; avant : #12 (v2.7.1), #11 (v2.7.0), #9 (v2.6.0), #8 (v2.5.0)...
+3.0.0 = float réécrit en Qt (multi-touch), calé au pixel, fixe, suit la section Input (Top/Middle/Bottom),
+languette dans la barre du haut, menu maison, panneaux tactiles. **Mono-écran** (choix de Joseph, « LV1
+classique ») : pages détachées sur un 2e écran NON prises en charge en 3.0 (code gardé, non garanti). Float tk
+en secours : `--tk-float` (et automatique si PySide6 ne se charge pas). Joseph : « en vrai c'est une v1 » —
+il reste des choses à régler. Détails : section « v3 en Qt ».
 2.7.0 = look du float (potards lisses, arc à la couleur du canal LV1, 48V rouge), croix du panneau Scènes gardée
 après un chargement + croix de la barre Console, « Lancer avec Windows » plus réécrit tout seul (Defender).
 2.6.0 = plusieurs consoles (une carte LV1 chacune : float, routing par console, scènes multi-consoles, panneau
@@ -96,6 +101,18 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   1 Home, 2 Setup, 3 SndChk, 4 Edit, 5 Fx, 6 Monitor, 7 Status, 8 Dugan) ; 8 lignes par
   `ovv_track_mode` (surface + mode de couche), une par page, ordre des id. Custom : par page ; couches
   d'entrée : les 8 pages changent ensemble. Float : déplié en SndChk/Setup, replié sinon (`AUTO_OPEN_MODES`).
+- **Sections Top / Middle / Bottom + Big Fader (relevé 2026-10-14)** : `ovv_page_data` (une ligne par page, comme le
+  mode) a `section_mapping_type_top_bay` / `_middle_bay` / `_bottom_bay` et `big_faders` ; valeurs par défaut de
+  chaque mode dans les mêmes colonnes de `ovv_modes_presets` ; libellés dans `ovv_section_mapping_type` (0 Input,
+  1 DynEQ, 2 Rack, 3 RouteGrp, 4 RouteMain, 5 Fx_1_8, 6 Mon_1_8, 7 Mon_9_16, 8 Channel, 9 Dugan, 10 Aux_1_16,
+  11 Aux_9_24, 12 Mon_17_24, 13 IEM, 14 Fader). Ex. Home = top Rack, middle Input, bottom Fader, big faders.
+  **Écrits en direct** (enregistreur, < 1 s, chaque réglage seul). La LV1 échange les sections entre rangées.
+  **Big Fader masque Middle et Bottom** (seul Top reste) ; **faders (14) en Middle = débordent sur le Bottom** et y
+  cachent les cadres Preamp (seuls Polarity / Trim visibles). Cadres Preamp : y 184..315 en Top, **505..636 en
+  Middle**, **781..912 en Bottom** (mêmes x). `lv1/layers.py` : `bays` (top, middle, bottom, big) + `input_bay`
+  ("top" / "middle" / "bottom" / None) + `input_covered` (Bottom sous des faders en Middle : rails jusqu'à y 892) ;
+  float Qt : déplié aussi dans ce cas, posé sur les cadres du bas par-dessus le bas des faders (choix de Joseph) ;
+  float Qt : déplié quand `input_bay` existe (au lieu de SndChk/Setup), calé sur `BAY_Y0[input_bay]`.
 - **Mixer 2** = surface 3 (`eSurface_OVV2`), mêmes propriétés/tables que Mixer 1 (`read_layers`).
 - **Onglet du haut (Mixer 1/2, All, Channel, Show, Patch, Setup) : PAS dans la base** (enregistreur : rien
   pendant les clics). Lu à l'écran (`lv1_tab()` : ligne à 14/1080 de la zone client ; 7 boutons de
@@ -392,6 +409,39 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   transparence `-transparentcolor` et le z-order y sont réglés) ; Qt (PySide6) possible pour une 3.0.
 - Tester les colonnes : script qui crée des `Strip` avec un faux `owner` (locked, sensitivity, send_gain, label,
   value_pop, root) + capture BitBlt ; le float `--direct --sim` n'a pas d'EXP (colonnes transparentes).
+
+## v3 en Qt (branche `dev-3.0`, décidée le 2026-10-14)
+
+- Raison : la LV1 est pensée multi-touch ; tk ne reçoit qu'un doigt (toucher = clic souris). Test
+  `tools/qt_touch_test.py` (exe `XM32_Qt_Touch_Test.exe`, 46 Mo, ~2 s au lancement) : **4 doigts = 4 potards en
+  même temps, OK chez Joseph** ; fluidité identique à tk (mesuré : ~0,6 ms par colonne dans les deux cas).
+- Fenêtre Qt : `FramelessWindowHint | Tool | WindowStaysOnTopHint | WindowDoesNotAcceptFocus`,
+  `WA_TranslucentBackground` (colonnes vides = alpha 0), `WA_AcceptTouchEvents` (un point = un potard),
+  `QT_ENABLE_HIGHDPI_SCALING=0` (pixels = pixels écran pour le calage).
+- **Étape 1 faite (3.0.0-a1)** : `x32_qt_float.py` (classe `QtFloat`, fenêtre `FloatWindow` tout dessinée, `Link` =
+  lectures/envois sur des fils, `Dialog`, `ValuePop`) ; reprend la logique de `x32_gain_float` (import, pas de copie
+  des fonctions sans interface). Lancement : appli avec l'option cachée `--qt-float` -> floats lancés avec
+  `--float --qt`. Même fichier de config que le float tk. Tests : `QTest.touchEvent` prend des coordonnées ÉCRAN
+  (`mapToGlobal`), et la LV1 de ce PC cache le float -> remplacer `x32_qt_float.lv1_windows` par `lambda: {}`.
+- **Calage v3 (2026-10-14)** : cartes DANS les cadres des tranches (`CARD_L/CARD_R` = 1/96 et 93/96 du pas, hauteur
+  `QT_AUTO_H` 132/1080), relevé au pixel sur la LV1 de Joseph (1920x1080 et fenêtré OK). **Float fixe** (choix de
+  Joseph) : plus de déplacement ni de redimensionnement à la main, toujours calé ; menu « Recaler sur la LV1 ».
+  Languette = `ToolBar` dans l'espace vide de la barre du haut (`TOOL_BOX`, entre Setup et le cadenas) : logo
+  (gris = pas de console, couleur = connectée), chevron (repli animé `FOLD_MS`), hamburger (menu).
+- **Étapes 2 et 3 faites (3.0.0-a4)** : `Canvas` commun (FloatWindow 16 colonnes, BoxWindow cadres Edit / Channel) ;
+  lectures d'écran et vérification EMPRUNTÉES au float tk (`_screen_reader = xf.FloatApp._screen_reader`, etc. :
+  attributs de même nom) ; panneaux dans `x32_qt_panels.py` (Panel : scenes / routing / consoles / console,
+  RoutingEditor + MatrixView, pick_console). Animations : AUCUNE sauf le 48V (fondu `PH_MS`, rouge lumineux avec
+  halo) — dépli et glissement de couche essayés puis retirés à la demande de Joseph ; languette au style du cadenas LV1 (fond 17, contour 160).
+- **Menu maison** (`x32_qt_panels.MenuPopup`) : le QMenu de Qt (popup) se refermait aussitôt / au hasard, la LV1
+  restant la fenêtre active. Ne pas revenir à QMenu. Piège PySide : `clicked` envoie un booléen qui écrase le 1er
+  argument par défaut d'un lambda (`lambda sub=act: ...`) -> toujours `lambda _checked=False, ...`.
+- Écrans : un écran OK (Edit et Channel validés par Joseph le 2026-10-14) ; deux écrans : soucis à voir ensemble.
+- **Étape 4 faite (3.0.0)** : Qt par défaut (`FLOAT_QT = True`, `--tk-float` / `--float --tk` pour le tk), PySide6-Essentials
+  + `--hidden-import x32_qt_float x32_qt_panels PySide6.QtWidgets PySide6.QtSvg` dans `build.yml` et
+  `Compiler_en_exe.bat`. Pages détachées / 2 écrans : hors périmètre 3.0.
+- (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
+  couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
 
 ## Reste à faire / idées
 

@@ -1,6 +1,6 @@
 <img src="assets/logo.svg" width="72" alt="Logo">
 
-# Mode d'emploi — X/M32 Gain Recall for eMotion LV1 (v2.6.0)
+# Mode d'emploi — X/M32 Gain Recall for eMotion LV1 (v3.0.0)
 
 *Pour ceux qui découvrent l'appli. Comptez 10 minutes la première fois, ensuite c'est un double-clic.*
 
@@ -20,6 +20,8 @@ scènes de gains (une par groupe ou par date, par exemple).
 | **Console** | Behringer X32 ou Midas M32, avec une carte **DN32-WSG** ou **X-WSG** branchée au réseau SoundGrid |
 | **LV1** | Waves eMotion LV1 **V17**, sur un PC Windows |
 | **Réseau** | Le PC de la LV1 et la X32 sur le **même réseau** (câble Ethernet de la X32, prise *Remote*) |
+| **Écran** | **Un seul écran** : la LV1 en plein écran ou fenêtrée. Les pages détachées sur un 2e écran ne sont pas prises en charge en 3.0 (rester en 2.7.1 pour ça) |
+| **Écran tactile** | Conseillé : le float est multi-touch (plusieurs potards à la fois) |
 | **Plusieurs consoles** | Possible : une carte DN32-WSG / X-WSG par console dans le rack de la LV1 (voir chapitre 7) |
 | **À installer** | Rien. Ni Python, ni Companion, ni MyRemote. |
 
@@ -58,9 +60,10 @@ scènes de gains (une par groupe ou par date, par exemple).
    - Plusieurs consoles sur le réseau, ou aucune trouvée ? Dans la page (ou ⋮ → Console dans le float) :
      **Scanner**, choisissez la console, puis **Connecter**. Ou tapez son IP (sur la X32 :
      *Setup → Network*).
-3. Les potards prennent les gains de la console (point vert dans la languette du float). C'est connecté.
+3. Les potards prennent les gains de la console (**logo en couleur** dans la languette du float, gris tant
+   qu'aucune console n'est connectée). C'est connecté.
 4. Les fois suivantes, l'appli **se reconnecte toute seule** à la dernière console. Si elle n'est pas
-   encore allumée, l'appli attend et se connecte dès qu'elle répond (point orange, puis vert).
+   encore allumée, l'appli attend et se connecte dès qu'elle répond (le logo passe en couleur).
 
 Pas de console sous la main ? **Démo** lance une X32 simulée pour essayer.
 
@@ -80,22 +83,27 @@ C'est l'outil de tous les jours. Il s'ouvre **tout seul au lancement**. Fermé p
 **Float** en haut de la page du navigateur.
 
 ### Sa place : rien à faire
-Dans la LV1, en mode **SndChk** (ou Setup), le float **se cale tout seul** dans les cadres vides
-« Preamp / Gain / 48 » des 16 tranches, quelle que soit la taille de l'écran ou de la fenêtre de la LV1.
+Le float **se cale tout seul** dans les cadres vides « Preamp / Gain / 48 » des 16 tranches de la LV1,
+quelle que soit la taille de l'écran ou de la fenêtre de la LV1. Il est **fixe** : on ne le déplace pas. Si un
+jour il paraît décalé : menu → **Recaler sur la LV1**.
 
-Vous préférez le placer vous-même ? Déplacez-le avec le **point vert** de la languette, ajustez avec le
-**coin en bas à droite** ou **⋮ → Plus large / Plus étroit** : il passe alors en calage manuel, mémorisé
-par résolution d'écran. **⋮ → Caler sur la LV1 (auto)** le remet en place automatiquement.
+### La languette (dans la barre du haut de la LV1)
+Elle se trouve dans l'espace vide entre l'onglet **Setup** et le **cadenas** de la LV1 :
+- le **logo** de l'appli : en couleur = console connectée, gris = pas de console (point rouge = édition verrouillée) ;
+- le **chevron** : replie / déplie les colonnes ;
+- le **menu** (trois traits) : voir plus bas.
 
 ### Ce qu'il fait tout seul
 - **Suit la couche** affichée dans la LV1 (Ch 1-16, 17-32…, Custom, Masters pour le Talk Back),
   en 16, 32, 64 ou 80 canaux.
-- **Se déplie** en mode **SndChk** ou **Setup**, **se replie** dans les autres modes
-  (il ne reste que le point vert et la flèche).
+- **Suit la section Input** (panneau Modes de la LV1 : Top / Middle / Bottom) : il se pose sur la rangée où
+  sont les cadres Preamp, en haut, au milieu ou en bas, et **se déplie dès qu'ils sont à l'écran**, quel que
+  soit le mode. **Se replie** quand ils n'y sont pas (par exemple Big Fader avec Input hors du Top) : il ne
+  reste que la languette. Un repli / dépli à la main tient jusqu'au prochain changement dans la LV1.
 - **Disparaît** quand la LV1 est fermée, réduite, ou affiche un autre onglet que Mixer 1 / Mixer 2.
-- **Mixer détaché** (Mixer 1 ou 2 ouvert dans sa propre fenêtre, sur un 2e écran par exemple) : un
-  **2e float** s'ouvre tout seul pour cette fenêtre et s'y cale ; il disparaît quand vous la refermez.
 - Reste **devant la LV1 mais derrière les autres applis** (il ne vous gêne pas dans le navigateur).
+- **Un seul écran** : les pages détachées (Mixer 1 / 2 dans leur propre fenêtre, sur un 2e écran) ne sont pas
+  prises en charge en 3.0 ; le float peut s'y caler mal.
 - **Suit l'entrée A/B** de chaque canal : un canal basculé sur B (TracksLive, virtual soundcheck)
   n'a pas de préampli X32 à afficher.
 - Une colonne **sans préampli X32 est transparente** : vous voyez et cliquez la LV1 en dessous.
@@ -103,7 +111,7 @@ par résolution d'écran. **⋮ → Caler sur la LV1 (auto)** le remet en place 
   gains restent indépendants sur la X32.
 
 ### En mode Edit : la tranche sélectionnée
-En mode **Edit**, le float se replie, mais le réglage de la **tranche sélectionnée** apparaît dans le
+En mode **Edit**, le réglage de la **tranche sélectionnée** apparaît dans le
 cadre vide du bloc **Input** de la LV1 (sous les boutons A / B) : potard de gain et 48 V, deux pour un
 canal stéréo. Sélectionnez une autre tranche : il suit. Le cadre reste vide si la tranche ne reçoit
 aucun préampli X32 (entrée B, TracksLive, groupe…).
@@ -116,22 +124,26 @@ vide (l'appli n'affiche jamais le préampli d'un autre canal). Canal sans préam
 Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille de fenêtre LV1 n'est pas lue.
 
 ### Régler un gain
-- **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple clic ne change rien. La
+- **Glisser** le potard vers le haut ou le bas (0,05 dB par pixel). Un simple toucher ne change rien. La
   valeur s'affiche en gros au-dessus du potard pendant qu'on le tourne (visible même avec le doigt dessus).
-- **Cliquer sur la valeur en dB** pour taper un chiffre exact.
-- **48 V** : bouton sous le potard, avec confirmation (voyant rouge) avant d'allumer.
+- **Multi-touch** : un doigt par potard, plusieurs potards en même temps ; on peut aussi tenir un potard du
+  float et bouger un fader de la LV1 avec l'autre main.
+- **Toucher la valeur en dB** pour taper un chiffre exact.
+- **48 V** : bouton sous le potard, avec confirmation (voyant rouge) avant d'allumer ; il s'allume en rouge.
 
-### Le menu ⋮ (dans la languette)
+### Le menu (trois traits, dans la languette)
+Il se ferme quand on choisit une entrée, en retouchant les trois traits, ou par sa croix **✕**.
+**Banque** et **Fond de la fenêtre** s'ouvrent dans le menu (« ◂ Retour » pour revenir).
 | Entrée | Rôle |
 |---|---|
 | **Banque** | *LV1 Ch 1-16…* (une colonne par tranche LV1, le mode normal) ou *Local / A / B 1-16* (une colonne par préampli X32, pour un préampli qui n'arrive sur aucun canal) |
 | **Bulle des dB en réglant** | Affiche (ou non) la valeur en gros pendant qu'on tourne un potard |
-| **Caler sur la LV1 (auto)** | Remet le float en place tout seul sur les tranches |
-| **Plus large / Plus étroit** | Calage fin à la main des colonnes |
+| **Recaler sur la LV1** | Refait le calage du float sur les tranches |
 | **Scènes…** | Sauvegarder, rappeler, renommer, écraser, supprimer une scène de gains |
 | **Routing…** | Charger un profil de routing, en créer ou modifier un (✎) |
 | **Consoles…** | Ajouter / retirer des consoles, choisir la carte LV1 de chacune (chapitre 7) |
-| **Console (IP, connexion)** | Barre IP / Connecter / Scanner, sous les voies |
+| **Console (IP, connexion)** | Panneau IP / Connecter / Scanner / Démo, sous les voies (s'ouvre tout seul tant qu'aucune console n'est connectée) |
+| **Ouvrir la page dans le navigateur** | La page complète de l'appli |
 | **Verrouiller l'édition** | Plus aucun gain modifiable (pendant le show) |
 | **Fond de la fenêtre** | Anthracite (défaut), Noir, Or, Bleu nuit |
 | **Mise à jour… disponible** | Affiché seulement quand une version plus récente est publiée |
@@ -139,7 +151,11 @@ Lu en plein écran (1920x1080) et dans la fenêtre 1728x970 ; une autre taille d
 | **Lancer avec Windows** | Démarrage automatique à l'ouverture de session |
 | **Quitter l'appli** | Arrête tout : float, page, connexion |
 
-Les panneaux **Scènes…**, **Routing…** et **Consoles…** se ferment avec leur croix **✕** (en haut à droite).
+Les panneaux **Scènes…**, **Routing…**, **Consoles…** et **Console** s'ouvrent sous les colonnes, défilent au
+doigt et se ferment avec leur croix **✕** (en haut à droite).
+
+> En cas de souci avec le nouveau float, l'ancien (2.x) reste disponible : lancez
+> `XM32_Gain_Recall_LV1.exe --tk-float`.
 
 ## 5. Le routing de la console
 
@@ -257,7 +273,8 @@ l'appli continue, l'icône aussi.)
 | Voies toutes grises, sans nom LV1 | La LV1 tourne-t-elle sur **ce** PC ? La X32 arrive-t-elle par une carte DN32-WSG / X-WSG ? Regarder le journal `x32_gain_recall.log` dans le dossier de l'appli (voir plus bas) |
 | Une seule voie grise | Ce préampli n'est patché sur aucun canal LV1, ou le canal est sur l'entrée **B** |
 | Le float a disparu | Normal hors Mixer 1 / Mixer 2, LV1 réduite ou fermée : il revient avec la LV1, sur Mixer 1 |
-| Le float est replié | Normal hors SndChk / Setup. Cliquez la flèche pour le déplier |
+| Le float est replié | Normal quand les cadres Preamp de la LV1 ne sont pas à l'écran. Touchez le chevron pour le déplier |
+| Le float est décalé | Menu → **Recaler sur la LV1**. Avec la LV1 sur deux écrans (pages détachées) : non pris en charge en 3.0 |
 | Colonnes décalées par rapport aux tranches | **⋮ → Caler sur la LV1 (auto)** |
 | Plusieurs consoles : les tranches d'une console restent sans potard | **⋮ → Consoles…** : la console est-elle connectée (point vert) et a-t-elle la bonne **Carte LV1** ? |
 | Page Channel : zone vide | Canal sans préampli X32, ou LV1 dans une taille de fenêtre non relevée (plein écran ou fenêtre 1728x970) |

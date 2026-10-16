@@ -51,7 +51,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "2.7.1"
+APP_VERSION = "3.0.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1661,6 +1661,7 @@ def scan_network(timeout=1.5, port=X32_PORT):
     return sorted(found.values(), key=lambda x: tuple(int(p) for p in x["ip"].split(".")))
 
 
+FLOAT_QT = True   # 3.0.0 : float Qt (x32_qt_float.py, multi-touch) ; float tk de la 2.x en secours (--tk-float)
 FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
@@ -1688,6 +1689,8 @@ def launch_float_window(extra=(), key="main"):
         cmd = [sys.executable, "--float", "--port", str(WEB_PORT)]
     else:
         cmd = [sys.executable, os.path.abspath(__file__), "--float", "--port", str(WEB_PORT)]
+    if not FLOAT_QT:
+        cmd.insert(cmd.index("--float") + 1, "--tk")
     cmd += list(extra)
     if ALLOW_ANY_HOST and LAN_CODE:
         # Quiconque clique ce bouton est deja authentifie dans le navigateur (sinon la page de
@@ -3539,6 +3542,8 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
+    ap.add_argument("--tk-float", action="store_true", help=argparse.SUPPRESS)   # secours : float tk de la 2.x
+    ap.add_argument("--qt-float", action="store_true", help=argparse.SUPPRESS)   # (versions de test 3.0 : défaut)
     ap.add_argument("--no-update-check", action="store_true",
                     help="ne pas verifier sur GitHub si une version plus recente est publiee")
     ap.add_argument("--at-login", action="store_true",
@@ -3598,6 +3603,8 @@ def main():
         ),
     )
     a = ap.parse_args()
+    global FLOAT_QT
+    FLOAT_QT = not a.tk_float
     if a.at_login:
         a.no_browser = True
     if not a.sim and already_running(a.web_port):
@@ -3735,7 +3742,21 @@ if __name__ == "__main__":
         # demarrer sans tkinter quand on ne s'en sert pas comme fenetre flottante.
         sys.argv.remove("--float")
         redirect_output_to_log("x32_float.log")
-        import x32_gain_float
-        x32_gain_float.main()
+        # 3.0.0 : float Qt par défaut (multi-touch) ; float tk de la 2.x avec --tk, ou si Qt ne se charge pas
+        tk_float = "--tk" in sys.argv
+        for flag in ("--tk", "--qt"):
+            while flag in sys.argv:
+                sys.argv.remove(flag)
+        if not tk_float:
+            try:
+                import x32_qt_float
+            except ImportError as e:
+                print("Float Qt indisponible (%s) : float tk" % e)
+                tk_float = True
+        if tk_float:
+            import x32_gain_float
+            x32_gain_float.main()
+        else:
+            x32_qt_float.main()
     else:
         main()
