@@ -14,7 +14,25 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v3.0.0 (2026-10-16)
+## État actuel : v3.0.1 publiée (2026-10-16)
+
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.1 ; PR #13 (v3.0.0) puis PR 3.0.1.
+
+3.0.1 (branche `dev-3.0`) : plus de navigateur au lancement (`--browser` pour l'ouvrir ; `show_app` = float seul),
+tuile « X32 Routing » sur la page Patch (`PatchButton`, `PATCH_BOX` 1782,110 96x96 /1920x1080, style des tuiles
+d'appareils : bandeau (68,138,255), contour 160 / 56,201,255), panneau Routing en boutons texte + routing actif
+(`remember_routing` / `routing_active` par IP dans les settings, `consoles[].routing_active`), z-order : autre
+appli active -> `place_bottom` (HWND_BOTTOM) au lieu de « sous l'appli active » (float vu au-dessus de Reaper),
+`SetWinEventHook` (fenêtre active, réduction) -> `follow_lv1` immédiat, `raise_now` à l'ouverture des menus /
+panneaux, `TOOL_TAP_PX` 28.
+Puis (même 3.0.1) : z-order corrigé = **juste au-dessus de la LV1** quand une autre appli est active
+(`_window_above` : 1re fenêtre visible non topmost au-dessus de la LV1 via GW_HWNDPREV, `place_after` dessous ;
+HWND_BOTTOM cachait les gains dès qu'une appli était devant, vérifié chez Joseph avec Reaper) ; lecture d'écran
+à deux vitesses (`TAB_EVERY` 60 ms pour l'onglet, `FULL_EVERY` 300 ms, signal `_Poke` -> `follow_lv1`) ;
+**i18n** : `x32_i18n.py` (`T()`, dictionnaire FR -> EN, anglais par défaut, `settings["lang"]`, `/api/lang`,
+`snap["lang"]`) ; textes entourés de `T()` par script AST (attention : un nouveau texte d'interface doit passer
+par `T()` et être ajouté à `EN`) ; page web PAS encore traduite ; bouton « X32 Gains » page Show (`ShowButton`,
+`SHOW_BOX` 17,884 92x54) ; message de démarrage (`Toast`, bas à droite, une fois).
 
 Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
 Branche `dev-3.0` ; avant : #12 (v2.7.1), #11 (v2.7.0), #9 (v2.6.0), #8 (v2.5.0)...
