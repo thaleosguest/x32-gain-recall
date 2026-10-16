@@ -14,7 +14,9 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v3.0.0 publiée, 3.0.1 en test (2026-10-16)
+## État actuel : v3.0.1 publiée (2026-10-16)
+
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.1 ; PR #13 (v3.0.0) puis PR 3.0.1.
 
 3.0.1 (branche `dev-3.0`) : plus de navigateur au lancement (`--browser` pour l'ouvrir ; `show_app` = float seul),
 tuile « X32 Routing » sur la page Patch (`PatchButton`, `PATCH_BOX` 1782,110 96x96 /1920x1080, style des tuiles
