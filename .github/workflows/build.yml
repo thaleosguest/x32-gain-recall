@@ -26,19 +26,25 @@ jobs:
           $v = $m.Matches[0].Groups[1].Value
           if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} != APP_VERSION v$v" }
 
-      - name: Installer PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+      - name: Installer PyInstaller et PySide6 (float Qt, 3.0.0)
+        run: python -m pip install --upgrade pip pyinstaller PySide6-Essentials
 
       - name: "Compiler (un seul exe : appli principale + fenetre flottante integree via --float)"
         # --noconsole (2.3.0) : plus de fenetre noire, l'appli vit dans une icone pres de l'horloge (tray.py)
-        run: python -m PyInstaller --onefile --noconsole --hidden-import tkinter --icon assets/icon.ico --name XM32_Gain_Recall_LV1 x32_gain_recall.py
+        # 3.0.0 : float Qt (x32_qt_float + x32_qt_panels, importes a la demande) ; tkinter garde pour le float tk
+        # de secours (--tk-float)
+        run: >-
+          python -m PyInstaller --onefile --noconsole --hidden-import tkinter
+          --hidden-import x32_qt_float --hidden-import x32_qt_panels
+          --hidden-import PySide6.QtWidgets --hidden-import PySide6.QtSvg
+          --icon assets/icon.ico --name XM32_Gain_Recall_LV1 x32_gain_recall.py
 
       - name: Test de fumee (l'exe demarre, mode normal et mode --float)
         shell: pwsh
         # exe sans console : PowerShell n'attend pas une appli fenetree -> Start-Process -Wait et code de sortie.
         # --help construit tout le parseur d'options : attrape une aide mal formee (ex. un % non echappe)
         run: |
-          foreach ($opts in @("--version", "--float --version", "--help", "--float --help")) {
+          foreach ($opts in @("--version", "--float --version", "--help", "--float --help", "--float --tk --version")) {
             $p = Start-Process ./dist/XM32_Gain_Recall_LV1.exe -ArgumentList $opts -Wait -PassThru
             if ($p.ExitCode -ne 0) { throw "XM32_Gain_Recall_LV1.exe $opts : code de sortie $($p.ExitCode)" }
             "OK : $opts"

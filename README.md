@@ -8,7 +8,7 @@ Les **préamplis d'une Behringer X32 / Midas M32 directement sur l'écran de la 
 48V posés au-dessus de chaque tranche, aux couleurs des canaux LV1, plus le rappel de gains par scène et le
 routing de la console. Un seul exe Windows, sans installation.
 
-Version courante : **2.6.0** (voir [CHANGELOG](CHANGELOG.md)). Première fois ? Voir le
+Version courante : **3.0.0** (voir [CHANGELOG](CHANGELOG.md)). Première fois ? Voir le
 **[mode d'emploi pas à pas](MODE_EMPLOI.md)**.
 
 ## Pourquoi
@@ -21,15 +21,17 @@ réglages sur la tranche LV1 concernée.
 ## Fonctions
 
 **Sur la LV1 (le « float »)**
-- Potards de gain (−12 à +60 dB) et 48V **calés tout seuls** sur les 16 tranches (modes SndChk / Setup),
-  quelle que soit la taille de l'écran ou de la fenêtre LV1.
+- **Multi-touch** (3.0) : un doigt par potard, plusieurs potards en même temps, au milieu de la LV1.
+- Potards de gain (−12 à +60 dB) et 48V **calés au pixel** dans les cadres Preamp des 16 tranches, quelle que
+  soit la taille de l'écran ou de la fenêtre LV1 ; suit la **section Input** où qu'elle soit (Top / Middle /
+  Bottom). Languette (logo, repli, menu) dans la barre du haut de la LV1.
 - Suit la **couche** affichée (Ch 1-16…, Custom, Talk Back), le **mode**, l'**entrée A/B** de chaque canal,
   les configurations 16 à 80 canaux, mono et stéréo ; une tranche sans préampli X32 reste transparente.
 - **Mode Edit** : réglage de la tranche sélectionnée dans le bloc Input. **Page Channel** : réglage du canal
   affiché (suit « < » / « > »).
-- **Pages détachées** (2e écran) : un float par Mixer détaché.
 - **Plusieurs consoles** (une carte chacune dans le rack de la LV1) : le float règle les préamplis de toutes.
-- Tactile : grosses zones de toucher, bulle des dB pendant le réglage, confirmation du 48V avec voyant.
+- Tactile : grosses zones de toucher, bulle des dB pendant le réglage, confirmation du 48V avec voyant,
+  panneaux (scènes, routing, consoles) qui défilent au doigt.
 
 **Scènes et routing**
 - **Scènes de gains** : enregistrer / rappeler (vérification par relecture, annulation), sur toutes les
@@ -54,7 +56,8 @@ réglages sur la tranche LV1 concernée.
    barre des tâches et remet la LV1 au premier plan.
 
 Conditions : l'appli tourne sur **le même PC que la LV1** (sinon gains, scènes et routing marchent, sans
-couleurs ni intégration LV1) ; testé sur **LV1 V17**.
+couleurs ni intégration LV1) ; testé sur **LV1 V17** ; **un seul écran** (pages détachées sur un 2e écran : pas
+prises en charge en 3.0, rester en 2.7.1).
 
 ## Comment ça marche
 
@@ -62,7 +65,7 @@ couleurs ni intégration LV1) ; testé sur **LV1 V17**.
   `/config/userrout/*`, `/outputs/*`). Le numéro EXP de chaque préampli est relu en direct dans le routing.
 - **Côté LV1** : lecture de sa base de travail `C:\Users\Public\Waves Audio\eMotion\Sessions\CurrentLV1.dat`
   (SQLite, réécrite ~1 s après chaque changement, sans sauvegarde) : patch canal ← carte/voie, noms, couleurs,
-  entrée A/B, couches, mode affiché. Toujours sur une **copie** (jamais de verrou sur les fichiers de la LV1).
+  entrée A/B, couches, mode affiché, sections Top / Middle / Bottom et Big Fader. Toujours sur une **copie** (jamais de verrou sur les fichiers de la LV1).
   Aucun message OSC de la LV1 ne donne le patch (vérifié).
 - **Ce que la LV1 n'écrit nulle part** (onglet affiché, tranche sélectionnée, canal de la page Channel, pages
   détachées) est **lu à l'écran**, sur un fil séparé, et toujours vérifié contre le patch.
@@ -100,14 +103,15 @@ réseau de confiance seulement. Au-delà de 5 codes faux, pause croissante.
 ```
 python x32_gain_recall.py            # appli complète (serveur, page web, float, icône)
 python x32_gain_recall.py --sim      # avec une X32 simulée, sans console
-python x32_gain_float.py --direct --ip 192.168.1.50   # float seul, connexion directe à la console
+python x32_qt_float.py --direct --ip 192.168.1.50     # float seul, connexion directe à la console
+python x32_gain_recall.py --tk-float # avec l'ancien float (tk, 2.x)
 ```
 
 Options utiles de `x32_gain_recall.py` : `--ip`, `--web-port` (défaut 8032), `--no-browser`, `--no-float`,
 `--no-update-check`, `--data`, `--local-only` (pas d'accès réseau), `--lan-sans-mdp`, `--lan-nouveau-code`,
 `--lv1-map`, `--lv1-session`, `--lv1-sans-session`, `--lv1-device`, `--companion [URL]` (facultatif),
 `--no-colors`. Float : `--port`, `--direct`, `--ip`, `--sim`, `--sensitivity`, `--clip-db`.
-Python 3.8+ (bibliothèque standard, tkinter pour le float). La diode de niveau du float est un seuil sur le
+Python 3.8+ ; float : PySide6 (`pip install PySide6-Essentials`), sinon l'ancien float tk est utilisé. La diode de niveau du float est un seuil sur le
 niveau mesuré, pas le détecteur de clip de la console.
 
 ## Publier une version
@@ -118,7 +122,7 @@ niveau mesuré, pas le détecteur de clip de la console.
 
 ## Limites
 
-- Windows seulement ; la LV1 sur le même PC pour l'intégration.
+- Windows seulement ; la LV1 sur le même PC pour l'intégration ; un seul écran (3.0).
 - Testé sur LV1 V17 : une mise à jour de la LV1 peut demander une adaptation.
 - Page Channel lue en plein écran 1920x1080 et en fenêtre 1728x970 (autre taille : zone vide).
 - Plusieurs consoles : testé avec une X32 et le simulateur, pas encore avec trois consoles réelles.

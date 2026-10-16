@@ -14,10 +14,15 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v2.7.0 publiée (2026-10-14)
+## État actuel : v3.0.0 (2026-10-16)
 
-Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v2.7.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
-PR de la 2.7.0 (branche `dev-2.7`) fusionnée dans `main` ; avant : #9 (v2.6.0), #8 (v2.5.0), #7 (v2.4.0), #6 (v2.3.0)...
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
+Branche `dev-3.0` ; avant : #12 (v2.7.1), #11 (v2.7.0), #9 (v2.6.0), #8 (v2.5.0)...
+3.0.0 = float réécrit en Qt (multi-touch), calé au pixel, fixe, suit la section Input (Top/Middle/Bottom),
+languette dans la barre du haut, menu maison, panneaux tactiles. **Mono-écran** (choix de Joseph, « LV1
+classique ») : pages détachées sur un 2e écran NON prises en charge en 3.0 (code gardé, non garanti). Float tk
+en secours : `--tk-float` (et automatique si PySide6 ne se charge pas). Joseph : « en vrai c'est une v1 » —
+il reste des choses à régler. Détails : section « v3 en Qt ».
 2.7.0 = look du float (potards lisses, arc à la couleur du canal LV1, 48V rouge), croix du panneau Scènes gardée
 après un chargement + croix de la barre Console, « Lancer avec Windows » plus réécrit tout seul (Defender).
 2.6.0 = plusieurs consoles (une carte LV1 chacune : float, routing par console, scènes multi-consoles, panneau
@@ -432,8 +437,9 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   restant la fenêtre active. Ne pas revenir à QMenu. Piège PySide : `clicked` envoie un booléen qui écrase le 1er
   argument par défaut d'un lambda (`lambda sub=act: ...`) -> toujours `lambda _checked=False, ...`.
 - Écrans : un écran OK (Edit et Channel validés par Joseph le 2026-10-14) ; deux écrans : soucis à voir ensemble.
-- Reste : étape 4 = bascule (Qt par défaut, PySide6 dans `build.yml`, `--hidden-import x32_qt_float/x32_qt_panels/
-  PySide6.QtSvg`), Mixers détachés à vérifier sur la LV1 (languette à gauche des colonnes).
+- **Étape 4 faite (3.0.0)** : Qt par défaut (`FLOAT_QT = True`, `--tk-float` / `--float --tk` pour le tk), PySide6-Essentials
+  + `--hidden-import x32_qt_float x32_qt_panels PySide6.QtWidgets PySide6.QtSvg` dans `build.yml` et
+  `Compiler_en_exe.bat`. Pages détachées / 2 écrans : hors périmètre 3.0.
 - (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
   couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
 

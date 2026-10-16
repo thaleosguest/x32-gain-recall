@@ -2,6 +2,19 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [3.0.0] — 2026-10-16
+**Nouveau float, multi-touch** : réécrit en Qt pour suivre la LV1 au doigt, plusieurs potards à la fois.
+- **Multi-touch** : un doigt par potard, plusieurs potards en même temps (4 doigts testés), et un doigt sur le float pendant qu'un autre bouge un fader de la LV1. Même fluidité qu'avant.
+- **Calé au pixel dans les cadres « Preamp / Gain / 48 »** des tranches de la LV1 (relevé sur la LV1) : le contour des tranches et le liseré jaune de la tranche sélectionnée restent visibles. **Float fixe** : plus de déplacement ni de redimensionnement à la main ; menu → *Recaler sur la LV1* au besoin.
+- **Suit la section Input de la LV1** où qu'elle soit : rangée **Top**, **Middle** ou **Bottom** (panneau Modes : Top / Middle / Bottom, Big Fader), lue en direct dans la LV1. Le float se déplie dès que les cadres Preamp sont à l'écran, quel que soit le mode (avant : SndChk / Setup seulement), et se replie sinon (Big Fader avec Input hors du Top…).
+- **Languette dans la barre du haut de la LV1**, entre « Setup » et le cadenas, au même style : **logo** de l'appli (gris = pas de console, en couleur = connectée), chevron pour replier / déplier, **menu** (icône hamburger). La colonne de libellés à gauche des tranches est libérée.
+- **Menu refait pour le doigt** : grosses entrées, sous-menus Banque et Fond dans le menu (« ◂ Retour »), cases à cocher ; il se ferme sur une entrée, en retouchant le hamburger ou par sa croix.
+- **48V** : allumage / extinction en fondu, rouge lumineux avec halo. Cartes arrondies, potards en relief, valeur et 48V plus grands dans le cadre de la page Channel.
+- **Panneaux Scènes, Routing (éditeur en matrice ou en listes), Consoles et Console** refaits pour le doigt : gros boutons, listes qui défilent au doigt avec élan, confirmations au style du float.
+- **Mono-écran** : cette version suit la LV1 en **un seul écran** (fenêtre principale, plein écran ou fenêtrée). Les pages détachées sur un 2e écran (Mixer 1 / 2 dans leur propre fenêtre) **ne sont pas prises en charge** en 3.0 : le float peut s'y caler mal. Pour deux écrans, rester en 2.7.1.
+- Exe plus gros (~46 Mo au lieu de ~15 Mo : bibliothèques Qt) et 1 à 2 s de plus au lancement.
+- L'ancien float reste disponible en secours : `XM32_Gain_Recall_LV1.exe --tk-float`.
+
 ## [2.7.1] — 2026-10-14
 - **Correctif** : en 2.7.0, une fonction des nouveaux potards remplaçait par erreur celle qui lit la couleur d'un canal pour la page Channel ; un canal sans couleur connue pouvait arrêter le suivi de la LV1 par le float (passage devant / derrière, masquage).
 
