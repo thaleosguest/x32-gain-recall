@@ -14,7 +14,7 @@ from x32_qt_float import TXT, MUT, OK, AMBER, WARN, TEAL, PANEL, LINE2, Dialog, 
 
 BLUE = "#31b6f7"
 CYAN = "#3fd0ff"
-PANEL_W = {"scenes": 400, "routing": 420, "consoles": 430, "console": 460}
+PANEL_W = {"scenes": 460, "routing": 460, "consoles": 430, "console": 460}
 TITLES = {"scenes": "SCÈNES DE GAINS", "routing": "PROFILS DE ROUTING", "consoles": "CONSOLES",
           "console": "CONSOLE"}
 
@@ -209,7 +209,7 @@ class MenuPopup(QWidget):
         self.place()
         self.show()
         self.raise_()
-        self.app._z_state = None
+        self.app.raise_now(self)
 
     def _btn(self, text, cb):
         b = QPushButton(text)
@@ -232,6 +232,72 @@ class MenuPopup(QWidget):
             if y + self.height() > scr.bottom():
                 y = max(scr.top(), t.y() - self.height() - 4)
         self.move(x, y)
+
+
+# --------------------------------------------------------------------------
+#  Tuile « X32 Routing » sur la page Patch de la LV1
+# --------------------------------------------------------------------------
+class PatchButton(QWidget):
+    """Sur la page Patch de la LV1 (3.0.1, demande de Joseph) : une tuile au style des appareils du rack (« 1. X32RACK »,
+    « 2. LV1-PORT » : 96x96 px en 1920x1080, bandeau bleu (68,138,255), corps noir, contour gris (160), bleu clair
+    (56,201,255) quand elle est choisie), dans l'espace vide à droite. Ouvre le panneau Routing."""
+
+    def __init__(self, app):
+        super().__init__(None, Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
+        self.app = app
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.down = False
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        w, h = self.width(), self.height()
+        on = self.app.panel.mode == "routing" and self.app.panel.isVisible()
+        k = w / 96.0
+        p.fillRect(QRectF(0, 0, w, h), QColor(0, 0, 0))
+        head = QRectF(0, 0, w, 28 * k)
+        p.fillRect(head, QColor(68, 138, 255))
+        p.setPen(QColor(0, 0, 0))
+        p.setFont(QFont("Segoe UI", max(6, round(8 * k)), QFont.Bold))
+        p.drawText(head.adjusted(5 * k, 0, 0, 0), Qt.AlignVCenter | Qt.AlignLeft, "X32 / M32")
+        # petite matrice de routing, comme la grille du patch de la LV1
+        g = QRectF(18 * k, 36 * k, 60 * k, 32 * k)
+        p.setPen(QPen(QColor(60, 60, 60), 1))
+        cols, rows = 6, 3
+        for i in range(cols + 1):
+            x = g.left() + i * g.width() / cols
+            p.drawLine(QPointF(x, g.top()), QPointF(x, g.bottom()))
+        for j in range(rows + 1):
+            y = g.top() + j * g.height() / rows
+            p.drawLine(QPointF(g.left(), y), QPointF(g.right(), y))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(56, 201, 255))
+        cw, ch = g.width() / cols, g.height() / rows
+        for i, j in ((0, 0), (1, 1), (2, 2), (4, 0), (5, 1)):
+            p.drawRect(QRectF(g.left() + i * cw + 1.5, g.top() + j * ch + 1.5, cw - 3, ch - 3))
+        p.setPen(QColor(255, 255, 255))
+        p.setFont(QFont("Segoe UI", max(6, round(9 * k)), QFont.Bold))
+        p.drawText(QRectF(0, 70 * k, w, 22 * k), Qt.AlignCenter, "ROUTING")
+        p.setBrush(Qt.NoBrush)
+        if on or self.down:
+            p.setPen(QPen(QColor(56, 201, 255), 3 * k))
+            p.drawRect(QRectF(1.5 * k, 1.5 * k, w - 3 * k, h - 3 * k))
+        else:
+            p.setPen(QPen(QColor(160, 160, 160), 1))
+            p.drawRect(QRectF(0.5, 0.5, w - 1, h - 1))
+        p.end()
+
+    def mousePressEvent(self, _e):
+        self.down = True
+        self.update()
+
+    def mouseReleaseEvent(self, e):
+        self.down = False
+        if self.rect().contains(e.position().toPoint()):
+            self.app.panel.toggle("routing")
+            self.app.raise_now(self.app.panel)
+        self.update()
 
 
 # --------------------------------------------------------------------------
@@ -313,9 +379,14 @@ class Panel(QWidget):
         self.place()
 
     def place(self):
-        """Sous les colonnes, au-dessus s'il n'y a pas la place en bas."""
+        """Sous les colonnes, au-dessus s'il n'y a pas la place en bas ; page Patch de la LV1 : sous la tuile
+        « X32 Routing », calé sur son bord droit."""
         fw = self.app.win
-        x, y = fw.x(), fw.y() + fw.height() + 6
+        pb = self.app.patch_btn
+        if pb.isVisible() and self.mode == "routing":
+            x, y = pb.x() + pb.width() - self.width(), pb.y() + pb.height() + 8
+        else:
+            x, y = fw.x(), fw.y() + fw.height() + 6
         scr = self.screen().availableGeometry() if self.screen() else None
         if scr and y + self.height() > scr.bottom():
             y = max(scr.top(), fw.y() - self.height() - 6)
@@ -327,6 +398,29 @@ class Panel(QWidget):
         self.status.setStyleSheet("color: %s;" % color)
 
     # -- scènes ----------------------------------------------------------------
+    def _item(self, v, name, sub, active, badge, buttons):
+        """Une ligne de liste : nom (+ badge si actif) et détail, puis les boutons EN TOUTES LETTRES sur une 2e
+        ligne (3.0.1, demande de Joseph : plus de petits symboles)."""
+        f = row_frame(active)
+        g = QVBoxLayout(f)
+        g.setContentsMargins(10, 6, 8, 8)
+        g.setSpacing(4)
+        top = QHBoxLayout()
+        top.addWidget(label(name, prop="name"))
+        if active:
+            top.addWidget(label("  ● " + badge, prop="badge"))
+        top.addStretch(1)
+        g.addLayout(top)
+        if sub:
+            g.addWidget(label(sub, mut=True))
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        for text, cb, kind in buttons:
+            row.addWidget(button(text, cb, kind))
+        row.addStretch(1)
+        g.addLayout(row)
+        v.addWidget(f)
+
     def _fill_scenes(self, v):
         app, b = self.app, self.app.backend
         save = QHBoxLayout()
@@ -342,26 +436,11 @@ class Panel(QWidget):
                               "la première, à partir des gains actuels.", mut=True))
         for p in items:
             pid, nm = p["id"], p.get("name", "?")
-            active = pid == app.active_scene_id
-            f = row_frame(active)
-            h = QHBoxLayout(f)
-            h.setContentsMargins(10, 6, 6, 6)
-            t = QVBoxLayout()
-            t.setSpacing(0)
-            top = QHBoxLayout()
-            top.addWidget(label(nm, prop="name"))
-            if active:
-                top.addWidget(label("  ● ACTIVE", prop="badge"))
-            top.addStretch(1)
-            t.addLayout(top)
-            if p.get("created"):
-                t.addWidget(label(p["created"], mut=True))
-            h.addLayout(t, 1)
-            h.addWidget(button("Charger", lambda _c=False, pid=pid, nm=nm: self.recall_scene(pid, nm), "ok"))
-            h.addWidget(button("⟳", lambda _c=False, pid=pid, nm=nm: self.overwrite_scene(pid, nm), "amber"))
-            h.addWidget(button("✎", lambda _c=False, pid=pid, nm=nm: self.rename_scene(pid, nm)))
-            h.addWidget(button("✕", lambda _c=False, pid=pid, nm=nm: self.delete_scene(pid, nm), "warn"))
-            v.addWidget(f)
+            self._item(v, nm, p.get("created", ""), pid == app.active_scene_id, "ACTIVE", [
+                ("Charger", lambda _c=False, pid=pid, nm=nm: self.recall_scene(pid, nm), "ok"),
+                ("Écraser", lambda _c=False, pid=pid, nm=nm: self.overwrite_scene(pid, nm), "amber"),
+                ("Renommer", lambda _c=False, pid=pid, nm=nm: self.rename_scene(pid, nm), None),
+                ("Supprimer", lambda _c=False, pid=pid, nm=nm: self.delete_scene(pid, nm), "warn")])
 
     def save_scene(self, name):
         app = self.app
@@ -437,34 +516,43 @@ class Panel(QWidget):
             self.rebuild(True)
 
     # -- routing ---------------------------------------------------------------
+    def _active_routings(self):
+        """{id de profil: [n° de console]} : dernier routing chargé sur chaque console (mémorisé par l'appli)."""
+        out = {}
+        for c in self.app._consoles or []:
+            act = c.get("routing_active") or {}
+            if act.get("id"):
+                out.setdefault(act["id"], []).append(c["n"])
+        return out
+
     def _fill_routing(self, v):
         b = self.app.backend
         items = b.routings() if hasattr(b, "routings") else []
-        if not items:
-            v.addWidget(label("Aucun profil (ou appli principale non connectée).", mut=True))
-            return
         editable = hasattr(b, "routing_model")
-        for p in items:
-            counts = p.get("counts", {})
-            f = row_frame()
-            h = QHBoxLayout(f)
-            h.setContentsMargins(10, 6, 6, 6)
-            t = QVBoxLayout()
-            t.setSpacing(0)
-            t.addWidget(label(p.get("name", "?"), prop="name"))
-            t.addWidget(label("%d lignes E/S · %s" % (counts.get("io", 0), p.get("source", "")), mut=True))
-            h.addLayout(t, 1)
-            if editable:
-                h.addWidget(button("✎", lambda _c=False, pid=p["id"]: self.app.edit_routing({"id": pid})))
-            h.addWidget(button("Charger", lambda _c=False, pid=p["id"], n=p.get("name", "?"):
-                               self.apply_routing(pid, n), "ok"))
-            v.addWidget(f)
         if editable:
             def from_console():
                 t = pick_console(self.app, "Partir du routing de quelle console ?")
                 if t is not None:
                     self.app.edit_routing({"console": True, "target": t})
-            v.addWidget(button("✎ Nouveau routing perso, depuis la console…", from_console))
+            v.addWidget(button("Créer un nouveau routing", from_console, "ok"))
+        if not items:
+            v.addWidget(label("Aucun profil (ou appli principale non connectée).", mut=True))
+            return
+        active = self._active_routings()
+        several = len(self.app._consoles or []) > 1
+        for p in items:
+            pid, nm = p["id"], p.get("name", "?")
+            cons = active.get(pid, [])
+            badge = "ACTIF" + ((" (console %s)" % ", ".join(str(n + 1) for n in cons)) if several else "")
+            counts = p.get("counts", {})
+            buttons = [("Charger", lambda _c=False, pid=pid, nm=nm: self.apply_routing(pid, nm), "ok")]
+            if editable:
+                buttons.append(("Modifier", lambda _c=False, pid=pid: self.app.edit_routing({"id": pid}), None))
+            if hasattr(b, "_post"):
+                buttons += [("Renommer", lambda _c=False, pid=pid, nm=nm: self.rename_routing(pid, nm), None),
+                            ("Supprimer", lambda _c=False, pid=pid, nm=nm: self.delete_routing(pid, nm), "warn")]
+            self._item(v, nm, "%d lignes E/S · %s" % (counts.get("io", 0), p.get("source", "")), bool(cons),
+                       badge, buttons)
 
     def apply_routing(self, pid, name):
         app = self.app
@@ -477,7 +565,28 @@ class Panel(QWidget):
                       "Charger", danger=True).ask():
             return
         r = app.backend.apply_routing(pid, target)
-        self.say(("Routing « %s » envoyé" % name, OK) if r.get("ok") else (r.get("error", "Échec"), WARN))
+        self.say(*(("Routing « %s » envoyé" % name, OK) if r.get("ok") else (r.get("error", "Échec"), WARN)))
+        QTimer.singleShot(600, lambda: self.rebuild(True) if self.mode == "routing" else None)
+
+    def rename_routing(self, pid, name):
+        r = Dialog(self.app, "Renommer le routing", "Nouveau nom :", "Renommer", edit=name).ask()
+        if r is None:
+            return
+        new = r.strip()[:60]
+        if not new:
+            self.say("Le nom ne peut pas être vide.", WARN)
+            return
+        res = self.app.backend._post("/api/routings/rename", {"id": pid, "name": new}) or {}
+        self.say(*(("Routing renommé en « %s »" % new, OK) if res.get("ok") else ("Renommage impossible", WARN)))
+        self.rebuild(True)
+
+    def delete_routing(self, pid, name):
+        if not Dialog(self.app, "Supprimer définitivement ?", "Supprimer le routing « %s » de la liste ? La console "
+                      "n'est pas touchée. Cette action est irréversible." % name, "Supprimer", danger=True).ask():
+            return
+        res = self.app.backend._post("/api/routings/delete", {"id": pid}) or {}
+        self.say(*(("Routing « %s » supprimé" % name, OK) if res.get("ok") else ("Suppression impossible", WARN)))
+        self.rebuild(True)
 
     def say_pair(self, pair):
         self.say(*pair)

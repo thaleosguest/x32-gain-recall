@@ -14,7 +14,15 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v3.0.0 (2026-10-16)
+## État actuel : v3.0.0 publiée, 3.0.1 en test (2026-10-16)
+
+3.0.1 (branche `dev-3.0`) : plus de navigateur au lancement (`--browser` pour l'ouvrir ; `show_app` = float seul),
+tuile « X32 Routing » sur la page Patch (`PatchButton`, `PATCH_BOX` 1782,110 96x96 /1920x1080, style des tuiles
+d'appareils : bandeau (68,138,255), contour 160 / 56,201,255), panneau Routing en boutons texte + routing actif
+(`remember_routing` / `routing_active` par IP dans les settings, `consoles[].routing_active`), z-order : autre
+appli active -> `place_bottom` (HWND_BOTTOM) au lieu de « sous l'appli active » (float vu au-dessus de Reaper),
+`SetWinEventHook` (fenêtre active, réduction) -> `follow_lv1` immédiat, `raise_now` à l'ouverture des menus /
+panneaux, `TOOL_TAP_PX` 28.
 
 Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.0 (`XM32_Gain_Recall_LV1.exe` + `.sha256`).
 Branche `dev-3.0` ; avant : #12 (v2.7.1), #11 (v2.7.0), #9 (v2.6.0), #8 (v2.5.0)...

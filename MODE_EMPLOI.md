@@ -1,6 +1,6 @@
 <img src="assets/logo.svg" width="72" alt="Logo">
 
-# Mode d'emploi — X/M32 Gain Recall for eMotion LV1 (v3.0.0)
+# Mode d'emploi — X/M32 Gain Recall for eMotion LV1 (v3.0.1)
 
 *Pour ceux qui découvrent l'appli. Comptez 10 minutes la première fois, ensuite c'est un double-clic.*
 
@@ -47,17 +47,17 @@ scènes de gains (une par groupe ou par date, par exemple).
 
 1. Au lancement :
    - le **float** s'ouvre, la petite fenêtre des potards (voir plus bas) ;
-   - la **page de l'appli** s'ouvre dans le navigateur, **réduite dans la barre des tâches** pour ne pas
-     passer devant la LV1 : cliquez-la pour l'ouvrir. Sur ce PC, pas de code à taper ;
+   - pas de page dans le navigateur : **tout se fait dans les menus du float**. La page de l'appli reste
+     accessible si besoin (icône près de l'horloge → *Ouvrir la page*, ou menu du float) ;
    - une **icône** apparaît près de l'horloge (au besoin dans la flèche ˄ des icônes cachées) : c'est
      l'appli. Clic droit : *Ouvrir la page*, *Afficher le float*, *Lancer avec Windows*, *Quitter*.
      Double-clic : ouvre la page.
 
    Une fois le float ouvert, **la LV1 repasse au premier plan** toute seule (si elle est lancée).
-   Relancer l'exe alors que l'appli tourne déjà ré-affiche simplement la page et le float.
+   Relancer l'exe alors que l'appli tourne déjà ré-affiche simplement le float.
 2. La première fois, l'appli **cherche la console toute seule** sur le réseau. Si elle en trouve une, elle
    s'y connecte : rien à faire. Si la console n'est pas encore allumée, elle réessaie pendant 2 minutes.
-   - Plusieurs consoles sur le réseau, ou aucune trouvée ? Dans la page (ou ⋮ → Console dans le float) :
+   - Plusieurs consoles sur le réseau, ou aucune trouvée ? Menu du float → **Console** :
      **Scanner**, choisissez la console, puis **Connecter**. Ou tapez son IP (sur la X32 :
      *Setup → Network*).
 3. Les potards prennent les gains de la console (**logo en couleur** dans la languette du float, gris tant
@@ -79,8 +79,8 @@ Lancez la LV1 avec votre session. En haut de chaque voie de la page, vous devez 
 
 ## 4. Le float, la fenêtre posée sur la LV1
 
-C'est l'outil de tous les jours. Il s'ouvre **tout seul au lancement**. Fermé par erreur ? Bouton
-**Float** en haut de la page du navigateur.
+C'est l'outil de tous les jours. Il s'ouvre **tout seul au lancement**. Fermé par erreur ? Relancez l'exe, ou
+icône près de l'horloge → *Afficher le float*.
 
 ### Sa place : rien à faire
 Le float **se cale tout seul** dans les cadres vides « Preamp / Gain / 48 » des 16 tranches de la LV1,
@@ -158,6 +158,11 @@ doigt et se ferment avec leur croix **✕** (en haut à droite).
 > `XM32_Gain_Recall_LV1.exe --tk-float`.
 
 ## 5. Le routing de la console
+
+**Depuis la LV1** : sur la page **Patch**, une tuile **X32 Routing** (à droite des appareils du rack, au même
+style) ouvre le panneau Routing. Aussi : menu du float → **Routing…**. Chaque routing a ses boutons
+**Charger**, **Modifier**, **Renommer**, **Supprimer** ; le **routing actif** (le dernier chargé sur la console)
+est surligné ; **Créer un nouveau routing** part du routing actuel de la console.
 
 L'appli charge sur la X32 / M32 un **routing tout prêt** pour la LV1 : quelles entrées partent vers la
 carte (EXP 1-32), et quels retours de la LV1 sortent où. Page : onglet **Routing** ; float : **⋮ →

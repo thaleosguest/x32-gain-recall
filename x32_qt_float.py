@@ -26,7 +26,7 @@ from x32_gain_float import (                                  # noqa: E402
     APP_SHORT, APP_VERSION, APP_AUTHOR, AUTO_H, AUTO_OPEN_MODES, AUTO_PITCH, AUTO_X0, AUTO_Y0, BANKS,
     DEFAULT_THEME, GAIN_DB_PER_PX, GAIN_MAX, GAIN_MIN, LAYOUT_VERSION, LV1_BANKS, LV1_TABS, MIXER_TABS,
     CH_BOX, OLD_TAB_W, OLD_TITLE_H, SEL_BOX, STRIP_EXTRA_H, TAB_W, THEMES, client_rect, exp_txt, find_lv1_window,
-    foreground_window, join_tags, lv1_tab, lv1_windows, monitor_rect, place_below, quantize, set_theme_map,
+    foreground_window, join_tags, lv1_tab, lv1_windows, monitor_rect, quantize, set_theme_map,
     set_topmost, strip_tag, tc, window_alive, window_iconic, window_pid)
 
 from PySide6.QtCore import Qt, QRectF, QPointF, QPoint, QTimer, QEvent, QByteArray  # noqa: E402
@@ -37,7 +37,7 @@ from PySide6.QtGui import (QPainter, QColor, QPen, QFont, QFontMetrics, QRadialG
 from PySide6.QtWidgets import (QApplication, QWidget, QDialog, QLabel, QLineEdit,   # noqa: E402
                                QPushButton, QVBoxLayout, QHBoxLayout)
 
-QT_FLOAT_VERSION = "3.0.0"
+QT_FLOAT_VERSION = "3.0.1"
 
 # couleurs du float tk (teintes du thème d'origine, converties par tc() pour le fond choisi)
 BG, PANEL, BOX, LINE2 = "#08090a", "#111213", "#0d0e0f", "#3a3e43"
@@ -56,8 +56,20 @@ BAY_Y0 = {"top": AUTO_Y0, "middle": 505 / 1080.0, "bottom": 781 / 1080.0}
 # y 8..49 en 1920x1080) ; calée par la droite (le cadenas ne bouge pas quand des pages sont détachées)
 TOOL_BOX = (1290 / 1920.0, 8 / 1080.0, 78 / 1920.0, 42 / 1080.0)
 TOOL_ITEMS = ("logo", "arrow", "more")
+TOOL_TAP_PX = 28                # languette : un doigt qui glisse un peu reste un « tap » (menus qui ne s'ouvraient pas)
+# Tuile « X32 Routing » de la page Patch : place des tuiles d'appareils (96x96 à y 110 en 1920x1080), dans l'espace
+# vide à droite (x 1771..1887, relevé sur capture de Joseph le 2026-10-16)
+PATCH_BOX = (1782 / 1920.0, 110 / 1080.0, 96 / 1920.0, 96 / 1080.0)
 TOOL_SPLIT = (0.40, 0.29, 0.31)  # parts de la largeur de la languette (logo plus large)
 PH_MS = 260                     # 48V : allumage / extinction en fondu
+
+
+def place_bottom(me):
+    """Tout en bas de la pile des fenêtres (HWND_BOTTOM), sans l'activer."""
+    ctypes, u32 = xf._user32()
+    if u32:
+        xf._wintypes(u32, ctypes)
+        u32.SetWindowPos(me, 1, 0, 0, 0, 0, xf._SWP)
 
 
 def qc(color):
@@ -588,7 +600,7 @@ class ToolBar(QWidget):
 
     def _move(self, pid, pos, gpos):
         g = self.points.get(pid)
-        if g and abs(QPointF(gpos).x() - g["p0"].x()) + abs(QPointF(gpos).y() - g["p0"].y()) > TAP_PX:
+        if g and abs(QPointF(gpos).x() - g["p0"].x()) + abs(QPointF(gpos).y() - g["p0"].y()) > TOOL_TAP_PX:
             g["moved"] = True
 
     def _release(self, pid):
@@ -864,6 +876,9 @@ class QtFloat:
         self.qp = qp
         self.panel = qp.Panel(self)
         self.menu = qp.MenuPopup(self)
+        self.patch_btn = qp.PatchButton(self)
+        self._fg_hook = None
+        self._install_fg_hook()
         try:
             icon = QIcon()
             for d in xf.ICON_PNG_B64:
@@ -1240,11 +1255,12 @@ class QtFloat:
         self.ch_box.sync(self._ch_page if (lv1_up and not self.detached) else None, self._ch_hwnd, CH_BOX)
         if shown:
             self._place_tool(lv1)
+        self._sync_patch_btn(lv1 if (lv1_up and not self.detached and self._lv1_tab == "Patch") else None)
         self.sync_panel()
         if not shown and self.menu.isVisible():
             self.menu.hide()
-        hwnds = [int(w.winId()) for w in (self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu)
-                 if w.isVisible()]
+        self._front = bool(front)
+        hwnds = [int(w.winId()) for w in self._windows() if w.isVisible()]
         if hwnds:
             key = (len(hwnds),)
             if front:
@@ -1252,21 +1268,70 @@ class QtFloat:
                     for h in hwnds:
                         set_topmost(h, True)
                     self._z_state = ("top",) + key
-            elif self._z_state != (fg,) + key:
+            elif self._z_state != ("bottom",) + key:
+                # autre appli active : tout en dessous (derrière la LV1 aussi). Avant (3.0.0) : juste sous l'appli
+                # active, donc au-dessus de toutes les autres fenêtres (vu par Joseph au-dessus de Reaper)
                 for h in hwnds:
                     set_topmost(h, False)
-                    place_below(h, fg)
-                self._z_state = (fg,) + key
+                    place_bottom(h)
+                self._z_state = ("bottom",) + key
+
+    def _windows(self):
+        return (self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu, self.patch_btn)
+
+    def raise_now(self, w):
+        """Fenêtre qui vient de s'ouvrir (menu, panneau...) : au premier plan tout de suite si la LV1 ou le float
+        est actif, sans attendre le tour suivant (menus qui avaient du mal à apparaître)."""
+        if w.isVisible() and getattr(self, "_front", True):
+            set_topmost(int(w.winId()), True)
+        self._z_state = None
+
+    def _install_fg_hook(self):
+        """Réagit tout de suite quand la fenêtre active change (au lieu d'attendre le tour de 100 ms) : float qui
+        arrivait avec du retard, ou restait devant une autre appli."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+            proto = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND, wintypes.LONG,
+                                       wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
+            self._fg_cb = proto(lambda *_a: QTimer.singleShot(0, self.follow_lv1))
+            u32 = ctypes.windll.user32
+            u32.SetWinEventHook.restype = wintypes.HANDLE
+            u32.SetWinEventHook.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, proto, wintypes.DWORD,
+                                            wintypes.DWORD, wintypes.DWORD]
+            # 3 = EVENT_SYSTEM_FOREGROUND ; 0x16/0x17 = réduction / restauration ; 0 = WINEVENT_OUTOFCONTEXT
+            self._fg_hook = [u32.SetWinEventHook(a, b, None, self._fg_cb, 0, 0, 0) for a, b in ((3, 3), (0x16, 0x17))]
+        except (AttributeError, OSError):
+            self._fg_hook = None
+
+    def _sync_patch_btn(self, lv1):
+        """Tuile « X32 Routing » sur la page Patch de la LV1 (fenêtre principale)."""
+        pb = self.patch_btn
+        rect = client_rect(lv1) if lv1 else None
+        if not rect or rect[2] < 400:
+            if pb.isVisible():
+                pb.hide()
+            return
+        x, y, w, h = rect
+        geom = (x + round(w * PATCH_BOX[0]), y + round(h * PATCH_BOX[1]), round(w * PATCH_BOX[2]),
+                round(h * PATCH_BOX[3]))
+        if (pb.x(), pb.y(), pb.width(), pb.height()) != geom:
+            pb.setGeometry(*geom)
+        if not pb.isVisible():
+            pb.show()
+            self.raise_now(pb)
+        pb.update()
 
     def sync_panel(self):
         """Panneau (Scènes, Routing, Consoles, connexion) : visible avec les colonnes, caché sinon."""
         pn = self.panel
-        show = bool(pn.mode) and bool(self._shown) and not self.collapsed
+        on_patch = pn.mode == "routing" and self.patch_btn.isVisible()     # page Patch : sous la tuile Routing
+        show = bool(pn.mode) and ((bool(self._shown) and not self.collapsed) or on_patch)
         if show:
             pn.place()
             if not pn.isVisible():
                 pn.show()
-                self._z_state = None
+                self.raise_now(pn)
         elif pn.isVisible():
             pn.hide()
 

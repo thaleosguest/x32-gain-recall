@@ -51,7 +51,7 @@ from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1474,7 +1474,8 @@ def merged_snapshot():
                 snap["exp_map"][k * N_HA + int(i)] = k * 1000 + int(e)
         consoles.append({"n": k, "ip": client.ip, "name": (client.info or {}).get("name"), "card": card,
                          "connected": cs["connected"], "trying": cs["trying"],
-                         "routing_last": cs["routing_last"], "routing_can_undo": cs["routing_can_undo"]})
+                         "routing_last": cs["routing_last"], "routing_can_undo": cs["routing_can_undo"],
+                         "routing_active": routing_active(client.ip)})
     snap["consoles"] = consoles
     snap["lv1_cards"] = LV1.cards() if LV1 else []
     if len(consoles) > 1:
@@ -1873,8 +1874,8 @@ def quit_app():
 
 
 def show_app():
-    """Re-afficher (exe relance alors qu'il tourne deja, ou icone) : la page au premier plan, et le float."""
-    webbrowser.open(LOCAL_URL)
+    """Re-afficher (exe relance alors qu'il tourne deja) : le float (3.0.1 : plus la page, tout se fait dans le
+    float ; la page reste dans l'icone et le menu du float)."""
     launch_float_window()
 
 
@@ -1948,8 +1949,8 @@ def _watch_detached_mixers():
 def _startup_windows(url, browser, float_win, at_login=False):
     """Au lancement : navigateur (en arriere-plan), puis le float, qui est l'outil de tous les jours, puis la LV1
     au premier plan. Ouverture de session (--at-login) : pas de navigateur, le float attend la LV1."""
-    time.sleep(0.6)
     if browser:
+        time.sleep(0.6)
         webbrowser.open(url)
         _push_browser_back()
     if float_win:
@@ -2201,6 +2202,8 @@ class Handler(BaseHTTPRequestHandler):
                                "unreadable": sum(1 for r in rows if r["current"] is None)})
         if p == "/api/routings/apply":
             result = client.apply_routing(nodes, pr["name"])
+            result["id"] = pr["id"]
+            remember_routing(client.ip, pr["id"], pr["name"])
             threading.Thread(target=lambda: (time.sleep(0.7), client.refresh_exp_map()), daemon=True).start()
             return self._json({"ok": True, "result": result})
         self._json({"error": "introuvable"}, 404)
@@ -3421,6 +3424,29 @@ def _first_connect(tries=12, every=10.0):
         print("%d consoles trouvees sur le reseau : choisir dans la barre de connexion." % len(found))
 
 
+_ROUTING_ACTIVE = {}      # ip -> dernier routing chargé (copie en mémoire de settings["routing_active"])
+
+
+def remember_routing(ip, pid, name):
+    """Dernier routing chargé sur chaque console (par adresse IP) : affiché « actif » dans le float (3.0.1)."""
+    s = load_settings()
+    act = dict(s.get("routing_active") or {})
+    act[str(ip)] = {"id": pid, "name": name, "t": time.time()}
+    s["routing_active"] = act
+    _ROUTING_ACTIVE.clear()
+    _ROUTING_ACTIVE.update(act)
+    try:
+        save_settings(s)
+    except OSError:
+        pass
+
+
+def routing_active(ip):
+    if not _ROUTING_ACTIVE:
+        _ROUTING_ACTIVE.update(load_settings().get("routing_active") or {"": None})
+    return _ROUTING_ACTIVE.get(str(ip))
+
+
 def remember_console(ip):
     """Derniere console demandee, reconnectee au prochain lancement (x32_gain_recall_settings.json)."""
     s = load_settings()
@@ -3540,7 +3566,8 @@ def main():
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
-    ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur")
+    ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur (defaut depuis la 3.0.1)")
+    ap.add_argument("--browser", action="store_true", help="ouvre aussi la page dans le navigateur au lancement")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
     ap.add_argument("--tk-float", action="store_true", help=argparse.SUPPRESS)   # secours : float tk de la 2.x
     ap.add_argument("--qt-float", action="store_true", help=argparse.SUPPRESS)   # (versions de test 3.0 : défaut)
@@ -3722,7 +3749,8 @@ def main():
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()
-    threading.Thread(target=_startup_windows, args=(url, not a.no_browser, not a.no_float, a.at_login),
+    # 3.0.1 : plus de page au lancement (demande de Joseph : tout se fait dans le float) ; --browser pour l'ouvrir
+    threading.Thread(target=_startup_windows, args=(url, a.browser and not a.no_browser, not a.no_float, a.at_login),
                      daemon=True).start()
     try:
         srv.serve_forever()
