@@ -190,6 +190,20 @@ EN = {
     "%d consoles connectées": "%d consoles connected",
     "Aucune console trouvée pour l'instant : menu → Console.": "No console found yet: menu → Console.",
     "Recherche de la console…": "Looking for the console…",
+    # --- PATCH MAP (3.1)
+    "PATCH MAP": "PATCH MAP",
+    "Patch map…": "Patch map…",
+    "Rechercher : canal, EXP, source (A1, L3…)": "Search: channel, EXP, source (A1, L3…)",
+    "EXP": "EXP",
+    "EXP ": "EXP ",
+    "SOURCE X32": "X32 SOURCE",
+    "CANAL X32": "X32 CHANNEL",
+    "CANAL LV1": "LV1 CHANNEL",
+    "(sans nom)": "(no name)",
+    "non patché": "not patched",
+    "Aucune correspondance.": "No match.",
+    "Routing de la console pas encore lu : sources inconnues (menu → Console).":
+        "Console routing not read yet: sources unknown (menu → Console).",
     # --- icône près de l'horloge
     "Ouvrir la page": "Open the web page",
     "Afficher le float": "Show the float",

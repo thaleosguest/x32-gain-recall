@@ -15,9 +15,9 @@ from x32_qt_float import TXT, MUT, OK, AMBER, WARN, TEAL, PANEL, LINE2, Dialog, 
 
 BLUE = "#31b6f7"
 CYAN = "#3fd0ff"
-PANEL_W = {"scenes": 460, "routing": 460, "consoles": 430, "console": 460}
+PANEL_W = {"scenes": 460, "routing": 460, "consoles": 430, "console": 460, "patchmap": 600}
 TITLES = {"scenes": "SCÈNES DE GAINS", "routing": "PROFILS DE ROUTING", "consoles": "CONSOLES",
-          "console": "CONSOLE"}
+          "console": "CONSOLE", "patchmap": "PATCH MAP"}
 
 CSS = """
 QFrame#panel { background: %(panel)s; border: 1px solid %(line)s; border-radius: 10px; }
@@ -487,6 +487,63 @@ class Panel(QWidget):
     def say(self, text, color=MUT):
         self.status.setText(text)
         self.status.setStyleSheet("color: %s;" % color)
+
+    # -- patch map ------------------------------------------------------------
+    def _fill_patchmap(self, v):
+        """EXP -> source X32 -> canal X32 -> canal LV1 (x32_gain_float.patch_map_rows), avec recherche ; les lignes
+        sont gardées et seulement masquées pendant la recherche (le champ garde le clavier)."""
+        import x32_gain_float as xf
+        app = self.app
+        snap = app.snap or {}
+        rows = xf.patch_map_rows(app.exp_map, app.lv1_sources, app.lv1_channels, snap.get("names"))
+        find = QLineEdit()
+        find.setPlaceholderText(T("Rechercher : canal, EXP, source (A1, L3…)"))
+        v.addWidget(find)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(2)
+        for c, (txt, w) in enumerate(zip((T("EXP"), T("SOURCE X32"), T("CANAL X32"), T("CANAL LV1")),
+                                         (62, 112, 112, 200))):
+            lab = label(txt)
+            lab.setObjectName("title")                   # en-tête au style des titres de panneau
+            grid.addWidget(lab, 0, c)
+            grid.setColumnMinimumWidth(c, w)
+        grid.setColumnStretch(3, 1)
+        lines = []
+        for r, row in enumerate(rows, 1):
+            lv1 = row["lv1"]
+            lv1_txt = ", ".join(lab + (" " + side if side else "") for _ch, side, lab, _col in lv1)
+            col = next((c for _ch, _s, _l, c in lv1 if c), None)
+            cells = [label(T("EXP ") + row["exp_txt"], prop="name"),
+                     label(row["src_long"] or "—", mut=not row["src_long"]),
+                     label(row["x32"] or T("(sans nom)"), mut=not row["x32"]),
+                     label(lv1_txt or T("non patché"), mut=not lv1_txt)]
+            for w in cells:
+                w.setWordWrap(False)
+            if col:
+                cells[3].setText('<span style="color:%s">■</span>&nbsp;&nbsp;%s' % (col, lv1_txt))
+            for c, w in enumerate(cells):
+                grid.addWidget(w, r, c)
+            text = " ".join([("exp%s" % row["exp_txt"]), "exp %s" % row["exp_txt"], row["src_long"] or "",
+                             row["src_short"] or "", row["x32"] or "", lv1_txt]).lower()
+            lines.append((text, cells))
+        v.addLayout(grid)
+        empty = label(T("Aucune correspondance."), mut=True)
+        empty.hide()
+        v.addWidget(empty)
+
+        def filt(q):
+            q = q.strip().lower().replace(" ", "")
+            shown = 0
+            for text, cells in lines:
+                ok = not q or q in text.replace(" ", "")
+                shown += ok
+                for w in cells:
+                    w.setVisible(ok)
+            empty.setVisible(not shown)
+        find.textChanged.connect(filt)
+        if not app.exp_map:
+            self.say(T("Routing de la console pas encore lu : sources inconnues (menu → Console)."), WARN)
 
     # -- scènes ----------------------------------------------------------------
     def _item(self, v, name, sub, active, badge, buttons):

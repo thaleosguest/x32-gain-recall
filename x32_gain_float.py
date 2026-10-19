@@ -1514,6 +1514,50 @@ def join_tags(idxs):
     return " + ".join(tags)
 
 
+def source_long(idx):
+    """Nom complet d'un préampli : « Local 3 », « AES50-A 1 », « AES50-B 5 » ; console 2… : « 2·AES50-A 1 »."""
+    if idx >= N_HA:
+        return "%d·%s" % (idx // N_HA + 1, source_long(idx % N_HA))
+    if idx < 32:
+        return "Local %d" % (idx + 1)
+    if idx < 80:
+        return "AES50-A %d" % (idx - 31)
+    return "AES50-B %d" % (idx - 79)
+
+
+def patch_map_rows(exp_map, lv1_sources, lv1_channels, names=None, n_exp=32):
+    """PATCH MAP (demande de Joseph, 20/10/2026 : « A1 = EXP 11, ça peut être compliqué à retrouver si le patch est
+    énorme » ; la LV1 ne laisse pas renommer ses sources EXP). Une ligne par EXP : EXP 1..n_exp de la console 1, plus
+    tout autre EXP connu (autres consoles : 1000·k + voie). Rien de deviné : source absente si l'EXP ne vient pas d'un
+    préampli (exp_map), canal LV1 absent s'il n'est patché nulle part.
+      exp_map : {préampli global: EXP} ; lv1_sources : {canal LV1: [EXP voie G, EXP voie D]} ;
+      lv1_channels : {"canal": {"label", "name", "color"}} ; names : noms des canaux X32, par préampli.
+    Rend [{"exp", "exp_txt", "src", "src_short", "src_long", "x32", "lv1": [(canal, côté, libellé, couleur)]}]."""
+    idx_of = {}
+    for k, e in (exp_map or {}).items():
+        if e:
+            idx_of.setdefault(int(e), int(k))
+    lv1_of = {}
+    for ch, exps in (lv1_sources or {}).items():
+        exps = [int(e) for e in exps if e]
+        for k, e in enumerate(exps):
+            side = "" if len(exps) == 1 else ("L" if k == 0 else "R")
+            info = (lv1_channels or {}).get(str(ch)) or (lv1_channels or {}).get(ch) or {}
+            lv1_of.setdefault(e, []).append((int(ch), side, info.get("label") or "In %s" % ch, info.get("color")))
+    exps = sorted(set(range(1, n_exp + 1)) | set(idx_of) | set(lv1_of))
+    rows = []
+    for e in exps:
+        idx = idx_of.get(e)
+        nm = None
+        if idx is not None and names and idx < len(names):
+            nm = names[idx]
+        rows.append({"exp": e, "exp_txt": exp_txt(e), "src": idx,
+                     "src_short": strip_tag(idx).replace(" ", "") if idx is not None else None,
+                     "src_long": source_long(idx) if idx is not None else None,
+                     "x32": nm or None, "lv1": sorted(lv1_of.get(e, []))})
+    return rows
+
+
 def confirm_float(owner, title, text, ok_text, danger=True):
     """Confirmation au style du float (2026-10-14, demande de Joseph : à la place de la boîte Windows) : fond
     sombre, voyant d'avertissement qui clignote, gros boutons pour le doigt. Renvoie True si confirmé."""

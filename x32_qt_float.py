@@ -1599,7 +1599,8 @@ class QtFloat:
                                                   self.save_soon()), self.cfg.get("value_pop", True)),
              "-",
              (T("Scènes…"), lambda: self.panel.toggle("scenes")),
-             (T("Routing…"), lambda: self.panel.toggle("routing"))]
+             (T("Routing…"), lambda: self.panel.toggle("routing")),
+             (T("Patch map…"), lambda: self.panel.toggle("patchmap"))]
         if hasattr(self.backend, "consoles_add"):
             e.append((T("Consoles…"), lambda: self.panel.toggle("consoles")))
         e.append((T("Console (IP, connexion)"), lambda: self.panel.toggle("console"), self.panel.mode == "console"))
