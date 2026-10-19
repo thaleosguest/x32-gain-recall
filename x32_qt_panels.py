@@ -494,7 +494,7 @@ class Panel(QWidget):
         sont gardées et seulement masquées pendant la recherche (le champ garde le clavier)."""
         import x32_gain_float as xf
         app = self.app
-        snap = app.snap or {}
+        snap = app.link.snap or {}                  # état de l'appli (Link), pas un attribut du float
         rows = xf.patch_map_rows(app.exp_map, app.lv1_sources, app.lv1_channels, snap.get("names"))
         find = QLineEdit()
         find.setPlaceholderText(T("Rechercher : canal, EXP, source (A1, L3…)"))

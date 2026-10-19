@@ -48,7 +48,7 @@ import x32_qt_panels as qp
 
 
 class Fake:
-    snap = {"names": names}
+    link = type("Link", (), {"snap": {"names": names}})()      # comme QtFloat : état dans app.link.snap
     win, patch_btn, show_btn = qp.QWidget(), qp.QWidget(), qp.QWidget()
     exp_map = {int(k): v for k, v in exp_map.items()}
     lv1_sources = {int(k): v for k, v in lv1_sources.items()}
