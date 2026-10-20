@@ -14,7 +14,14 @@ pendant les prestations.
 Repo : `https://github.com/thaleosguest/x32-gain-recall.git`
 Workspace local : `C:\Users\Joseph\Documents\x32-gain-recall-workspace`
 
-## État actuel : v3.0.1 publiée (2026-10-16)
+## État actuel : v3.1.0 publiée (2026-10-20)
+
+Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.1.0 ; PR #15 (dev-3.1, fusionnée par Joseph),
+tag v3.1.0 posé sur main. 3.1.0 = STAGE PATCH (patch map + faces des boîtiers, feuilles + export / import, renommage
+automatique et couleurs par clics des canaux LV1) + exe en administrateur (Lancer avec Windows = tâche planifiée).
+Détails : sections « PATCH MAP » et « PATCH DE SCÈNE ».
+
+### Avant : v3.0.1 (2026-10-16)
 
 Release : https://github.com/thaleosguest/x32-gain-recall/releases/tag/v3.0.1 ; PR #13 (v3.0.0) puis PR 3.0.1.
 
@@ -472,7 +479,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   mal », à peaufiner. Exe de test : `dist\3.1-test2`.
 - Reste : étiquettes « A1 · P170 ST » posées sur la page Patch de la LV1 (maquette validée, sur la colonne « Device
   Name » de la vue où les sources EXP sont en lignes) : il faut une capture plein écran de cette vue (géométrie,
-  zoom, défilement). Version : APP_VERSION 3.1.0 (20/10/2026, pas encore publiée).
+  zoom, défilement). Version : publiée en 3.1.0.
 
 ## PATCH DE SCÈNE (branche `dev-3.1`, commencé le 20/10/2026)
 
