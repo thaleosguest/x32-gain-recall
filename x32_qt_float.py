@@ -753,8 +753,12 @@ QPushButton#ok { background: %(okbg)s; color: %(okfg)s; }
 class Dialog(QDialog):
     """Fenêtre au style du float : gros boutons pour le doigt, toujours devant, centrée sur le float."""
 
-    def __init__(self, app, title, text, ok_text, danger=False, edit=None):
+    def __init__(self, app, title, text, ok_text, danger=False, edit=None, parent=None):
+        # parent : fenêtre sur laquelle se centrer (STAGE PATCH). Toujours devant : app._modal, passé en dernier par
+        # le float quand il remet ses fenêtres au premier plan (3.1 : un message passé derrière la fenêtre STAGE
+        # PATCH bloquait tout, Joseph : « il faut que tous les messages soient devant »)
         super().__init__(None, Qt.FramelessWindowHint | Qt.Dialog | Qt.WindowStaysOnTopHint)
+        self.app = app
         self.setAttribute(Qt.WA_TranslucentBackground, False)
         edge = WARN if danger else TEAL
         self.setStyleSheet(DLG_CSS % {"panel": tc(PANEL), "edge": edge, "txt": TXT, "line": tc(LINE2),
@@ -799,7 +803,7 @@ class Dialog(QDialog):
             tm.timeout.connect(self._tick)
             tm.start(450)
         self.adjustSize()
-        fw = app.win
+        fw = parent if parent is not None and parent.isVisible() else app.win
         c0 = fw.mapToGlobal(QPoint(fw.width() // 2, fw.height() // 2))
         self.move(max(0, c0.x() - self.width() // 2), max(0, c0.y() - self.height() // 2))
 
@@ -808,7 +812,11 @@ class Dialog(QDialog):
         self.led.setStyleSheet("color:%s; font: 18pt 'Segoe UI';" % (WARN if self._blink else "#3a1d1b"))
 
     def ask(self):
-        ok = self.exec() == QDialog.Accepted
+        self.app._modal = self
+        try:
+            ok = self.exec() == QDialog.Accepted
+        finally:
+            self.app._modal = None
         if self.edit is not None:
             return self.edit.text().strip() if ok else None
         return ok
@@ -846,6 +854,8 @@ class QtFloat:
         self._consoles, self._lv1_cards = [], []
         self._console_auto = None        # connexion ouverte d'office tant qu'aucune console (une fois)
         self.editor = None
+        self.stage_win = None            # STAGE PATCH (x32_qt_stage.StagePatch), créée à la 1re ouverture
+        self.stage_btn = None
         self.update = None
         self.autostart = None
         self.lv1_sources, self.exp_map, self.lv1_map, self.lv1_channels = {}, {}, {}, {}
@@ -905,6 +915,10 @@ class QtFloat:
         self.menu = qp.MenuPopup(self)
         self.patch_btn = qp.PatchButton(self)
         self.show_btn = qp.ShowButton(self)
+        if hasattr(self.backend, "stage"):          # STAGE PATCH (3.1) : bouton sous Input A / B de la page Patch
+            import x32_qt_stage
+            self.stage_btn = x32_qt_stage.StageButton(self)
+            self.stage_btn_box = x32_qt_stage.STAGE_BTN_BOX
         self.toast = qp.Toast(self)
         self._toast_state = None if not args.lv1_window else "done"     # message de démarrage : une fois
         self._t_start = time.time()
@@ -1294,6 +1308,10 @@ class QtFloat:
         main_lv1 = lv1 if (lv1_up and not self.detached) else None
         self._sync_tile(self.patch_btn, PATCH_BOX, main_lv1 if self._lv1_tab == "Patch" else None)
         self._sync_tile(self.show_btn, SHOW_BOX, main_lv1 if self._lv1_tab == "Show" else None)
+        if self.stage_btn:
+            self._sync_tile(self.stage_btn, self.stage_btn_box, main_lv1 if self._lv1_tab == "Patch" else None)
+        if self.stage_win:
+            self.stage_win.sync(main_lv1, self._lv1_tab == "Patch")
         self.sync_panel()
         if not shown and self.menu.isVisible():
             self.menu.hide()
@@ -1342,7 +1360,11 @@ class QtFloat:
         return None
 
     def _windows(self):
-        return (self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu, self.patch_btn, self.show_btn)
+        # ordre = ordre de passage au premier plan : le dernier finit DEVANT (STAGE PATCH en premier, messages et
+        # notification en dernier : jamais cachés, 3.1)
+        return tuple(w for w in (self.stage_win, self.win, self.tool, self.sel_box, self.ch_box, self.panel, self.menu,
+                                 self.patch_btn, self.show_btn, self.stage_btn, getattr(self, "toast", None),
+                                 getattr(self, "_modal", None)) if w is not None)
 
     def raise_now(self, w):
         """Fenêtre qui vient de s'ouvrir (menu, panneau...) : au premier plan tout de suite si la LV1 ou le float
@@ -1413,6 +1435,27 @@ class QtFloat:
         self.editor.show()
         self.editor.raise_()
         self.editor.activateWindow()
+
+    def toggle_stage(self, docked=False):
+        """STAGE PATCH (3.1) : PATCH MAP + faces des boîtiers (étiquettes stockées par l'appli principale). docked =
+        ouverte par le bouton de la page Patch (cachée quand la LV1 affiche une autre page)."""
+        if not hasattr(self.backend, "stage"):
+            Dialog(self, T("Patch de scène"), T("Disponible avec l'appli principale (pas en --direct)."), T("OK")).ask()
+            return
+        import x32_qt_stage
+        if self.stage_win is None:
+            self.stage_win = x32_qt_stage.StagePatch(self)
+        if self.stage_win.is_open and self.stage_win.isVisible():
+            self.stage_win.close_win()
+        else:
+            self.stage_win.open(docked)
+        if self.stage_btn:
+            self.stage_btn.update()
+
+    def stage_lv1(self):
+        """Fenêtre principale de la LV1 si elle est à l'écran (STAGE PATCH posée sur sa zone de patch), sinon None."""
+        lv1 = self._lv1_hwnd
+        return lv1 if (lv1 and not self.detached and window_alive(lv1) and not window_iconic(lv1)) else None
 
     def _place_tool(self, lv1):
         """Languette dans l'espace vide de la barre du haut de la LV1 (fenêtre principale) ; Mixer détaché ou
@@ -1600,13 +1643,13 @@ class QtFloat:
              "-",
              (T("Scènes…"), lambda: self.panel.toggle("scenes")),
              (T("Routing…"), lambda: self.panel.toggle("routing")),
-             (T("Patch map…"), lambda: self.panel.toggle("patchmap"))]
+             (T("Stage patch…"), lambda: self.toggle_stage(False))]
         if hasattr(self.backend, "consoles_add"):
             e.append((T("Consoles…"), lambda: self.panel.toggle("consoles")))
         e.append((T("Console (IP, connexion)"), lambda: self.panel.toggle("console"), self.panel.mode == "console"))
         if not self.args.direct:
             e.append((T("Ouvrir la page dans le navigateur"),
-                      lambda: webbrowser.open("http://127.0.0.1:%d/" % self.args.port)))
+                      lambda: xf.open_url("http://127.0.0.1:%d/" % self.args.port)))
         e += [(T("Verrouiller l'édition"), self.toggle_lock, self.locked),
               (T("Fond de la fenêtre"), themes),
               ("Language / Langue", [(name, lambda c=code: self.set_language(c), code == x32_i18n.LANG, "radio")
@@ -1615,7 +1658,7 @@ class QtFloat:
               ("%s v%s (float Qt %s)" % (APP_SHORT, APP_VERSION, QT_FLOAT_VERSION), None)]
         if self.update and self.update.get("url"):
             e.append((T("⬆ Mise à jour %s disponible…") % self.update.get("version"),
-                      lambda: webbrowser.open(self.update["url"])))
+                      lambda: xf.open_url(self.update["url"])))
         e.append((T("Fermer le float"), self.quit))
         if not self.args.direct:
             if self.autostart is not None:
@@ -1657,7 +1700,7 @@ class QtFloat:
         x32_i18n.set_lang(lang)
         if self.panel.mode:
             self.panel.open(self.panel.mode, self.panel.auto)
-        for w in (self.win, self.tool, self.patch_btn, self.show_btn):
+        for w in (self.win, self.tool, self.patch_btn, self.show_btn, self.stage_btn):
             if w:
                 w.update()
 

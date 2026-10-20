@@ -71,6 +71,7 @@ import http.cookiejar
 import json
 import math
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -959,6 +960,14 @@ class ServerBackend:
         return (self._post("/api/routings/apply", {"id": pid, "groups": ["io"], "target": target})
                 or {"ok": False, "error": self.last_error})
 
+    def stage(self):
+        """Patch de scène (3.1) : feuilles, feuille active, appareils (x32_gain_recall.stage_state)."""
+        return self._get("/api/stage")
+
+    def stage_post(self, what, d):
+        """what = port | device | sheet | auto ; rend le nouvel état (comme stage()) avec "ok"."""
+        return self._post("/api/stage/" + what, d) or {"ok": False, "error": self.last_error}
+
     def quit_app(self):
         return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
 
@@ -1498,6 +1507,18 @@ class Strip(tk.Frame):
             self.swatch.config(bg=bg)
         for u in self.units:
             u.set_color(hex_color)
+
+
+def open_url(url):
+    """Page web aux droits normaux même si l'appli tourne en administrateur (3.1 : exe --uac-admin) : explorer.exe."""
+    try:
+        import ctypes
+        if sys.platform == "win32" and ctypes.windll.shell32.IsUserAnAdmin():
+            subprocess.Popen(["explorer.exe", url], creationflags=0x08000000)
+            return
+    except (OSError, AttributeError):
+        pass
+    webbrowser.open(url)
 
 
 def exp_txt(e):
@@ -2117,7 +2138,7 @@ class FloatApp:
                       state="disabled")
         if self.update and self.update.get("url"):
             m.add_command(label="⬆ Mise à jour %s disponible…" % self.update.get("version"),
-                          command=lambda u=self.update["url"]: webbrowser.open(u))
+                          command=lambda u=self.update["url"]: open_url(u))
         m.add_command(label="Fermer le float", command=self.quit)
         if not self.args.direct:
             if self.autostart is not None:

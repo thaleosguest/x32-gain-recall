@@ -1,8 +1,8 @@
 """Test : PATCH MAP (3.1, demande de Joseph du 20/10/2026) — EXP -> source X32 -> canal X32 -> canal LV1.
 - données relevées chez Joseph (exp_map : AES50-A 1-15 -> EXP 1-15, Local 1-16 -> EXP 17-32 ; In 1 « P170 ST » sur
   EXP 1 + 2, FireRoom sur EXP 15 + 16) : sources, côtés L / R, canal non patché, EXP 16 sans préampli ;
-- plusieurs consoles : EXP 2·5 (1005) de la console 2 ;
-- panneau Qt : lignes affichées, recherche « a12 » / « fireroom » / introuvable.
+- plusieurs consoles : EXP 2·5 (1005) de la console 2.
+La liste elle-même (fenêtre STAGE PATCH, recherche, saisie) est testée dans tests/test_stage.py.
 
     py tests/test_patch_map.py
 """
@@ -40,46 +40,6 @@ check("EXP 17 = Local 1", rows[17]["src_long"] == "Local 1" and rows[17]["src_sh
 r2 = {r["exp"]: r for r in xf.patch_map_rows({"164": 1005}, {"40": [1005]}, {"40": {"label": "Bass"}})}
 check("console 2 : EXP 2·5 = 2·AES50-A 5 -> Bass", r2[1005]["exp_txt"] == "2·5" and r2[1005]["src_long"] == "2·AES50-A 5"
       and r2[1005]["lv1"][0][2] == "Bass")
-
-# ── panneau Qt
-from PySide6.QtWidgets import QApplication, QLineEdit, QLabel
-app_qt = QApplication([])
-import x32_qt_panels as qp
-
-
-class Fake:
-    link = type("Link", (), {"snap": {"names": names}})()      # comme QtFloat : état dans app.link.snap
-    win, patch_btn, show_btn = qp.QWidget(), qp.QWidget(), qp.QWidget()
-    exp_map = {int(k): v for k, v in exp_map.items()}
-    lv1_sources = {int(k): v for k, v in lv1_sources.items()}
-    lv1_channels = lv1_channels
-    def sync_panel(self): pass
-
-
-fake = Fake()
-pn = qp.Panel(fake)
-pn.mode = "patchmap"
-pn.title.setText("PATCH MAP")
-content_v = qp.QVBoxLayout()
-holder = qp.QWidget()
-holder.setLayout(content_v)
-pn._fill_patchmap(content_v)
-holder.resize(600, 900)
-holder.show()
-find = holder.findChild(QLineEdit)
-vis = lambda: [l.text() for l in holder.findChildren(QLabel) if l.isVisible() and l.text().startswith("EXP ")]
-check("32 lignes affichées", len(vis()) == 32)
-find.setText("a12")
-check("recherche « a12 » -> EXP 12", vis() == ["EXP 12"])
-find.setText("FireRoom")
-check("recherche « FireRoom » -> EXP 15 et 16", vis() == ["EXP 15", "EXP 16"])
-find.setText("zzz")
-check("introuvable -> aucune ligne", vis() == [])
-if "--image" in sys.argv:                       # rendu dans le vrai panneau (style, largeur, titre)
-    fake.win.setGeometry(0, 0, 600, 100)
-    pn2 = qp.Panel(fake)
-    pn2.open("patchmap")
-    pn2.grab().save(sys.argv[sys.argv.index("--image") + 1])
 
 print("OK" if ok else "ÉCHEC : " + ", ".join(why))
 sys.exit(0 if ok else 1)
