@@ -461,6 +461,19 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
   couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
 
+## PATCH MAP (branche `dev-3.1`, commencé le 20/10/2026)
+
+- Demande de Joseph : retrouver quelle entrée X32 est derrière chaque EXP (« A1 = EXP 11 », la LV1 ne laisse pas
+  renommer ses sources : elle affiche « X32RACK Dg EXP n », noms venus de la carte, table `device_channel_info` vide).
+- Fait : `x32_gain_float.patch_map_rows` (+ `source_long`) = EXP -> préampli (exp_map) -> canal X32 (`names` par
+  préampli, VIDES chez Joseph : X32 en stage box) -> canal(aux) LV1 (lv1_sources, lv1_channels, côtés L/R) ; panneau
+  Qt `patchmap` (menu du float « Patch map… », recherche qui masque les lignes), textes dans `x32_i18n.EN`. Test
+  `tests/test_patch_map.py`. Piège : l'état du float est dans `app.link.snap` (pas `app.snap`). Vu par Joseph : « pas
+  mal », à peaufiner. Exe de test : `dist.1-test2`.
+- Reste : étiquettes « A1 · P170 ST » posées sur la page Patch de la LV1 (maquette validée, sur la colonne « Device
+  Name » de la vue où les sources EXP sont en lignes) : il faut une capture plein écran de cette vue (géométrie,
+  zoom, défilement). Version : APP_VERSION encore 3.0.1.
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou
