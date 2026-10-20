@@ -5,7 +5,7 @@ _edit_routing), en version tactile : gros boutons, listes qui défilent au doigt
 du float. Le panneau s'ouvre sous les colonnes (au-dessus s'il n'y a pas la place) et se ferme par sa croix ✕.
 """
 from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
-from PySide6.QtGui import QPainter, QColor, QPen, QFont, QPainterPath
+from PySide6.QtGui import QPainter, QColor, QPen, QFont, QFontMetrics, QPainterPath
 from PySide6.QtWidgets import (QWidget, QFrame, QLabel, QLineEdit, QPushButton, QComboBox, QScrollArea, QScroller,
                                QVBoxLayout, QHBoxLayout, QGridLayout, QCheckBox, QDialog, QStackedWidget)
 
@@ -359,6 +359,9 @@ class Toast(QWidget):
 
     def say(self, title, text, ok=True, ms=7000):
         self.title, self.text, self.ok = title, text, ok
+        fm = QFontMetrics(QFont("Segoe UI", 9))
+        th = fm.boundingRect(0, 0, 420 - 86, 400, Qt.TextWordWrap, text).height()
+        self.setFixedSize(420, max(78, 44 + th + 12))
         scr = self.app.qapp.primaryScreen().availableGeometry()
         self.move(scr.right() - self.width() - 16, scr.bottom() - self.height() - 16)
         self.show()
@@ -382,7 +385,7 @@ class Toast(QWidget):
         p.drawText(QRectF(74, 12, w - 86, 24), Qt.AlignVCenter | Qt.AlignLeft, self.title)
         p.setPen(QColor(OK if self.ok else MUT))
         p.setFont(QFont("Segoe UI", 9))
-        p.drawText(QRectF(74, 38, w - 86, 28), Qt.AlignVCenter | Qt.AlignLeft | Qt.TextWordWrap, self.text)
+        p.drawText(QRectF(74, 38, w - 86, h - 46), Qt.AlignTop | Qt.AlignLeft | Qt.TextWordWrap, self.text)
         p.end()
 
     def mouseReleaseEvent(self, _e):

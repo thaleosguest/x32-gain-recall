@@ -34,8 +34,9 @@ jobs:
         # 3.0.0 : float Qt (x32_qt_float + x32_qt_panels, importes a la demande) ; tkinter garde pour le float tk
         # de secours (--tk-float)
         run: >-
-          python -m PyInstaller --onefile --noconsole --hidden-import tkinter
+          python -m PyInstaller --onefile --noconsole --uac-admin --hidden-import tkinter
           --hidden-import x32_qt_float --hidden-import x32_qt_panels
+          --hidden-import x32_qt_stage --hidden-import lv1.remote --hidden-import lv1.colorclick
           --hidden-import PySide6.QtWidgets --hidden-import PySide6.QtSvg
           --icon assets/icon.ico --name XM32_Gain_Recall_LV1 x32_gain_recall.py
 

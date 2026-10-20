@@ -2,6 +2,17 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [3.1.0] — 2026-10-20
+**STAGE PATCH** : le patch physique de la scène (prises nommées et colorées) jusqu'aux canaux de la LV1.
+- **Fenêtre STAGE PATCH, au style de la LV1** : bouton *Stage Patch* en bas de la colonne Input A / Input B de la page Patch (ou menu du float → *Stage patch…*). Elle se pose sur la zone du patch de la LV1 et se cache quand on quitte la page Patch.
+- **PATCH MAP + saisie rapide** : une ligne par EXP (source X32, nom de la prise, canal LV1). Éditeur copié sur la fenêtre couleur de la LV1 (même palette 4 x 8, même ordre) : nom, **Entrée** = enregistré et ligne suivante (↑ ↓ aussi), une couleur touchée est enregistrée sans quitter le champ.
+- **Faces des boîtiers dessinées** : S16 (face avant), X32 Rack et X32 (face arrière, IN 1 à droite comme quand on branche), M32C ; appareil choisi par port (console, AES50 A, AES50 B). Chaque prise nommée devient une pastille de sa couleur, avec l'EXP, le 48 V et la couleur du canal LV1 qu'elle alimente. Prise sans nom : nom du canal LV1 en pâle.
+- **Feuilles de patch par spectacle** (séparées des scènes de gains) : nouvelle, dupliquer, renommer, supprimer ; **export / import** d'une feuille (`.stagepatch.json`) pour la ranger avec le spectacle ou la passer sur un autre PC.
+- **Renommage automatique des canaux LV1** : un canal prend le nom de la prise qui l'alimente (canal stéréo : prise de gauche). L'étiquette gagne quand le canal reçoit cette source ou quand elle est modifiée ; un nom retapé ensuite dans la LV1 est respecté. *Clear* sur une prise = le canal redevient une piste par défaut (« Channel N », couleur par défaut).
+- **Couleurs → LV1** : la LV1 n'accepte pas la couleur à distance ; l'appli clique pour vous dans sa fenêtre de couleur (page Patch, vue Input A), canal après canal, en vérifiant chaque étape (rien n'est cliqué à l'aveugle ; un canal touché par erreur est remis comme avant). Repère orange sur une prise dont le canal LV1 n'a pas la bonne couleur.
+- **Messages en notification** en bas à droite (plus de message bloquant caché derrière une fenêtre).
+- **L'exe demande les droits administrateur** (comme XTouch-LV1 ; nécessaire pour cliquer dans la LV1, qui tourne en administrateur). **Lancer avec Windows** passe par une tâche planifiée (Windows ne lance pas un programme administrateur depuis la clé Run) : **recocher l'option une fois** après la mise à jour. Les pages web s'ouvrent toujours dans le navigateur aux droits normaux.
+
 ## [3.0.1] — 2026-10-16
 **Tout depuis le float, en anglais** : plus de page au lancement, routing depuis la page Patch, scènes depuis la page Show.
 - **Anglais par défaut, français au choix** : menu du float → *Language / Langue* (float, panneaux, icône près de l'horloge ; choix gardé). La page web reste en français pour l'instant.

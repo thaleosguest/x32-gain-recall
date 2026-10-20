@@ -461,6 +461,101 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - (Historique, test) Pas encore porté dans le test : `_follow_lv1` (le test reste devant toutes les fenêtres, remarqué par Joseph),
   couches/onglets/modes, calage manuel et par écran, cadres Edit/Channel, panneaux, Mixers détachés, 48V.
 
+## PATCH MAP (branche `dev-3.1`, commencé le 20/10/2026)
+
+- Demande de Joseph : retrouver quelle entrée X32 est derrière chaque EXP (« A1 = EXP 11 », la LV1 ne laisse pas
+  renommer ses sources : elle affiche « X32RACK Dg EXP n », noms venus de la carte, table `device_channel_info` vide).
+- Fait : `x32_gain_float.patch_map_rows` (+ `source_long`) = EXP -> préampli (exp_map) -> canal X32 (`names` par
+  préampli, VIDES chez Joseph : X32 en stage box) -> canal(aux) LV1 (lv1_sources, lv1_channels, côtés L/R) ; panneau
+  Qt `patchmap` (menu du float « Patch map… », recherche qui masque les lignes), textes dans `x32_i18n.EN`. Test
+  `tests/test_patch_map.py`. Piège : l'état du float est dans `app.link.snap` (pas `app.snap`). Vu par Joseph : « pas
+  mal », à peaufiner. Exe de test : `dist\3.1-test2`.
+- Reste : étiquettes « A1 · P170 ST » posées sur la page Patch de la LV1 (maquette validée, sur la colonne « Device
+  Name » de la vue où les sources EXP sont en lignes) : il faut une capture plein écran de cette vue (géométrie,
+  zoom, défilement). Version : APP_VERSION 3.1.0 (20/10/2026, pas encore publiée).
+
+## PATCH DE SCÈNE (branche `dev-3.1`, commencé le 20/10/2026)
+
+- Demande de Joseph (croquis sur la face d'une S16) : nommer / colorer les PRISES physiques (S16 IN 1 = « Kick ») ; le
+  nom suit la prise -> préampli -> EXP (exp_map) -> canal LV1, qui est **renommé automatiquement** dans la LV1.
+- Décisions de Joseph : renommage AUTOMATIQUE ; **feuilles de patch par spectacle, séparées des scènes de gains** ;
+  canal stéréo = nom de la voie **gauche** (OV en 2 mono = deux noms, piano stéréo = « Piano L ») ; appareils :
+  S16, X32 Rack, X32, M32C seulement.
+- `x32_stage.py` (sans Qt) : `DEVICES` (faces dessinées en fractions ; S16 vue AVANT, X32 / X32R vue ARRIÈRE donc IN 1
+  à droite), clés de prise `slot:io:n` (slot local / A / B), `port_preamp` (Local 0-31, A 32-79, B 80-127, + k·128),
+  `StageStore` (`x32_stage_patch.json` à côté des scènes : feuilles, active, `auto`, `applied`), `lv1_renames()`.
+  Appareils par défaut selon le modèle /info tant que rien n'est choisi (`devices_set`).
+- Règles du renommage (`lv1_renames`, priorité revue par Joseph le 20/10 : « c'est lui qui prend la priorité ») :
+  l'ÉTIQUETTE GAGNE quand le canal reçoit la source (nouvelle prise ou 1re fois vue, `applied[ch]["src"]`) ou quand
+  l'étiquette change (`applied[ch]["label"]`), même sur un nom tapé à la main (ex. canal « test » + EXP 4) ; nom d'avant
+  gardé (`prev_name`) ; ensuite, même source + même étiquette : nom retapé à la main RESPECTÉ (pas de bras de fer) ;
+  CLEAR (étiquette effacée, même prise toujours branchée) -> piste par défaut « Channel N » + couleur n° 13 (Joseph ; marque
+  `cleared` gardée dans applied, `lv1_color_targets(..., applied)` via `stage_state()["applied"]` -> bouton Couleurs) ;
+  AUTRE source sans étiquette -> nom d'avant (« test ») sinon « Channel N », + couleur d'avant ;
+  canal plus patché -> laissé ; pas de renvoi pendant 5 s ; rien tant qu'une console n'est pas connectée avec son
+  routing lu (`stage_exp_map`). Serveur : `stage_loop` (1 s), `/api/stage`, `/api/stage/port|device|sheet|auto`.
+- `lv1/remote.py` : télécommande OSC de la LV1 (protocole MyFOH). **Découverte vérifiée** : annonce `/zDNS` en UDP
+  multicast 225.1.1.1:13337 (port TCP qui change à chaque session, 51557 le 20/10). Lecture vérifiée (`--dump` : noms
+  via `/Channels`, couleur via `/Notify/TrackColor [groupe, canal, n° de palette, r, g, b]` = même palette que
+  `channelinfo.PALETTE`). Écriture du NOM : `/Set/TrackName [0, canal-1, nom]`, **vérifié chez Joseph** (In 80).
+  **Couleur : IMPOSSIBLE à distance en LV1 V17** (20/10/2026) : MyMonService.dll (ProgramData\Waves Audio\RemoteServices)
+  accepte `/Set/TrackColor [i, i, i, f, f, f]` (rgb × 255) mais `WCRx_ExternalService::SetTrackColor`
+  (MixerController_MyMon_Control.dll, exporté) = `return 6` (non implémenté). Essayé : rien dans l'OSC ni la base.
+  Ne pas rechercher de nouveau (sauf nouvelle version LV1 : redésassembler cette fonction). À la place : repère orange
+  « ! » sur la prise quand la couleur du canal LV1 diffère de l'étiquette (`StagePatch.color_differs`).
+- **Fenêtre unique STAGE PATCH** (2e version, demande de Joseph du 20/10 : « regrouper patch map et stage patch », « remplir
+  la patch map vite : In 2 -> renommer -> couleur -> In 3 ») : `x32_qt_stage.StagePatch` = éditeur (palette 4 x 8 dans
+  l'ordre / la disposition de la fenêtre couleur de la LV1, champ du nom à la couleur choisie, ‹ ›) + PATCH MAP (lignes
+  dessinées `PatchList`, recherche) à gauche, faces à droite. Entrée / › / ↓ = enregistrer + ligne suivante, ↑ / ‹ =
+  précédente, toucher une couleur = enregistrée (avec le nom tapé) sans quitter le champ. Prise sans étiquette dont le
+  canal LV1 est renommé : nom + couleur LV1 en pâle (`auto_label`, rien d'enregistré). L'ancien panneau `patchmap` du
+  float est supprimé ; menu : une seule entrée « Stage patch… ».
+- **Feuilles = sauvegarde / rappel** (déjà là : enregistrement à chaque saisie ; rappel = choisir la feuille, les noms
+  partent dans la LV1, couleurs par le bouton). **Export / Import d'une feuille** (demande de Joseph, 20/10) : boutons
+  « Exporter… / Importer… » -> `<nom>.stagepatch.json` (`EXPORT_TYPE` « x32-stage-patch », `StageStore.export_sheet` /
+  `import_sheet` : nouvel id, nom libre « (2) », active ; `clean_consoles` garde le valable d'un fichier bricolé),
+  `/api/stage/export|import`, fenêtres de fichier Windows rattachées à STAGE PATCH (toujours devant), dossier retenu
+  (`cfg["stage_dir"]`, défaut Documents). Faces : `_size_faces` refait la mise en page (chevauchement après un import).
+- **Style LV1** (relevé sur captures de Joseph, 1920x1080) : fond (71,71,71), panneaux (17,17,17), boutons fond 17 +
+  liseré (160,160,160) + texte (231,231,231) gras, actif (56,201,255) texte 17, fenêtre type dialogue (54,54,54) bord
+  (160,160,160), flèches (43,43,43), séparateur (120,120,120). `LV1_CSS`.
+- **Page Patch** : bouton « Stage Patch » (`StageButton`, `STAGE_BTN_BOX` 18,973 92x54) EN BAS de la colonne Input A /
+  Input B (2e capture de Joseph ; 1er essai sous Input B à y 407, tombé au pixel près) ; ouvre la fenêtre posée sur la zone liste + grille (`STAGE_BOX` 124,225 1781x845),
+  cachée quand la LV1 quitte la page Patch (`docked`) ; depuis le menu : visible partout. Dans `_windows()` (z-order).
+- **Exe en ADMINISTRATEUR (décision de Joseph, 20/10 : « comme XTouch-LV1 », choisi contre « admin si besoin »)** :
+  `--uac-admin` (Compiler_en_exe.bat, build.yml ; CI : runners déjà admin). « Lancer avec Windows » = TÂCHE PLANIFIÉE
+  `TASK_NAME` « XM32 Gain Recall LV1 » (Windows bloque à l'ouverture de session une clé Run qui exige l'admin) :
+  `autostart_task_xml` (ouverture de session de CET utilisateur, HighestAvailable, batterie OK, ExecutionTimeLimit PT0S,
+  Priority 4), `schtasks /Create /XML` (vérifié : accepté et relu, tâche d'essai supprimée), créée / supprimée SEULEMENT
+  par la case ; ancienne valeur Run (<= 3.0.1) retirée quand on coche / décoche, jamais toute seule. Pages web :
+  `open_url` (x32_gain_recall) / `xf.open_url` -> explorer.exe si admin (navigateur aux droits normaux, comme XTouch).
+  `snap["admin"]`. Essai de l'exe sans UAC depuis Claude : `$env:__COMPAT_LAYER='RunAsInvoker'`. XTouch-LV1 (admin)
+  lance Gain Recall par Popen -> OK ; il le retrouve aussi par la clé Run « XM32 Gain Recall LV1 » (plus écrite).
+- **Couleurs -> LV1 par clics (FAIT, VÉRIFIÉ chez Joseph le 20/10 : 10 canaux colorés, relus dans la base)** : idée de Joseph ; il a vérifié (20/10) : page Patch ->
+  Input A, clic sur la bande de couleur d'un canal = fenêtre « Select a Color from the Pallete Below », ‹ › changent de
+  canal SANS la fermer, couleur appliquée TOUT DE SUITE. `lv1/colorclick.py` : géométrie relevée sur sa capture plein
+  écran (1920x1080 ; Input A (60,282) bleu ; 1re ligne In 1 (141,360), pas 7 ; fenêtre x 708..1197 y 270..754 fond
+  (54,54,54) ; palette 1re case (802,360), pas 101x31, même ordre que PALETTE ; champ du nom (819,638) = FOND à la
+  couleur du canal ; ‹ (1022,638), › (1070,638), OK (1120,716)), `ColorJob` (ouvre sur In 1, › jusqu'au canal, clic
+  couleur, OK à la fin), `post_click` (PostMessage à la fenêtre enfant, souris immobile, comme XTouch-LV1) dans la fenêtre LV1 la plus en avant
+  au point (`lv1_window_at` : « Color Picker » est une fenêtre À PART, Qt624QWindow ; 1er essai : clics perdus dans la
+  fenêtre principale, bloquée par la Color Picker modale -> rien modifié, vérifié dans la base).
+  Garde-fous : Input A (sinon clic dessus), 1re ligne = couleur d'In 1, fenêtre reconnue par 6 cases, fond du champ =
+  couleur actuelle du canal visé, changement vu sur CE canal (OSC /Notify/TrackColor d'une connexion dédiée
+  `LV1Remote.color_events`, sinon base de la LV1 ~1 s) ; mauvais canal -> remis + arrêt. UI : bouton « Couleurs → LV1
+  (n) » de STAGE PATCH (`x32_stage.lv1_color_targets` : voie gauche d'abord, déjà bonne = rien ; `ColorRunner` = fil,
+  fenêtre cachée pendant les clics, refus si pas admin / pas page Patch). Test `tests/test_colorclick.py` (LV1 simulée).
+  **Messages toujours devant (Joseph : « sinon je vais être bloqué »)** : résultats / erreurs de STAGE PATCH = notification
+  en bas à droite (`StagePatch.notify` -> `app.toast`, hauteur selon le texte), plus de confirmation avant les couleurs ;
+  saisies restantes (feuilles) = `Dialog`, enregistrée dans `app._modal` pendant `ask()` ; `_windows()` dans l'ordre de
+  passage au premier plan : STAGE PATCH en premier, toast et message en dernier. (`parent` d'un Dialog = fenêtre où se
+  centrer, PAS un parent Qt : cadre Windows vu chez Joseph.) Champ du nom relu jusqu'à 0,8 s (2e essai : arrêt « pas In
+  1 » juste après l'ouverture), couleurs lues / attendues dans le message.
+- Test : `tests/test_stage.py [--image f.png]` (QT_QPA_PLATFORM=windows pour les polices) ; float piloté par script sur
+  un serveur de test (port 8091, APPDATA temporaire, `qf.lv1_windows = lambda: {}`). Exe de test : `dist\3.1-stage-test10`.
+- Reste : sorties (OUT 7 = Genelec) = repère seulement, pas encore le chemin LV1 ->
+  carte -> User Out -> AES50 ; sélecteur de sorties 1-8 / 9-16 de la S16 ; page web.
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou

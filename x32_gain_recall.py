@@ -48,11 +48,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from brand_icon import LOGO_SVG
 from lv1.companion import CompanionPoller, DEFAULT_URL as COMPANION_URL
 from lv1.patchmap import PatchMap, MANUAL_FILENAME, DEFAULT_DEVICES, LIVE_DB
+import x32_stage
 
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.1.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1529,6 +1530,84 @@ def merged_recall_state(snap):
     snap["can_undo"] = can_undo
 
 
+# --------------------------------------------------------------------------
+#  Patch de scène (3.1) : étiquettes des prises physiques (x32_stage.py) + renommage automatique des canaux LV1
+#  par OSC (lv1/remote.py ; jamais dans la base de la LV1). Nom seulement : la LV1 V17 refuse la couleur à distance.
+# --------------------------------------------------------------------------
+STAGE = None            # x32_stage.StageStore, à côté des scènes
+LV1_REMOTE = None       # lv1.remote.LV1Remote, créé au 1er renommage à faire
+STAGE_LOG = []          # derniers renommages (affichés dans le panneau)
+
+
+def stage_models():
+    return [(client.info or {}).get("model") for _k, client, _c in all_consoles()]
+
+
+def stage_state():
+    st = STAGE.state(stage_models())
+    st["devices"] = {k: {"name": v["name"], "slots": list(v["slots"]), "ins": v["ins"], "outs": v["outs"]}
+                     for k, v in x32_stage.DEVICES.items()}
+    st["lv1_remote"] = LV1_REMOTE.status() if LV1_REMOTE else None
+    st["log"] = list(STAGE_LOG[-12:])
+    return st
+
+
+def stage_exp_map():
+    """{préampli global: EXP global} de toutes les consoles, ou None si une console n'est pas connectée ou n'a pas
+    encore son routing lu : sans ça on ne sait pas ce qui alimente les canaux LV1 (garde-fou du renommage)."""
+    out = {}
+    for k, client, _card in all_consoles():
+        if not client.snapshot()["connected"] or not client.exp_map:
+            return None
+        for i, e in dict(client.exp_map).items():
+            if e:
+                out[k * N_HA + int(i)] = (k * 1000 + int(e)) if k else int(e)
+    return out
+
+
+def stage_loop():
+    """Toutes les secondes : canaux LV1 à renommer d'après la feuille de patch active (x32_stage.lv1_renames)."""
+    global LV1_REMOTE
+    from lv1.remote import LV1Remote
+    while True:
+        time.sleep(1)
+        try:
+            if not STAGE or not LV1 or not STAGE.auto:
+                continue
+            sheet = STAGE.current()
+            if not x32_stage.labels_by_preamp(sheet):
+                continue                         # rien d'étiqueté : pas de connexion OSC à la LV1
+            exp_map = stage_exp_map()
+            sources = LV1.channel_sources()
+            if not exp_map or not sources:
+                continue
+            if LV1_REMOTE is None:
+                LV1_REMOTE = LV1Remote(log=lambda m: print(m)).start()
+            if not LV1_REMOTE.connected():
+                continue
+            for r in x32_stage.lv1_renames(sheet, exp_map, sources, LV1.channel_info(), STAGE.applied,
+                                           with_color=False):
+                ch = r["ch"]
+                if r["send_name"]:
+                    LV1_REMOTE.rename(ch, r["name"])
+                if r["why"] == "restore":
+                    STAGE.mark_applied(ch, None)
+                elif r["why"] == "cleared":         # marque gardée : couleur par défaut via « Couleurs -> LV1 »
+                    STAGE.mark_applied(ch, {"name": r["name"], "src": r["src"], "label": None, "cleared": True,
+                                            "prev_name": None, "color": 13, "prev_color": None, "t": time.time()})
+                else:
+                    STAGE.mark_applied(ch, {"name": r["name"], "src": r["src"], "label": r["label"],
+                                            "prev_name": r["prev_name"], "color": r["color"],
+                                            "prev_color": r["prev_color"], "t": time.time()})
+                if r["send_name"]:                   # sinon : source seulement notée (nom déjà bon)
+                    STAGE_LOG.append({"t": time.time(), "ch": ch, "name": r["name"], "why": r["why"]})
+                    del STAGE_LOG[:-50]
+                    print("Patch de scène : In %d -> « %s »%s" % (ch, r["name"],
+                                                                  {"restore": " (nom d'avant)", "cleared": " (étiquette effacée)"}.get(r["why"], "")))
+        except Exception as e:
+            print("Patch de scène : %s" % e)
+
+
 def merged_meters():
     m = CLIENT.meters_snapshot()
     for k, client, _card in all_consoles():
@@ -1807,7 +1886,7 @@ def update_loop():
 
 def open_update():
     if UPDATE["url"]:
-        webbrowser.open(UPDATE["url"])
+        open_url(UPDATE["url"])
 
 
 def autostart_command():
@@ -1818,7 +1897,74 @@ def autostart_command():
     return '"%s" --at-login' % sys.executable
 
 
+# 3.1 : l'exe demande les droits administrateur (--uac-admin, comme XTouch-LV1 : clics dans la LV1, qui tourne en
+# administrateur). Windows ne lance PAS au demarrage de session un programme de la cle Run qui exige l'admin ->
+# « Lancer avec Windows » = tache planifiee « a l'ouverture de session de cet utilisateur, droits les plus eleves »
+# (pas de demande UAC a chaque session). Creee / supprimee SEULEMENT par la case (jamais toute seule : Defender, 2.7.0).
+TASK_NAME = "XM32 Gain Recall LV1"
+_NO_WINDOW = 0x08000000          # CREATE_NO_WINDOW : pas de console qui clignote (exe sans console)
+
+
+def _xml_esc(s):
+    return (str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;"))
+
+
+def autostart_task_xml(exe, user):
+    """Definition de la tache : ouverture de session de CET utilisateur, droits les plus eleves, sur batterie aussi
+    (portable de regie), sans limite de duree (72 h par defaut sinon : l'appli serait arretee), priorite normale
+    (7 = en dessous de la normale par defaut), une seule instance."""
+    return """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>%(desc)s</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>%(user)s</UserId></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>%(user)s</UserId><LogonType>InteractiveToken</LogonType>
+    <RunLevel>HighestAvailable</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>4</Priority>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>%(exe)s</Command><Arguments>--at-login</Arguments>
+    <WorkingDirectory>%(dir)s</WorkingDirectory></Exec></Actions>
+</Task>
+""" % {"desc": _xml_esc("%s (by %s)" % (APP_NAME, APP_AUTHOR)), "user": _xml_esc(user), "exe": _xml_esc(exe),
+       "dir": _xml_esc(os.path.dirname(exe))}
+
+
+def autostart_task_exe(xml):
+    """Exe lance par la tache (texte XML de « schtasks /Query /XML »), ou None."""
+    m = re.search(r"<Command>(.*?)</Command>", xml or "", re.S)
+    if not m:
+        return None
+    return (m.group(1).strip().strip('"').replace("&quot;", '"').replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&amp;", "&"))
+
+
+def _schtasks(*args):
+    try:
+        r = subprocess.run(["schtasks"] + list(args), capture_output=True, text=True, creationflags=_NO_WINDOW,
+                           timeout=20)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except (OSError, subprocess.SubprocessError) as e:
+        return -1, str(e)
+
+
 def autostart_read():
+    """Exe de la tache planifiee, ou None (pas de tache)."""
+    if sys.platform != "win32":
+        return None
+    code, out = _schtasks("/Query", "/TN", TASK_NAME, "/XML")
+    return autostart_task_exe(out) if code == 0 else None
+
+
+def _run_value():
+    """Ancienne inscription (cle Run de HKCU, versions <= 3.0.1) : bloquee par Windows depuis que l'exe exige l'admin."""
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
@@ -1827,36 +1973,79 @@ def autostart_read():
         return None
 
 
-def autostart_set(on):
-    """Ajoute / retire l'appli des programmes lances a l'ouverture de session (cle Run de HKCU : cet
-    utilisateur seulement, sans droits administrateur)."""
-    cmd = autostart_command()
-    if on and not cmd:
-        return False, "Disponible seulement avec l'exe"
+def _drop_run_value():
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
-            if on:
-                winreg.SetValueEx(k, RUN_NAME, 0, winreg.REG_SZ, cmd)
-            else:
-                try:
-                    winreg.DeleteValue(k, RUN_NAME)
-                except FileNotFoundError:
-                    pass
-    except (ImportError, OSError) as e:
-        return False, str(e)
+            winreg.DeleteValue(k, RUN_NAME)
+    except (ImportError, OSError):
+        pass
+
+
+def autostart_set(on):
+    """Ajoute / retire la tache planifiee (cet utilisateur, a l'ouverture de session). Retire aussi l'ancienne valeur
+    de la cle Run (3.0.1 et avant) : action de l'utilisateur, jamais automatique."""
+    cmd = autostart_command()
+    if on and not cmd:
+        return False, "Disponible seulement avec l'exe"
+    if on:
+        import tempfile
+        user = "%s\\%s" % (os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", "")) \
+            if os.environ.get("USERDOMAIN") else os.environ.get("USERNAME", "")
+        path = os.path.join(tempfile.gettempdir(), "xm32_gain_recall_task.xml")
+        try:
+            with open(path, "w", encoding="utf-16") as f:
+                f.write(autostart_task_xml(sys.executable, user))
+            code, out = _schtasks("/Create", "/TN", TASK_NAME, "/XML", path, "/F")
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        if code != 0:
+            return False, out.strip() or "schtasks %d" % code
+    else:
+        if autostart_read():
+            code, out = _schtasks("/Delete", "/TN", TASK_NAME, "/F")
+            if code != 0:
+                return False, out.strip() or "schtasks %d" % code
+    _drop_run_value()
     AUTOSTART["on"] = on
     return True, ""
 
 
 def autostart_init():
-    """Au lancement : etat de la case, coche seulement si la cle Run lance CET exe. Plus de reecriture
-    automatique quand l'exe a ete deplace / remplace (2.7.0) : un exe telecharge qui s'inscrit tout seul au
-    demarrage de Windows a ete bloque par Defender (« Behavior:Win32/Persistence.A!ml », qui a aussi efface
-    la valeur). La case apparait alors decochee : la recocher inscrit le nouvel exe."""
-    cur = autostart_read()
+    """Au lancement : etat de la case, cochee seulement si la tache lance CET exe. Plus de reecriture automatique
+    (2.7.0 : un exe qui s'inscrit tout seul au demarrage a ete bloque par Defender, « Persistence.A!ml ») : exe
+    deplace / remplace, ou ancienne cle Run (<= 3.0.1, bloquee par Windows depuis l'admin) -> case decochee, la
+    recocher inscrit cet exe (et retire l'ancienne cle Run)."""
     cmd = autostart_command()
-    AUTOSTART["on"] = bool(cur) and (cmd is None or cur == cmd)
+    cur = autostart_read() if cmd else None
+    AUTOSTART["on"] = bool(cur) and os.path.normcase(cur) == os.path.normcase(sys.executable)
+    if not AUTOSTART["on"] and _run_value():
+        print("Lancer avec Windows : ancienne inscription (cle Run) ignoree par Windows depuis la 3.1 (exe en "
+              "administrateur) ; recocher « Lancer avec Windows » pour passer a la tache planifiee.")
+
+
+def is_admin():
+    """L'appli tourne-t-elle en administrateur ? (clics dans la LV1, qui tourne en administrateur)"""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def open_url(url):
+    """Page web dans le navigateur aux droits NORMAUX : l'appli tourne en administrateur (3.1), un navigateur lance
+    par elle le serait aussi -> explorer.exe (comme XTouch-LV1)."""
+    if sys.platform == "win32" and is_admin():
+        try:
+            subprocess.Popen(["explorer.exe", url], creationflags=_NO_WINDOW)
+            return
+        except OSError:
+            pass
+    webbrowser.open(url)
 
 
 def quit_app():
@@ -1917,7 +2106,7 @@ def start_tray():
     lbl_autostart = lambda: T("Lancer avec Windows")
     TRAY = tray.TrayIcon(
         "%s v%s" % (APP_SHORT, APP_VERSION),
-        [(lambda: T("Ouvrir la page"), lambda: webbrowser.open(LOCAL_URL)),
+        [(lambda: T("Ouvrir la page"), lambda: open_url(LOCAL_URL)),
          (lambda: T("Afficher le float"), launch_float_window),
          (lambda: (T("Mise a jour %s disponible...") % UPDATE["version"]) if UPDATE["version"] else None,
           open_update),
@@ -1955,7 +2144,7 @@ def _startup_windows(url, browser, float_win, at_login=False):
     au premier plan. Ouverture de session (--at-login) : pas de navigateur, le float attend la LV1."""
     if browser:
         time.sleep(0.6)
-        webbrowser.open(url)
+        open_url(url)
         _push_browser_back()
     if float_win:
         # --lv1-front : le float, au premier plan en s'ouvrant, y passe la LV1 (Windows le refuse a cette
@@ -2091,6 +2280,7 @@ class Handler(BaseHTTPRequestHandler):
             snap["lan_urls"] = LAN_URLS
             snap["code_rotatable"] = bool(ALLOW_ANY_HOST and CODE_PATH)
             snap["autostart"] = AUTOSTART["on"]
+            snap["admin"] = is_admin()
             snap["update"] = dict(UPDATE) if UPDATE["version"] else None
             snap["autostart_ok"] = autostart_command() is not None
             snap["lang"] = x32_i18n.LANG
@@ -2102,6 +2292,8 @@ class Handler(BaseHTTPRequestHandler):
                         "choices": routing_choices(), "slots_out": ROUT_SLOTS_OUT})
         elif path == "/api/presets":
             self._json({"presets": STORE.all(), "path": STORE.path})
+        elif path == "/api/stage":
+            self._json(stage_state())
         elif path == "/api/scenes-dir":
             d = os.path.dirname(os.path.abspath(STORE.path))
             self._json(dict(scenes_dir_info(d), default=app_data_dir(),
@@ -2225,7 +2417,32 @@ class Handler(BaseHTTPRequestHandler):
             info["consoles"] = [{"n": c["n"], "ip": c["ip"], "name": c["name"]} for c in s["consoles"]]
         return gains, phantom, names, info
 
+    def _stage_route(self, p, d):
+        models = stage_models()
+        k = int(d.get("console") or 0)
+        model = models[k] if 0 <= k < len(models) else None
+        try:
+            if p == "/api/stage/port":
+                STAGE.set_port(k, str(d["port"]), {"name": d.get("name"), "color": d.get("color")}, model)
+            elif p == "/api/stage/device":
+                STAGE.set_device(k, str(d["slot"]), d.get("device") or None, model)
+            elif p == "/api/stage/sheet":
+                STAGE.sheet_action(str(d["action"]), d.get("id"), d.get("name"))
+            elif p == "/api/stage/auto":
+                STAGE.set_auto(bool(d.get("on")))
+            elif p == "/api/stage/export":
+                return self._json({"ok": True, "doc": STAGE.export_sheet(d.get("id"))})
+            elif p == "/api/stage/import":
+                STAGE.import_sheet(d.get("doc"))
+            else:
+                return self._json({"error": "introuvable"}, 404)
+        except ValueError as e:
+            return self._json({"ok": False, "error": str(e)})
+        return self._json(dict(stage_state(), ok=True))
+
     def _route(self, p, d):
+        if p.startswith("/api/stage/"):
+            return self._stage_route(p, d)
         if p == "/api/connect":
             ip = str(d["ip"]).strip()
             try:
@@ -3363,6 +3580,7 @@ APP_DIR_NAME = "X32 Gain Recall"
 SETTINGS_FILE = "x32_gain_recall_settings.json"
 SCENES_FILE = "x32_presets.json"
 ROUTINGS_FILE = "x32_routings.json"
+STAGE_FILE = "x32_stage_patch.json"     # feuilles de patch de scène (3.1)
 # fichiers que les versions <= 1.9 rangeaient a cote de l'exe/du script : recopies une fois au 1er lancement
 LEGACY_FILES = (SCENES_FILE, ROUTINGS_FILE, "x32_lan_config.json", "x32_float_config.json", "lv1_patch_map.json")
 
@@ -3531,7 +3749,7 @@ def set_scenes_dir(d, copy_current):
     """Bascule les scenes (et profils de routing) vers le dossier d. Si d contient deja des scenes, on les
     utilise ; sinon, copy_current=True y recopie les fichiers actuels (sinon on y part de zero). Le choix
     est memorise (retour au dossier appli = on oublie le choix). Renvoie scenes_dir_info(d)."""
-    global STORE, ROUTINGS
+    global STORE, ROUTINGS, STAGE
     d = os.path.abspath(os.path.expanduser(d.strip().strip('"')))
     info = scenes_dir_info(d)
     if not info["exists"]:
@@ -3541,12 +3759,13 @@ def set_scenes_dir(d, copy_current):
     if info["count"] == -1:
         raise ValueError("Le fichier %s de ce dossier est illisible : choisissez un autre dossier" % SCENES_FILE)
     if copy_current and not info["has_file"]:
-        for name, cur in ((SCENES_FILE, STORE.path), (ROUTINGS_FILE, ROUTINGS.path)):
+        for name, cur in ((SCENES_FILE, STORE.path), (ROUTINGS_FILE, ROUTINGS.path), (STAGE_FILE, STAGE.path)):
             dst = os.path.join(d, name)
             if os.path.isfile(cur) and not os.path.exists(dst):
                 shutil.copy2(cur, dst)
     STORE = PresetStore(os.path.join(d, SCENES_FILE))
     ROUTINGS = RoutingStore(os.path.join(d, ROUTINGS_FILE))
+    STAGE = x32_stage.StageStore(os.path.join(d, STAGE_FILE))
     s = load_settings()
     if os.path.normcase(d) == os.path.normcase(os.path.abspath(app_data_dir())):
         s.pop("scenes_dir", None)
@@ -3573,7 +3792,7 @@ def browse_folder(initial):
 
 
 def main():
-    global STORE, ROUTINGS, X32_PORT
+    global STORE, ROUTINGS, STAGE, X32_PORT
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--version", action="version", version="%s %s - by %s" % (APP_NAME, APP_VERSION, APP_AUTHOR))
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
@@ -3661,6 +3880,7 @@ def main():
     migrated = [] if a.data else migrate_legacy_files()
     STORE = PresetStore(a.data or pick_data_path())
     ROUTINGS = RoutingStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), ROUTINGS_FILE))
+    STAGE = x32_stage.StageStore(os.path.join(os.path.dirname(os.path.abspath(STORE.path)), STAGE_FILE))
 
     global LV1
     LV1 = PatchMap(
@@ -3760,6 +3980,7 @@ def main():
             add_console(c["ip"], c.get("card"), save=False)
     update_card_map()
     threading.Thread(target=consoles_loop, daemon=True).start()
+    threading.Thread(target=stage_loop, daemon=True).start()
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

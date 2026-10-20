@@ -71,6 +71,7 @@ import http.cookiejar
 import json
 import math
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -959,6 +960,14 @@ class ServerBackend:
         return (self._post("/api/routings/apply", {"id": pid, "groups": ["io"], "target": target})
                 or {"ok": False, "error": self.last_error})
 
+    def stage(self):
+        """Patch de scène (3.1) : feuilles, feuille active, appareils (x32_gain_recall.stage_state)."""
+        return self._get("/api/stage")
+
+    def stage_post(self, what, d):
+        """what = port | device | sheet | auto ; rend le nouvel état (comme stage()) avec "ok"."""
+        return self._post("/api/stage/" + what, d) or {"ok": False, "error": self.last_error}
+
     def quit_app(self):
         return self._post("/api/quit", {}) or {"ok": False, "error": self.last_error}
 
@@ -1500,6 +1509,18 @@ class Strip(tk.Frame):
             u.set_color(hex_color)
 
 
+def open_url(url):
+    """Page web aux droits normaux même si l'appli tourne en administrateur (3.1 : exe --uac-admin) : explorer.exe."""
+    try:
+        import ctypes
+        if sys.platform == "win32" and ctypes.windll.shell32.IsUserAnAdmin():
+            subprocess.Popen(["explorer.exe", url], creationflags=0x08000000)
+            return
+    except (OSError, AttributeError):
+        pass
+    webbrowser.open(url)
+
+
 def exp_txt(e):
     """Numéro EXP affiché : « 15 », ou « 2·15 » pour la voie 15 de la carte de la console 2."""
     e = int(e)
@@ -1512,6 +1533,50 @@ def join_tags(idxs):
     if len(tags) == 2 and tags[0].split()[0] == tags[1].split()[0]:
         return "%s/%s" % (tags[0], tags[1].split()[1])
     return " + ".join(tags)
+
+
+def source_long(idx):
+    """Nom complet d'un préampli : « Local 3 », « AES50-A 1 », « AES50-B 5 » ; console 2… : « 2·AES50-A 1 »."""
+    if idx >= N_HA:
+        return "%d·%s" % (idx // N_HA + 1, source_long(idx % N_HA))
+    if idx < 32:
+        return "Local %d" % (idx + 1)
+    if idx < 80:
+        return "AES50-A %d" % (idx - 31)
+    return "AES50-B %d" % (idx - 79)
+
+
+def patch_map_rows(exp_map, lv1_sources, lv1_channels, names=None, n_exp=32):
+    """PATCH MAP (demande de Joseph, 20/10/2026 : « A1 = EXP 11, ça peut être compliqué à retrouver si le patch est
+    énorme » ; la LV1 ne laisse pas renommer ses sources EXP). Une ligne par EXP : EXP 1..n_exp de la console 1, plus
+    tout autre EXP connu (autres consoles : 1000·k + voie). Rien de deviné : source absente si l'EXP ne vient pas d'un
+    préampli (exp_map), canal LV1 absent s'il n'est patché nulle part.
+      exp_map : {préampli global: EXP} ; lv1_sources : {canal LV1: [EXP voie G, EXP voie D]} ;
+      lv1_channels : {"canal": {"label", "name", "color"}} ; names : noms des canaux X32, par préampli.
+    Rend [{"exp", "exp_txt", "src", "src_short", "src_long", "x32", "lv1": [(canal, côté, libellé, couleur)]}]."""
+    idx_of = {}
+    for k, e in (exp_map or {}).items():
+        if e:
+            idx_of.setdefault(int(e), int(k))
+    lv1_of = {}
+    for ch, exps in (lv1_sources or {}).items():
+        exps = [int(e) for e in exps if e]
+        for k, e in enumerate(exps):
+            side = "" if len(exps) == 1 else ("L" if k == 0 else "R")
+            info = (lv1_channels or {}).get(str(ch)) or (lv1_channels or {}).get(ch) or {}
+            lv1_of.setdefault(e, []).append((int(ch), side, info.get("label") or "In %s" % ch, info.get("color")))
+    exps = sorted(set(range(1, n_exp + 1)) | set(idx_of) | set(lv1_of))
+    rows = []
+    for e in exps:
+        idx = idx_of.get(e)
+        nm = None
+        if idx is not None and names and idx < len(names):
+            nm = names[idx]
+        rows.append({"exp": e, "exp_txt": exp_txt(e), "src": idx,
+                     "src_short": strip_tag(idx).replace(" ", "") if idx is not None else None,
+                     "src_long": source_long(idx) if idx is not None else None,
+                     "x32": nm or None, "lv1": sorted(lv1_of.get(e, []))})
+    return rows
 
 
 def confirm_float(owner, title, text, ok_text, danger=True):
@@ -2073,7 +2138,7 @@ class FloatApp:
                       state="disabled")
         if self.update and self.update.get("url"):
             m.add_command(label="⬆ Mise à jour %s disponible…" % self.update.get("version"),
-                          command=lambda u=self.update["url"]: webbrowser.open(u))
+                          command=lambda u=self.update["url"]: open_url(u))
         m.add_command(label="Fermer le float", command=self.quit)
         if not self.args.direct:
             if self.autostart is not None:
