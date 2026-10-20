@@ -472,7 +472,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   mal », à peaufiner. Exe de test : `dist\3.1-test2`.
 - Reste : étiquettes « A1 · P170 ST » posées sur la page Patch de la LV1 (maquette validée, sur la colonne « Device
   Name » de la vue où les sources EXP sont en lignes) : il faut une capture plein écran de cette vue (géométrie,
-  zoom, défilement). Version : APP_VERSION encore 3.0.1.
+  zoom, défilement). Version : APP_VERSION 3.1.0 (20/10/2026, pas encore publiée).
 
 ## PATCH DE SCÈNE (branche `dev-3.1`, commencé le 20/10/2026)
 
