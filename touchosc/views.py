@@ -7,6 +7,8 @@ préampli n'alimente n'a pas de voie, jamais deviné). Canal stéréo = deux voi
 
 strip_tag / exp_txt : mêmes règles que x32_gain_float (pas importé : il importe x32_gain_recall, où tourne le pont).
 """
+from lv1.channelinfo import color_for
+
 N_HA = 128                   # préamplis par console (x32_gain_recall.N_HA)
 GAIN_MIN, GAIN_MAX = -12.0, 60.0
 STRIPS = 16
@@ -126,26 +128,68 @@ def _info(channels, ch):
 
 
 def bank_count(state):
-    """Banques de 16 entrées que la tablette propose (1-16 … 65-80), d'après le nombre de canaux LV1 connus."""
+    """Banques de 16 entrées (1-16 … 65-80) d'après le nombre de canaux LV1 connus : jeu « input » de secours quand la
+    télécommande de la LV1 n'a encore donné aucun jeu de couches."""
     n = int((state or {}).get("lv1_count") or 0)
     return max(1, min(5, (n + STRIPS - 1) // STRIPS)) if n else 4
 
 
-def gain_page(state, surface="mixer1", bank=None):
-    """{"title", "follow", "bank", "banks", "strips": [16 x {"ch", "label", "color" (« RRGGBB » ou ""), "units":
-    [{"idx", "db", "phantom"}], "src"}]}. bank None = couche affichée sur la LV1 (`surface`, Mixer 1 par défaut, comme
-    le float) ; bank 0..4 = vue fixe de la tablette (Ch 1-16 … 65-80, phase 2b : la LV1 ne bouge pas)."""
+MASTERS_RO = (3, 4, 5)   # LR, C, M : lecture seule sur la tablette (décision de Joseph, 27/10)
+KINDS = ("factory", "input", "mix", "custom")
+
+
+def layer_sets(state, surface="mixer1"):
+    """Jeux de couches proposés : {mode: [(nom, [(g, c) | None])]} — ceux vus par la télécommande (lv1/model.py, mémorisés),
+    sinon un jeu « input » construit d'après le nombre de canaux (banques Ch 1-16 …). Custom = pages de `surface`."""
+    known = ((state or {}).get("lv1_sets") or {}).get("sets") or {}
+    view = 0 if surface == "mixer1" else 1
+    out = {k: known[k] for k in ("factory", "input", "mix") if known.get(k)}
+    if known.get("custom%d" % view):
+        out["custom"] = known["custom%d" % view]
+    if not out.get("factory") and not out.get("input"):
+        out["input"] = [("Ch %d-%d" % (b * STRIPS + 1, b * STRIPS + STRIPS), [(0, b * STRIPS + i) for i in range(STRIPS)])
+                        for b in range(bank_count(state))]
+    if out.get("factory"):                       # 16 / 32 / 64 canaux : un seul jeu (pas de mode Input / Mix)
+        out.pop("input", None)
+        out.pop("mix", None)
+    return out
+
+
+def shown_layer(state, surface="mixer1"):
+    """(mode, n° de couche, entrées, nom) affiché sur la LV1 : jeu adopté par la télécommande (Custom et Spill compris),
+    sinon la couche lue dans la base (lv1/layers.py, entrées seulement). None si rien."""
+    view = 0 if surface == "mixer1" else 1
+    sh = (((state or {}).get("lv1_sets") or {}).get("shown") or {}).get(view)
+    if sh and sh.get("layers") and 0 <= sh.get("index", -1) < len(sh["layers"]):
+        name, entries = sh["layers"][sh["index"]]
+        return sh.get("kind"), sh["index"], entries, name
+    lay = ((state or {}).get("lv1_layers") or {}).get(surface) or (
+        (state or {}).get("lv1_layer") if surface == "mixer1" else None) or {}
+    if lay.get("channels"):
+        entries = [(0, ch - 1) if ch and ch > 0 else None for ch in lay["channels"]]
+        return ("input" if lay.get("bank") is not None else None), lay.get("bank"), entries, layer_title(lay)
+    return None
+
+
+def gain_page(state, surface="mixer1", view=None):
+    """Page Mixer (couches LV1, 27/10) : {"title", "follow", "kinds", "kind", "index", "names", "strips", "live", "lr"}.
+    view None = couche affichée sur la LV1 (Mixer 1, comme le float) ; (mode, n°) = vue fixe de la tablette (la LV1 ne
+    bouge pas). Tranche : entrée (g 0 : préampli X32, Trim, Ø, A / B), bus (groupes, Fx, Mon, DCA : fader, MUTE, CUE,
+    pan) ou master en lecture seule (LR, C, M). « key » = (groupe, canal) visé par les commandes de la LV1."""
     state = state or {}
-    banks = bank_count(state)
-    if bank is not None and 0 <= bank < banks:
-        lay = {"mode": 0, "page": bank, "bank": bank,
-               "channels": list(range(bank * STRIPS + 1, bank * STRIPS + STRIPS + 1))}
+    sets = layer_sets(state, surface)
+    kinds = [k for k in KINDS if k in sets]
+    entries, title, kind, index = [], "No input channels on this layer", None, None
+    if view is not None and view[0] in sets and 0 <= view[1] < len(sets[view[0]]) and sets[view[0]][view[1]][1]:
+        kind, index = view
+        title, entries = sets[kind][index]
     else:
-        bank = None
-        lay = ((state.get("lv1_layers") or {}).get(surface) or (state.get("lv1_layer") if surface == "mixer1" else None)
-               or {})
-    chans = list(lay.get("channels") or [])[:STRIPS]
-    chans += [None] * (STRIPS - len(chans))
+        view = None
+        sh = shown_layer(state, surface)
+        if sh:
+            kind, index, entries, title = sh
+    entries = list(entries or [])[:STRIPS]
+    entries += [None] * (STRIPS - len(entries))
     exp_to_idx = {}
     for k, e in (state.get("exp_map") or {}).items():
         if e:
@@ -153,12 +197,24 @@ def gain_page(state, surface="mixer1", bank=None):
     sources = {int(k): v for k, v in (state.get("lv1_sources") or {}).items()}
     slots = card_slots(state)
     gains, phantom = state.get("gains") or [], state.get("phantom") or []
+    mixer = state.get("lv1_mixer") or {}
     strips = []
-    for ch in chans:
-        if not ch:
-            strips.append({"ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": "",
-                           "mix": None})
+    for key in entries:
+        if not key:
+            strips.append({"ch": 0, "key": None, "kind": "", "label": "", "name": "", "color": "", "units": [],
+                           "src": "", "input": "", "mix": None})
             continue
+        g, c = key
+        if g != 0:                                   # bus / master : pas de préampli X32, pas de Trim / Ø / A-B
+            t = mixer.get((g, c)) or {}
+            pal = t.get("pal")
+            color = (color_for(pal) or "").lstrip("#").upper() if pal is not None else ""
+            name = t.get("name") or ""
+            strips.append({"ch": c + 1, "key": (g, c), "kind": "ro" if g in MASTERS_RO else "bus", "label": name,
+                           "name": name, "color": color if len(color) == 6 else "", "units": [], "src": "", "input": "",
+                           "mix": mix_info(mixer, (g, c)) if t else None})
+            continue
+        ch = c + 1
         info = _info(state.get("lv1_channels"), ch)
         exps = [int(e) for e in sources.get(ch, []) if e]
         idxs = [exp_to_idx[e] for e in exps if e in exp_to_idx]
@@ -175,14 +231,14 @@ def gain_page(state, surface="mixer1", bank=None):
         if mapped:
             src += " = EXP " + "/".join(exp_txt(e) for e in mapped)
         color = (info.get("color") or "").lstrip("#").upper()
-        label = info.get("label") or ("In %d" % ch if ch > 0 else "")
-        strips.append({"ch": ch, "label": label, "name": info.get("name") or label,
+        label = info.get("label") or "In %d" % ch
+        strips.append({"ch": ch, "key": (0, c), "kind": "in", "label": label, "name": info.get("name") or label,
                        "color": color if len(color) == 6 else "", "units": units, "src": src or "no X32 preamp",
-                       "input": input_names(exps, slots),
-                       "mix": mix_info(state.get("lv1_mixer"), (0, ch - 1), info) if ch > 0 else None})
-    shown = lay.get("bank") if lay.get("channels") else None
-    return {"title": layer_title(lay), "follow": bank is None, "bank": shown, "banks": banks, "strips": strips,
-            "live": bool(state.get("lv1_live")), "lr": mix_info(state.get("lv1_mixer"), LR_KEY)}
+                       "input": input_names(exps, slots), "mix": mix_info(mixer, (0, c), info)})
+    names = [n for n, _e in sets.get(kind, [])] if kind in sets else []
+    names += [""] * (8 - len(names))
+    return {"title": title, "follow": view is None, "kinds": kinds, "kind": kind, "index": index, "names": names[:8],
+            "strips": strips, "live": bool(state.get("lv1_live")), "lr": mix_info(mixer, LR_KEY)}
 
 
 def unit_idx(page, k, u):

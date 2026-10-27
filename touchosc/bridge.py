@@ -57,7 +57,7 @@ class Bridge(threading.Thread):
         state = self.read_state()
         built = {}                           # vue -> (page, messages) : calculés une fois par vue
         for v in set(views_of.values()):
-            page = views.gain_page(state, bank=v)
+            page = views.gain_page(state, view=v)
             built[v] = (page, P.state_messages(state, tablets=len(views_of), page=page))
         n = 0
         for ip, v in views_of.items():
@@ -143,10 +143,10 @@ class Bridge(threading.Thread):
         if act[0] == "sync":
             self.publish(force_ip=ip)
             return
-        if act[0] in ("bank", "follow"):         # vue de CETTE tablette : la couche de la LV1 ne bouge pas
+        if act[0] in ("layer", "follow"):        # vue de CETTE tablette : la couche de la LV1 ne bouge pas
             with self.lock:
                 if ip in self.tablets:            # (oubliée entre-temps : rien)
-                    self.tablets[ip]["view"] = act[1] if act[0] == "bank" else None
+                    self.tablets[ip]["view"] = (act[1], act[2]) if act[0] == "layer" else None
             self._published = 0.0
             return
         params = act[1:]
@@ -158,15 +158,18 @@ class Bridge(threading.Thread):
                 self.notify(ip, "This strip just changed: try again")
                 return
             params = (idx,) + tuple(act[3:])
-        elif act[0] == "lv1":                     # canal LV1 de la tranche k de la page de CETTE tablette
+        elif act[0] == "lv1":                     # piste LV1 (groupe, canal) de la tranche k de la page de CETTE tablette
             with self.lock:
                 page = (self.tablets.get(ip) or {}).get("page")
             strips = (page or {}).get("strips") or []
-            ch = strips[act[1] - 1]["ch"] if 1 <= act[1] <= len(strips) else 0
-            if not ch or ch < 0:
+            st = strips[act[1] - 1] if 1 <= act[1] <= len(strips) else {}
+            if st.get("kind") == "ro":            # LR, C, M : lecture seule (décision de Joseph, 27/10)
+                self.notify(ip, "Masters are read-only")
+                return
+            if not st.get("key"):
                 self.notify(ip, "This strip just changed: try again")
                 return
-            params = (ch, act[2], act[3])
+            params = (st["key"][0], st["key"][1], act[2], act[3])
         fn = self.actions.get(act[0])
         if fn is None:
             return

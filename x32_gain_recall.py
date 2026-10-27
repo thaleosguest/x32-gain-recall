@@ -54,7 +54,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a13"
+APP_VERSION = "3.2.0-a14"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -3625,6 +3625,7 @@ def touchosc_state():
     """Etat donne au pont TouchOSC : merged_snapshot + mixer de la LV1 (lv1/model.py, phase 5) + scenes (phase 3a)."""
     s = merged_snapshot()
     s["lv1_mixer"] = MIXER.snapshot() if MIXER else {}
+    s["lv1_sets"] = MIXER.layers_snapshot() if MIXER else {}
     s["lv1_live"] = bool(MIXER_REMOTE and MIXER_REMOTE.connected())
     s["presets"] = [{"id": p["id"], "name": p.get("name") or "", "created": p.get("created") or ""}
                     for p in (STORE.all() if STORE else [])]
@@ -3683,27 +3684,76 @@ def touchosc_scene(op, *args):
     return None
 
 
+LAYERS_FILE = "lv1_layers_seen.json"   # jeux de couches de la LV1 deja vus (tablette : modes pas affiches)
+
+
 def start_mixer():
-    """Connexion OSC dediee a la LV1 (comme MyFOH ; elle accepte plusieurs telecommandes) qui tient lv1/model.py."""
+    """Connexion OSC dediee a la LV1 (comme MyFOH ; elle accepte plusieurs telecommandes) qui tient lv1/model.py.
+    Couches : a chaque connexion, /Get/Layers des deux Mixers (la LV1 ne les envoie pas toujours d'elle-meme, essai du
+    27/10) ; les jeux vus sont gardes dans LAYERS_FILE (en 80 canaux, seul le mode affiche sur chaque Mixer arrive)."""
     global MIXER, MIXER_REMOTE
     from lv1.model import LV1Mixer
     from lv1.remote import LV1Remote
     MIXER = LV1Mixer()
+    path = os.path.join(app_data_dir(), LAYERS_FILE)
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            MIXER.load_sets(json.load(f))
+    except (OSError, ValueError):
+        pass
     MIXER_REMOTE = LV1Remote(log=lambda m: print("Mixer " + m))
     MIXER_REMOTE.listeners.append(MIXER.handle)
     MIXER_REMOTE.start()
+
+    def keep():
+        since, asked, saved = None, 0.0, MIXER.sets_rev
+        while True:
+            time.sleep(1.0)
+            now = time.time()
+            if not MIXER_REMOTE.connected():
+                since = None
+                continue
+            since = since or now
+            # demande 2 s apres la connexion (plus tot, la LV1 l'ignore : essai du 27/10), puis toutes les 5 s tant
+            # qu'un des deux Mixers n'a pas de couche connue
+            missing = [v for v in (0, 1) if v not in MIXER.layers_snapshot()["shown"]]
+            if missing and now - since >= 2.0 and now - asked >= 5.0:
+                asked = now
+                try:
+                    for v in missing:
+                        MIXER_REMOTE.send("/Get/Layers", [("i", v), ("i", 0)])
+                except OSError:
+                    pass
+            if MIXER.sets_rev != saved:
+                saved = MIXER.sets_rev
+                try:
+                    tmp = path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(MIXER.layers_snapshot()["sets"], f, ensure_ascii=False)
+                    os.replace(tmp, path)
+                except OSError:
+                    pass
+    threading.Thread(target=keep, daemon=True, name="lv1-layers").start()
 
 
 LV1_TRIM_RANGE = (-30.0, 30.0)   # comme XTouch-LV1 : la LV1 borne elle-meme et renvoie la vraie valeur
 
 
-def touchosc_lv1(ch, field, value=None):
-    """Geste d'une tablette sur une commande de la LV1 (phase 5b), canal d'entree ch (1-based) : memes commandes que
+LV1_MASTERS_RO = (3, 4, 5)       # LR, C, M : lecture seule sur la tablette (decision de Joseph, 27/10)
+
+
+def touchosc_lv1(g, c, field, value=None):
+    """Geste d'une tablette sur une commande de la LV1 (phase 5b), piste (groupe, canal) : memes commandes que
     XTouch-LV1 (verifiees chez Joseph). Bascules (mute, solo, phase) d'apres l'etat annonce par la LV1, refusees tant
-    qu'il n'est pas connu. LR n'arrive jamais ici (lecture seule, decision de Joseph). Rend un message d'erreur ou None."""
+    qu'il n'est pas connu. Masters (LR, C, M) refuses : lecture seule (le pont les refuse deja). Trim / phase : entrees
+    seulement. Rend un message d'erreur ou None."""
+    if int(g) in LV1_MASTERS_RO:
+        return "Masters are read-only"
+    if field in ("trim", "phase") and int(g) != 0:
+        return "Trim and phase are on input channels only"
     if MIXER_REMOTE is None or not MIXER_REMOTE.connected() or MIXER is None:
         return "LV1 not connected"
-    g, c = 0, int(ch) - 1
+    g, c = int(g), int(c)
     t = MIXER.snapshot().get((g, c))
     if t is None:
         return "Channel not known by the LV1"

@@ -36,6 +36,7 @@ def check(name, cond):
 
 # ── template
 tmp = tempfile.mkdtemp()
+pages_root = {}
 f1, f2 = os.path.join(tmp, "a.tosc"), os.path.join(tmp, "b.tosc")
 build_tosc.main(["", f1])
 build_tosc.main(["", f2])
@@ -44,6 +45,7 @@ x = tosc.read_xml(f1)
 check("lexml version 3", x.tag == "lexml" and x.get("version") == "3")
 root = x.find("node")
 rp = tosc.props_of(root)
+pages_root.update({tosc.props_of(n)["name"]: n for n in root.find("children")})
 check("racine GROUP 2000 x 1200", root.get("type") == "GROUP" and rp["frame"] == {"x": "0", "y": "0", "w": "2000", "h": "1200"})
 nodes = list(x.iter("node"))
 names = {tosc.props_of(n)["name"]: n for n in nodes}
@@ -77,9 +79,13 @@ pp = tosc.props_of(names["g7_l_48b"])
 check("48V : bouton transparent sur la case, OK? puis confirmation dans les 3 s", names["g7_l_48b"].get("type") == "BUTTON"
       and "'/xgr/g/7/l/48v'" in pp["script"] and "'g7_l_48l'" in pp["script"] and "'OK?'" in pp["script"]
       and pp["color"]["a"] == "0")
-check("banques 1-16 … 65-80 et FOLLOW LV1", all("sendOSC('/xgr/view/bank', %d)" % n in tosc.props_of(names["bank%d" % n])["script"]
-      for n in range(5)) and "sendOSC('/xgr/view/follow')" in tosc.props_of(names["follow"])["script"]
-      and tosc.props_of(names["bank4_label"]) is not None)
+check("couches : modes INPUT / MIX / CUSTOM, 8 couches, FOLLOW LV1 ; plus de banques", "bank0" not in names
+      and "k:find('factory') and 'factory' or 'input', 0" in tosc.props_of(names["nav_kind_a_b"])["script"]
+      and "sendOSC('/xgr/view/layer', 'mix', 0)" in tosc.props_of(names["nav_kind_mix_b"])["script"]
+      and "sendOSC('/xgr/view/layer', 'custom', 0)" in tosc.props_of(names["nav_kind_custom_b"])["script"]
+      and "sendOSC('/xgr/view/layer', kind, 7)" in tosc.props_of(names["nav_l8_b"])["script"]
+      and "sendOSC('/xgr/view/follow')" in tosc.props_of(names["follow"])["script"]
+      and any(tosc.props_of(n)["name"] == "nav_l1" for n in pages_root["page_mixer"].iter("node")))
 fr = lambda n: {k: int(v) for k, v in tosc.props_of(names[n])["frame"].items()}
 l48, rk = fr("g7_l_48"), fr("g7_r_knob")
 lk, ld, rd, md = fr("g7_l_knob"), fr("g7_l_drag"), fr("g7_r_drag"), fr("g7_m_drag")
@@ -170,7 +176,8 @@ check("EXP sans préampli : pas de voie", st7["units"] == [] and st7["src"] == "
 gl = {"mixer1": {"mode": 1, "page": 2, "bank": None, "channels": [5, None] + [None] * 14}}
 cust = views.gain_page({"lv1_layers": gl})
 check("couche Custom, tranche sans canal vide", cust["title"] == "Custom 3" and cust["strips"][1] == {
-      "ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": "", "mix": None})
+      "ch": 0, "key": None, "kind": "", "label": "", "name": "", "color": "", "units": [], "src": "", "input": "",
+      "mix": None})
 check("pas de couche d'entrées", views.gain_page({})["title"] == "No input channels on this layer")
 # phase 5a : commandes de la LV1 en lecture seule
 mixer = {(0, 0): {"fader": -4.5, "mute": True, "solo": False, "pan": None, "trim": {0: 3.5}, "phase": {0: False, 1: True},
@@ -220,18 +227,44 @@ scm = P.scene_messages(sp)
 check("3a : messages scènes", scm["/xgr/sc/count"] == (("i", 2),) and scm["/xgr/sc/1/id"] == (("s", "a1"),)
       and scm["/xgr/sc/2/name"] == (("s", "(no name)"),) and scm["/xgr/sc/canundo"] == (("i", 1),))
 gm = P.gain_messages(page)
-check("actions : banque, follow, gain borné, 48V ; le reste ignoré", P.parse_action("/xgr/view/bank", [("i", 2)]) == ("bank", 2)
-      and P.parse_action("/xgr/view/bank", [("f", 1.0)]) == ("bank", 1) and P.parse_action("/xgr/view/bank", [("i", 7)]) is None
+check("actions : couche, follow, gain borné, 48V ; le reste ignoré", P.parse_action("/xgr/view/layer", [("s", "mix"), ("i", 2)])
+      == ("layer", "mix", 2) and P.parse_action("/xgr/view/layer", [("s", "input"), ("f", 1.0)]) == ("layer", "input", 1)
+      and P.parse_action("/xgr/view/layer", [("s", "input"), ("i", 8)]) is None
+      and P.parse_action("/xgr/view/layer", [("s", "spill"), ("i", 0)]) is None and P.parse_action("/xgr/view/bank", [("i", 1)]) is None
       and P.parse_action("/xgr/view/follow", []) == ("follow",)
       and P.parse_action("/xgr/g/3/l/gain", [("f", 30.5)]) == ("gain", 3, "l", 30.5)
       and P.parse_action("/xgr/g/3/m/gain", [("f", 99.0)]) == ("gain", 3, "m", 60.0)
       and P.parse_action("/xgr/g/16/r/48v", []) == ("phantom", 16, "r")
       and P.parse_action("/xgr/g/17/m/gain", [("f", 1.0)]) is None and P.parse_action("/xgr/g/1/x/gain", [("f", 1.0)]) is None
       and P.parse_action("/xgr/g/1/m/gain", []) is None)
-b1 = views.gain_page(dict(gstate, lv1_count=64), bank=1)
-check("vue fixe : banque 2 = Ch 17-32, ne suit plus", b1["title"] == "Ch 17-32" and b1["follow"] is False and b1["bank"] == 1
-      and b1["strips"][0]["ch"] == 17 and b1["banks"] == 4)
-check("banque au-delà de la configuration : suit la LV1", views.gain_page(dict(gstate, lv1_count=64), bank=4)["follow"] is True)
+b1 = views.gain_page(dict(gstate, lv1_count=64), view=("input", 1))
+check("sans jeu de la LV1 : banques de secours ; vue fixe Ch 17-32", b1["title"] == "Ch 17-32" and b1["follow"] is False
+      and b1["index"] == 1 and b1["kind"] == "input" and b1["strips"][0]["ch"] == 17 and b1["kinds"] == ["input"]
+      and b1["names"] == ["Ch 1-16", "Ch 17-32", "Ch 33-48", "Ch 49-64", "", "", "", ""])
+check("couche au-delà de la configuration : suit la LV1", views.gain_page(dict(gstate, lv1_count=64), view=("input", 4))["follow"]
+      is True)
+# couches de la LV1 (27/10) : jeux vus par la télécommande (80 canaux : Input + Mix, Custom), masters en lecture seule
+sets80 = {"sets": {"input": [("Ch 1-16", [(0, i) for i in range(16)]), ("Ch 17-32", [(0, 16 + i) for i in range(16)])],
+                   "mix": [("Groups", [(1, i) for i in range(16)]), ("Masters", [(3, 0), (4, 0), (5, 0), None, (7, 0)])],
+                   "custom0": [("Page-1", [(0, 61), None, (6, 0)])], "custom1": [("Page-1", [None])]},
+          "shown": {0: {"kind": "mix", "layers": [("Groups", [(1, i) for i in range(16)]),
+                                                  ("Masters", [(3, 0), (4, 0), (5, 0), None, (7, 0)])], "index": 1}}}
+mix80 = {(3, 0): {"name": "LR", "fader": -0.2, "pal": None}, (4, 0): {"name": "Center", "fader": -144.0},
+         (7, 0): {"name": "Cue", "fader": -144.0, "pal": 19}, (1, 0): {"name": "Group 1", "fader": -10.0, "pal": 11}}
+fp = views.gain_page(dict(gstate, lv1_sets=sets80, lv1_mixer=mix80))
+check("FOLLOW : couche Masters de Mixer 1 ; LR / C / M en lecture seule, Cue en bus avec sa couleur", fp["title"] == "Masters"
+      and fp["follow"] is True and fp["kind"] == "mix" and fp["index"] == 1 and fp["kinds"] == ["input", "mix", "custom"]
+      and [s["kind"] for s in fp["strips"][:5]] == ["ro", "ro", "ro", "", "bus"] and fp["strips"][4]["color"] == "FF4F4F"
+      and fp["strips"][0]["name"] == "LR" and fp["strips"][0]["units"] == [] and fp["strips"][0]["key"] == (3, 0))
+gp = views.gain_page(dict(gstate, lv1_sets=sets80, lv1_mixer=mix80), view=("mix", 0))
+check("vue Mix Groups : bus, nom, fader", gp["title"] == "Groups" and gp["strips"][0]["kind"] == "bus"
+      and gp["strips"][0]["name"] == "Group 1" and gp["strips"][0]["mix"]["fader"] == -10.0 and gp["names"][:2] == ["Groups", "Masters"])
+cp = views.gain_page(dict(gstate, lv1_sets=sets80), view=("custom", 0))
+check("vue Custom : pages de Mixer 1, entrée 62 et bus mêlés", cp["title"] == "Page-1" and cp["strips"][0]["ch"] == 62
+      and cp["strips"][0]["kind"] == "in" and cp["strips"][2]["key"] == (6, 0))
+fac = {"sets": {"factory": [("Ch 1-16", [(0, i) for i in range(16)]), ("Grp/Fx", [(1, 0)]), ("Masters", [(3, 0)])],
+                "input": [("Ch 1-16", [])]}}
+check("16 / 32 / 64 canaux : un seul jeu FACTORY", views.gain_page(dict(gstate, lv1_sets=fac))["kinds"] == ["factory"])
 check("voie -> préampli d'après la page", views.unit_idx(page, 1, "l") == 32 and views.unit_idx(page, 1, "r") == 33
       and views.unit_idx(page, 2, "m") == 0 and views.unit_idx(page, 1, "m") is None and views.unit_idx(page, 7, "m") is None)
 check("messages : stéréo l / r, mono m, rien pour les voies absentes", gm["/xgr/g/1/units"] == (("i", 2),)
@@ -280,8 +313,8 @@ got, order = drain(0.3)
 check("rien de changé : rien envoyé", order == [])
 state["lv1_count"] = 80
 got, order = drain(0.3)
-check("changement : seulement les messages concernés (LV1, banques proposées)", order == ["/xgr/lv1", "/xgr/view/banks"]
-      and got["/xgr/lv1"][0].startswith("80 LV1") and got["/xgr/view/banks"] == [5])
+check("changement : seulement les messages concernés (LV1, 5e couche de secours)", order == ["/xgr/lv1", "/xgr/nav/5/name"]
+      and got["/xgr/lv1"][0].startswith("80 LV1") and got["/xgr/nav/5/name"] == ["Ch 65-80"])
 state["gains"] = list(state["gains"])
 state["gains"][33] = 36.0
 got, order = drain(0.3)
@@ -325,10 +358,10 @@ with b.lock:
         b.tablets.pop(ip, None)
 
 # vue par tablette et gestes (2b)
-send("/xgr/view/bank", [("i", 1)])
+send("/xgr/view/layer", [("s", "input"), ("i", 1)])
 got, order = drain(0.3)
-check("banque 17-32 : titre, vue fixe, tranches de la banque", got.get("/xgr/g/title") == ["Ch 17-32"]
-      and got.get("/xgr/view/follow") == [0] and got.get("/xgr/view/bank") == [1])
+check("couche Ch 17-32 : titre, vue fixe, couche affichée", got.get("/xgr/g/title") == ["Ch 17-32"]
+      and got.get("/xgr/view/follow") == [0] and got.get("/xgr/nav/index") == [1])
 send("/xgr/view/follow")
 got, order = drain(0.3)
 check("FOLLOW LV1 : retour à la couche de la LV1", got.get("/xgr/g/title") == ["Ch 1-16"] and got.get("/xgr/view/follow") == [1])
@@ -343,14 +376,32 @@ got, _o = drain(0.3)
 check("voie absente (EXP sans préampli) : message, rien envoyé", got.get(P.NOTIFY) == ["This strip just changed: try again"]
       and len(gcalls) == 2)
 lcalls = []
-b.actions["lv1"] = lambda ch, field, value: lcalls.append((ch, field, value))
-send("/xgr/view/bank", [("i", 1)])
+b.actions["lv1"] = lambda g, c, field, value: lcalls.append((g, c, field, value))
+send("/xgr/view/layer", [("s", "input"), ("i", 1)])
 drain(0.3)
 send("/xgr/g/2/set/fader", [("f", -6.0)])
 send("/xgr/g/2/set/mute")
 drain(0.3)
-check("5b : commande LV1 sur le canal de la page de la tablette (banque 17-32 : tranche 2 = canal 18)",
-      lcalls == [(18, "fader", -6.0), (18, "mute", None)])
+check("5b : commande LV1 sur la piste de la page de la tablette (Ch 17-32 : tranche 2 = entrée 18 = (0, 17))",
+      lcalls == [(0, 17, "fader", -6.0), (0, 17, "mute", None)])
+state["lv1_sets"], state["lv1_mixer"] = sets80, mix80
+send("/xgr/view/layer", [("s", "mix"), ("i", 1)])
+drain(0.3)
+send("/xgr/g/1/set/fader", [("f", 0.0)])
+send("/xgr/g/5/set/mute")
+nots, end = [], time.time() + 0.4
+while time.time() < end:                 # (drain ne garde que le dernier message de chaque adresse)
+    try:
+        a_, args_ = decode_message(tab.recv(65536))
+        if a_ == P.NOTIFY:
+            nots.append(args_[0][1])
+    except socket.timeout:
+        pass
+check("masters en lecture seule (refusés par le pont) ; Cue (bus) accepté", lcalls[2:] == [(7, 0, "mute", None)]
+      and nots == ["Masters are read-only"])
+del state["lv1_sets"], state["lv1_mixer"]
+send(P.HELLO, [("i", P.PROTO)])          # présence (la vraie tablette s'annonce chaque seconde ; oubliée après LOST_S)
+drain(0.3)
 scalls = []
 b.actions.update({"scene_recall": lambda pid, ph: scalls.append(("recall", pid, ph)),
                   "scene_undo": lambda: scalls.append(("undo",)), "scene_save": lambda: scalls.append(("save",))})

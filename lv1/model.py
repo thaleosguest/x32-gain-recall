@@ -19,17 +19,90 @@ METER_STALE = 1.0          # s : vumètre plus reçu depuis ce délai = pas de s
 #                            en mono, par exemple : la LV1 ne l'envoie plus)
 
 
+def parse_layers(args):
+    """/Notify/Layers : vue (0 = Mixer 1, 1 = Mixer 2), drapeau (1 = pages Custom), nb, puis par couche : nom, n,
+    (groupe, canal) x n, (-1, -1) = tranche vide (XTouch-LV1 parse_layers). -> (vue, drapeau, [(nom, [(g, c) | None])])."""
+    if len(args) < 3 or any(a[0] != "i" for a in args[:3]):
+        return None, None, []
+    view, flag, count = args[0][1], args[1][1], args[2][1]
+    layers, i = [], 3
+    for _ in range(max(0, min(count, 32))):
+        if i + 1 >= len(args) or args[i][0] != "s" or args[i + 1][0] != "i":
+            break
+        name, n = args[i][1], args[i + 1][1]
+        i += 2
+        entries = []
+        for _ in range(max(0, n)):
+            if i + 1 >= len(args):
+                break
+            g, c = args[i][1], args[i + 1][1]
+            i += 2
+            entries.append(None if (g == -1 and c == -1) else (g, c))
+        layers.append((name.strip(), entries))
+    return view, flag, layers
+
+
+def set_kind(flag, layers):
+    """Mode d'un jeu de couches (relevé le 27/10 sur la LV1 de Joseph, 80 canaux : Mixer 1 en Mix, Mixer 2 en Input) :
+    "custom" (drapeau 1, pages Custom), "mix" (Groups, Fx, Mon…, Masters, Link DCA : mode Mix du 80 canaux), "input"
+    (que des Ch : mode Input du 80 canaux), "factory" (16 / 32 / 64 canaux : Ch… puis Grp/Fx, Monitor, Masters, Link
+    DCA), None sinon (Spill : affiché si la LV1 le montre, jamais mémorisé)."""
+    if flag == 1:
+        return "custom"
+    names = [n for n, e in layers if any(e)]
+    if names and names[0] == "Groups":
+        return "mix"
+    if names and all(n.startswith("Ch ") for n in names):
+        return "input"
+    if any(n.startswith("Ch ") for n in names) and ("Masters" in names or "Link DCA" in names):
+        return "factory"
+    return None
+
+
 class LV1Mixer:
     def __init__(self):
         self.lock = threading.Lock()
         self.tracks = {}          # (g, c) -> {"name", "fader", "mute", "solo", "stereo", "pan", "trim": {voie: dB},
-        #                                      "phase": {voie: bool}}
+        #                                      "phase": {voie: bool}, "pal": n° de palette (couleur)}
         self.meters = {}          # (g, c, voie) -> (dB, instant)
         self.channels_at = 0.0    # dernier /Channels complet
+        # Couches (tablette, 27/10) : jeux vus par mode (mémorisés : en 80 canaux la LV1 n'envoie que le mode affiché
+        # sur chaque Mixer, /Get/Layers ne donne que celui-là) ; « custom » est propre à chaque Mixer (custom0 / custom1)
+        self.sets = {}            # "factory" | "input" | "mix" | "custom0" | "custom1" -> [(nom, [(g, c) | None])]
+        self.sets_rev = 0         # +1 à chaque jeu nouveau ou changé (enregistrement de la mémoire)
+        self.pending = {}         # vue -> (drapeau, couches) reçu, adopté au /Notify/CurrentLayer qui le suit
+        self.shown = {}           # vue -> {"kind", "layers", "index"} : ce que montre ce Mixer
 
     def track(self, g, c):
         return self.tracks.setdefault((g, c), {"name": None, "fader": None, "mute": None, "solo": None,
-                                               "stereo": None, "pan": None, "trim": {}, "phase": {}})
+                                               "stereo": None, "pan": None, "trim": {}, "phase": {}, "pal": None})
+
+    def _remember(self, view, flag, layers):
+        kind = set_kind(flag, layers)
+        if kind is None:
+            return None
+        key = "custom%d" % view if kind == "custom" else kind
+        if self.sets.get(key) != layers:
+            self.sets[key] = layers
+            self.sets_rev += 1
+        return kind
+
+    def load_sets(self, sets):
+        """Mémoire des jeux (fichier de Gain Recall) : {clé: [[nom, [[g, c] | None…]]…]} ; ce qui est reçu en direct
+        remplace."""
+        with self.lock:
+            for key, layers in (sets or {}).items():
+                if key in ("factory", "input", "mix", "custom0", "custom1") and key not in self.sets:
+                    try:
+                        self.sets[key] = [(str(n), [tuple(e) if e else None for e in ents]) for n, ents in layers]
+                    except (TypeError, ValueError):
+                        pass
+
+    def layers_snapshot(self):
+        """{"sets": {clé: [(nom, entrées)]}, "shown": {vue: {"kind", "layers", "index"}}, "rev"} pour le pont."""
+        with self.lock:
+            return {"sets": {k: list(v) for k, v in self.sets.items()},
+                    "shown": {v: dict(s) for v, s in self.shown.items()}, "rev": self.sets_rev}
 
     def handle(self, address, args):
         """Une notification de la LV1 (args = [(type, valeur)]). Les autres adresses sont ignorées."""
@@ -59,6 +132,23 @@ class LV1Mixer:
                 self.track(v[0], v[1])["phase"][v[2]] = v[3] != 0
             elif address == "/Notify/StemFormatForSource" and len(args) >= 4 and all(a[0] == "i" for a in args[:4]):
                 self.track(v[0], v[1])["stereo"] = v[3] == 2
+            elif address == "/Notify/TrackColor" and len(args) >= 3 and args[2][0] == "i":
+                self.track(v[0], v[1])["pal"] = v[2]
+            elif address == "/Notify/Layers":
+                # adopté comme « affiché » SEULEMENT s'il est suivi de /Notify/CurrentLayer pour la même vue (règle de
+                # XTouch-LV1, bug du 15/10 : à la connexion, les pages Custom arrivent en dernier SANS CurrentLayer) ;
+                # mémorisé dans tous les cas (mode reconnu)
+                view, flag, layers = parse_layers(args)
+                if layers:
+                    self._remember(view, flag, layers)
+                    self.pending[view] = (flag, layers)
+            elif address == "/Notify/CurrentLayer" and len(args) >= 2 and args[1][0] == "i":
+                view, index = v[0], v[1]
+                pend = self.pending.pop(view, None)
+                if pend:
+                    self.shown[view] = {"kind": set_kind(*pend), "layers": pend[1], "index": index}
+                elif view in self.shown:
+                    self.shown[view]["index"] = index
 
     def _channels(self, args):
         count = args[0][1]

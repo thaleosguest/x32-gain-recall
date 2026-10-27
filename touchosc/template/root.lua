@@ -24,7 +24,6 @@ local shown = nil
 local notifyAt = nil
 local c = {}                                          -- contrôles par nom
 local UNITS = { 'm', 'l', 'r' }
-local BANKS = 5
 local srv = {}                                        -- potard -> dernière valeur de la console (0..1)
 local srvDb = {}                                      -- potard -> dernier texte dB de la console
 local lastResync = 0
@@ -49,7 +48,8 @@ local function busy(name, now)
   -- name = potard de gain « gK_U_knob » ; son geste passe par « gK_U_drag »
   return busyCtl((name:gsub('_knob$', '_drag')), now)
 end
-local curBank, nBanks = -1, BANKS                     -- banque affichée (-1 : couche sans banque), banques proposées
+-- Navigation (couches de la LV1, 27/10) : modes proposés, mode et couche affichés, noms des 8 couches du mode
+local navKinds, navKind, navIndex = '', '', -1
 
 -- Page SCENES (phase 3a) : la liste entière arrive de Gain Recall ; page affichée et sélection sont sur la tablette
 -- (libellés cachés sc_off / sc_sel / sc_selid, écrits par les boutons de la page). Sélection gardée par id.
@@ -98,7 +98,22 @@ local PANEL = Color(17 / 255, 17 / 255, 17 / 255, 1)
 local INK = PANEL
 local MIX_PARTS = { 'fader', 'fval', 'peak', 'meter', 'mute', 'mute_l', 'cue', 'cue_l', 'pan', 'pan_a', 'trim',
                     'trim_v', 'trim_t', 'phase', 'phase_l', 'a', 'a_l', 'b', 'b_l', 'fader_drag', 'pan_drag',
-                    'trim_drag' }
+                    'trim_drag', 'mute_b', 'cue_b', 'phase_b' }
+-- type de tranche (27/10) : entrée « in » (tout), bus « bus » (groupes, Fx, Mon, DCA : pas de A / B, Ø, Trim),
+-- master « ro » (LR, C, M : comme un bus, gestes coupés), vide « »
+local IN_ONLY = { 'a', 'a_l', 'b', 'b_l', 'phase', 'phase_l', 'phase_b', 'trim', 'trim_t', 'trim_v', 'trim_drag',
+                  'pan_a' }
+local STRIP_PARTS = { 'fader', 'fval', 'peak', 'meter', 'mute', 'mute_l', 'mute_b', 'cue', 'cue_l', 'cue_b', 'pan',
+                      'pan_drag', 'fader_drag' }
+local GESTURES = { 'fader_drag', 'pan_drag', 'mute_b', 'cue_b' }
+
+function setKind(k, kind)
+  local g = 'g' .. k .. '_'
+  local isIn, any = kind == 'in', (kind == 'in' or kind == 'bus' or kind == 'ro')
+  for _, part in ipairs(IN_ONLY) do c[g .. part].visible = isIn end
+  for _, part in ipairs(STRIP_PARTS) do c[g .. part].visible = any end
+  for _, part in ipairs(GESTURES) do c[g .. part].interactive = kind ~= 'ro' end
+end
 -- phase 5b : valeurs que le geste en cours (ou tout juste fini) affiche lui-même -> bouton de geste concerné
 local DRAG_OF = { fader = 'fader_drag', fval = 'fader_drag', pan = 'pan_drag', trim = 'trim_drag', trimv = 'trim_drag' }
 local live = false
@@ -159,11 +174,21 @@ local function setLive(on)
   end
 end
 
-function paintBanks()
-  -- (bank et banks arrivent dans n'importe quel ordre : on repeint les deux à chaque fois)
-  for i = 0, BANKS - 1 do
-    c['bank' .. i].interactive = i < nBanks
-    c['bank' .. i .. '_label'].textColor = (i >= nBanks) and GREY or ((i == curBank) and BLUE or TEXT)
+function paintNav()
+  -- (les messages de navigation arrivent dans n'importe quel ordre : on repeint tout à chaque fois)
+  local factory = navKinds:find('factory') ~= nil
+  c.nav_kind_a_l.values.text = factory and 'FACTORY' or 'INPUT'
+  local modes = { a = (navKind == 'factory' or navKind == 'input'), mix = (navKind == 'mix'),
+                  custom = (navKind == 'custom') }
+  local shown = { a = true, mix = navKinds:find('mix') ~= nil, custom = navKinds:find('custom') ~= nil }
+  for m, on in pairs(modes) do
+    for _, part in ipairs({ '', '_l', '_b' }) do
+      c['nav_kind_' .. m .. part].visible = shown[m]
+    end
+    c['nav_kind_' .. m .. '_l'].textColor = on and BLUE or TEXT
+  end
+  for n = 1, 8 do
+    c['nav_l' .. n .. '_l'].textColor = (n - 1 == navIndex) and BLUE or TEXT
   end
 end
 
@@ -180,10 +205,18 @@ function init()
                           'panel_line', 'g_title', 'follow_label' }) do
     c[name] = self:findByName(name, true)
   end
-  for n = 0, BANKS - 1 do
-    c['bank' .. n] = self:findByName('bank' .. n, true)
-    c['bank' .. n .. '_label'] = self:findByName('bank' .. n .. '_label', true)
+  for _, m in ipairs({ 'a', 'mix', 'custom' }) do
+    for _, part in ipairs({ '', '_l', '_b' }) do
+      c['nav_kind_' .. m .. part] = self:findByName('nav_kind_' .. m .. part, true)
+    end
   end
+  for n = 1, 8 do
+    for _, part in ipairs({ '', '_l', '_b' }) do
+      c['nav_l' .. n .. part] = self:findByName('nav_l' .. n .. part, true)
+    end
+  end
+  c.nav_kinds = self:findByName('nav_kinds', true)
+  c.nav_kind = self:findByName('nav_kind', true)
   for k = 1, STRIPS do
     for _, part in ipairs({ 'srcbox', 'input', 'band', 'name', 'src', 'numbar', 'num' }) do
       local n = 'g' .. k .. '_' .. part
@@ -228,9 +261,7 @@ function init()
   c.led.shape = Shape.CIRCLE
   c.sync.outlineStyle = OutlineStyle.FULL
   self:findByName('follow', true).outlineStyle = OutlineStyle.FULL   -- (par défaut : coins, vus comme des crochets)
-  for n = 0, BANKS - 1 do
-    c['bank' .. n].outlineStyle = OutlineStyle.FULL
-  end
+
   for k = 1, STRIPS do
     setUnits(k, 0)
   end
@@ -341,6 +372,8 @@ local function onStrip(k, field, v)
     end
   elseif field == 'units' then
     setUnits(k, math.floor(v))
+  elseif field == 'kind' then
+    setKind(k, v)
   else
     setMix(g, field, v)                       -- commandes de la LV1 (fader, mute, solo, pan, trim, phase, ab…)
   end
@@ -424,15 +457,31 @@ function onReceiveOSC(message, connections)
     c.follow_label.textColor = (args[1].value == 1) and BLUE or TEXT
     return true
   end
-  if path == '/xgr/view/bank' then
-    curBank = math.floor(args[1].value)
-    paintBanks()
+  if path == '/xgr/nav/kinds' then
+    navKinds = args[1].value
+    c.nav_kinds.values.text = navKinds
+    paintNav()
     return true
   end
-  if path == '/xgr/view/banks' then
-    -- banques au-delà de la configuration de la LV1 (64 canaux : pas de 65-80) : grisées, sans effet
-    nBanks = math.floor(args[1].value)
-    paintBanks()
+  if path == '/xgr/nav/kind' then
+    navKind = args[1].value
+    c.nav_kind.values.text = navKind
+    paintNav()
+    return true
+  end
+  if path == '/xgr/nav/index' then
+    navIndex = math.floor(args[1].value)
+    paintNav()
+    return true
+  end
+  local nn = path:match('^/xgr/nav/(%d+)/name$')
+  if nn then
+    -- couche sans nom (jeu de moins de 8 couches) : bouton caché
+    local n, name = tonumber(nn), args[1].value
+    c['nav_l' .. n .. '_l'].values.text = name
+    for _, part in ipairs({ '', '_l', '_b' }) do
+      c['nav_l' .. n .. part].visible = name ~= ''
+    end
     return true
   end
   if path == '/xgr/g/title' then

@@ -714,6 +714,24 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   LOCALE (`api_local`, mêmes vérifications que le float) sur un fil, résultat à TOUTES les tablettes (`notify_all`,
   `recall_text`). Vérifié : tests + SAVE / UNDO de bout en bout (serveur de test, APPDATA temporaire ; aucun rappel sur
   la vraie X32). Pas d'interpréteur Lua sur ce PC (lupa : sources seulement) : Lua vérifié dans TouchOSC par Joseph.
+- **Toutes les couches LV1 sur la page Mixer (3.2.0-a14, 27/10, demande de Joseph : groupes, Fx, Mon, Masters, DCA ; 80 ch
+  = mode Mix, 64 ch = dans Factory ; Custom ; Spill).** Source = `/Notify/Layers` (vue, drapeau 1 = Custom, couches :
+  nom + (groupe, canal), -1/-1 vide) + `/Notify/CurrentLayer` (règle XTouch-LV1 : jeu « affiché » adopté seulement au
+  CurrentLayer qui le suit). `lv1/model.py` : `parse_layers`, `set_kind` (custom / mix « Groups » / input « Ch … » /
+  factory « Ch … + Masters / Link DCA » / None = Spill, jamais mémorisé), `sets` (factory, input, mix, custom0, custom1),
+  `shown` par vue, `pal` (couleur des bus, /Notify/TrackColor). **Sonde du 27/10** : `/Get/Layers [vue, 0]` ne rend QUE le
+  jeu affiché de ce Mixer (args 1..6 : rien) ; envoi spontané à la connexion PAS fiable ; demande ignorée si trop tôt ->
+  `start_mixer.keep` : `/Get/Layers` 2 s après la connexion puis toutes les 5 s tant qu'un Mixer n'a pas de couche ;
+  jeux vus gardés dans `lv1_layers_seen.json` (APPDATA ; en 80 ch, Mix connu dès qu'il a été vu sur un des Mixers).
+  Vue : `views.layer_sets` (jeu de secours « input » d'après `lv1_count` sans télécommande ; factory -> pas d'input / mix),
+  `shown_layer` (FOLLOW = Mixer 1, Custom et Spill compris ; repli base), `gain_page(état, view=(mode, n°))`, tranche =
+  entrée « in » / bus « bus » / master « ro » (LR, C, M : `MASTERS_RO`, décision de Joseph : lecture seule) ; `key` =
+  (groupe, canal). Messages : `/xgr/nav/{kinds,kind,index,n/name}`, `/xgr/g/k/kind` ; action `/xgr/view/layer s mode i n°`
+  (remplace les banques) ; commandes LV1 -> `touchosc_lv1(g, c, …)` (masters refusés par le pont ET le serveur ; Trim / Ø
+  entrées seulement). Template : rangée des couches dans la page Mixer (INPUT ou FACTORY / MIX / CUSTOM + 8 couches aux
+  noms LV1, `nav_row`), tranches descendues de 50 px (fader 424), Lua `paintNav` / `setKind` (bus : pas de A/B, Ø, Trim ;
+  ro : gestes coupés). Vérifié sur la vraie LV1 (FOLLOW = Masters de Mixer 1 : LR / Center / Mono en ro, Cue / Talk Back
+  en bus ; Mix Groups ; Input). Spill propre à la tablette : plus tard (membres des DCA).
 
 ## Reste à faire / idées
 

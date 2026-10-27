@@ -31,7 +31,6 @@ INK = Color(17, 17, 17)                   # texte posé sur une couleur de canal
 BLUE, TEAL, LR_BLUE = Color(56, 201, 255), Color(15, 162, 171), Color(68, 138, 255)
 OFF = Color(90, 90, 90)                   # commandes de la LV1 : gris tant que la LV1 n'est pas connectée
 METER = Color(60, 200, 90)                # vumètres
-BANKS = ["1-16", "17-32", "33-48", "49-64", "65-80"]
 DRAG_STEP_PX = 5         # glisser vertical sur un potard : 5 px par pas de 0,5 dB (~10 px par dB ; 72 dB = 720 px)
 PAN_PX_FULL = 120        # pan : 120 px du centre à un côté (pas de 1/45 ~ 2,7 px)
 TRIM_STEP_PX, TRIM_LIMIT = 6, 30   # Trim : 6 px par pas de 0,5 dB ; ±30 dB comme XTouch-LV1 (la LV1 borne elle-même)
@@ -40,9 +39,11 @@ TRIM_STEP_PX, TRIM_LIMIT = 6, 30   # Trim : 6 px par pas de 0,5 dB ; ±30 dB com
 STRIP_X0, STRIP_PITCH, STRIP_W = 14, 116, 112
 LR_X = STRIP_X0 + STRIP_PITCH * 16
 # rangées (y, hauteur), de haut en bas comme la LV1
+# (27/10 : tout descend de 50 px sous la rangée des couches, le fader raccourcit d'autant)
+NAV_Y, NAV_H = 66, 48
 SRC, AB, PRE, PHASE, TRIM, NAME, PAN, MUTE, FVAL, PEAK, FADER, NUM, CUE = (
-    (70, 54), (128, 30), (162, 152), (320, 30), (356, 74), (434, 30), (468, 52), (524, 30), (558, 26), (584, 22),
-    (612, 474), (1090, 30), (1124, 30))
+    (120, 54), (178, 30), (212, 152), (370, 30), (406, 74), (484, 30), (518, 52), (574, 30), (608, 26), (634, 22),
+    (662, 424), (1090, 30), (1124, 30))
 # échelle du fader (fraction de la course, relevée sur la capture de Joseph)
 SCALE = [("10", 0.0), ("0", 0.235), ("-10", 0.47), ("-20", 0.585), ("-30", 0.705), ("-40", 0.82), ("-60", 0.93),
          ("-inf", 1.0)]
@@ -262,11 +263,33 @@ def routing_page():
     return g
 
 
+def nav_row():
+    """Rangée des couches (page Mixer), comme la colonne de la LV1 : modes INPUT (ou FACTORY en 16 / 32 / 64 canaux), MIX
+    (80 canaux) et CUSTOM, puis les 8 couches du mode affiché, aux noms de la LV1. Vue de CETTE tablette."""
+    out = [hidden("nav_kinds"), hidden("nav_kind")]
+    first = ("local k = self.parent:findByName('nav_kinds', false).values.text\n"
+             "  sendOSC('/xgr/view/layer', k:find('factory') and 'factory' or 'input', 0)")
+    for n, (m, text, send) in enumerate((("a", "INPUT", first), ("mix", "MIX", "sendOSC('/xgr/view/layer', 'mix', 0)"),
+                                         ("custom", "CUSTOM", "sendOSC('/xgr/view/layer', 'custom', 0)"))):
+        out += key("nav_kind_" + m, (14 + 136 * n, NAV_Y, 130, NAV_H), text, 20,
+                   "function onValueChanged(key)\n  if key ~= 'x' or self.values.x ~= 1 then return end\n  %s\nend\n"
+                   % send)
+    for n in range(1, 9):
+        out += key("nav_l%d" % n, (430 + 150 * (n - 1), NAV_Y, 144, NAV_H), "", 20,
+                   "function onValueChanged(key)\n"
+                   "  if key ~= 'x' or self.values.x ~= 1 then return end\n"
+                   "  local kind = self.parent:findByName('nav_kind', false).values.text\n"
+                   "  if kind ~= '' then sendOSC('/xgr/view/layer', kind, %d) end\n"
+                   "end\n" % (n - 1))
+    return out
+
+
 def build():
     root = Node("GROUP", "root", (0, 0, W, H), {"color": BG, "background": True},
                 script=lua("root.lua", PROTO=P.PROTO, PORT_IN=P.PORT_IN, PORT_OUT=P.PORT_OUT, STRIPS=16))
     # pages (phase 3a) : une seule visible à la fois, choisie par les onglets ; la page Mixer = la page Mixer de la LV1
     mixer = Node("GROUP", "page_mixer", (0, 0, W, H), {"background": False})
+    mixer.add(*nav_row())
     for k in range(1, 17):
         mixer.add(*strip(k))
     mixer.add(*lr_strip())
@@ -279,14 +302,12 @@ def build():
                       script=lua("tab.lua", PAGE=page)),
                  label("tab_%s_label" % page, (x, y, w, h), text, 20, BLUE if page == "mixer" else TEXT))
     root.add(
-        *button("follow", (880, 8, 160, 46), "FOLLOW LV1", "/xgr/view/follow", size=18),
-        label("g_title", (1050, 8, 290, 46), "", 24, BLUE),
-        label("notify", (1350, 8, 380, 46), "", 18, ORANGE),
+        *button("follow", (370, 8, 170, 46), "FOLLOW LV1", "/xgr/view/follow", size=18),
+        label("g_title", (550, 8, 520, 46), "", 24, BLUE),
+        label("notify", (1080, 8, 650, 46), "", 18, ORANGE),
         *button("sync", (1740, 8, 150, 46), "SYNC", P.SYNC, size=22),
         box("led", (1910, 12, 38, 38), Color(90, 90, 90)),
     )
-    for n, text in enumerate(BANKS):           # banques : vue de CETTE tablette (la LV1 ne bouge pas)
-        root.add(*button("bank%d" % n, (370 + 100 * n, 8, 94, 46), text, "/xgr/view/bank", arg=n, size=18))
     root.add(                                   # ligne d'état en bas, puis panneau de connexion PAR-DESSUS tout
         label("console", (14, 1164, 520, 30), "-", 16, MUTED),
         label("lv1", (550, 1164, 640, 30), "-", 16, MUTED),

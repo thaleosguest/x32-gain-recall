@@ -3,7 +3,9 @@ Formats relevés sur la LV1 de Joseph (journal XTouch-LV1 111226 et écoute du 2
 - /Channels : nom, fader, solo, mute, mono / stéréo ; liste complète -> pistes disparues retirées, tronquée -> rien ;
 - fader, mute, solo, pan (/45), trim et phase par voie, mono / stéréo à chaud ;
 - vumètres : voie la plus haute, oubliés après METER_STALE ; adresses inconnues ignorées ;
-- auditeurs de lv1/remote.LV1Remote : appelés pour chaque message, une erreur n'arrête rien.
+- auditeurs de lv1/remote.LV1Remote : appelés pour chaque message, une erreur n'arrête rien ;
+- couches (27/10) : modes Mix / Input / Factory / Custom reconnus, Spill jamais mémorisé, jeu « affiché » adopté
+  seulement au /Notify/CurrentLayer qui le suit (Custom sans CurrentLayer à la connexion), mémoire rechargée.
 
     py tests/test_lv1_model.py
 """
@@ -69,6 +71,50 @@ m.handle("/Channels", [("i", 2)] + trunc[1:])
 check("liste tronquée : rien retiré", (0, 63) in m.snapshot())
 m.handle("/Channels", channels([piste(0, 0, "Channel 1"), piste(3, 0, "LR")]))
 check("liste complète : pistes disparues retirées", sorted(m.snapshot()) == [(0, 0), (3, 0)])
+
+# couches (27/10) : jeux par mode, adoption au CurrentLayer, mémoire
+def layers_msg(view, flag, layers):
+    args = [("i", view), ("i", flag), ("i", len(layers))]
+    for name, ents in layers:
+        args += [("s", name), ("i", len(ents))]
+        for e in ents:
+            args += [("i", e[0] if e else -1), ("i", e[1] if e else -1)]
+    return args
+
+
+mix = [("Groups", [(1, 0), (1, 1)]), ("Fx", [(2, 0)]), ("Masters", [(3, 0), None, (4, 0)]), (" ", [None])]
+inp = [("Ch 1-16", [(0, 0), (0, 1)]), ("Ch 17-32", [(0, 16)]), (" ", [None])]
+cus = [("Page-1", [(0, 61), None]), ("Page-2", [None])]
+fac = [("Ch 1-16", [(0, 0)]), ("Grp/Fx", [(1, 0)]), ("Monitor", [(25, 0)]), ("Masters", [(3, 0)]), ("Link DCA", [(12, 0)])]
+check("modes reconnus ; Spill (inconnu) jamais", M.set_kind(0, mix) == "mix" and M.set_kind(0, inp) == "input"
+      and M.set_kind(1, cus) == "custom" and M.set_kind(0, fac) == "factory" and M.set_kind(0, [("DCA 1", [(0, 3)])]) is None)
+m2 = M.LV1Mixer()
+m2.handle("/Notify/Layers", layers_msg(0, 0, mix))
+m2.handle("/Notify/Layers", layers_msg(1, 0, inp))
+m2.handle("/Notify/Layers", layers_msg(0, 1, cus))          # à la connexion : Custom SANS CurrentLayer
+ls = m2.layers_snapshot()
+check("jeux mémorisés (Mix, Input, Custom de Mixer 1), rien d'affiché sans CurrentLayer", sorted(ls["sets"]) == ["custom0",
+      "input", "mix"] and ls["shown"] == {} and ls["sets"]["mix"][2] == ("Masters", [(3, 0), None, (4, 0)])
+      and ls["sets"]["mix"][3] == ("", [None]))
+m2.handle("/Notify/Layers", layers_msg(0, 0, mix))
+m2.handle("/Notify/CurrentLayer", [("i", 0), ("i", 2)])
+m2.handle("/Notify/CurrentLayer", [("i", 1), ("i", 1)])     # Mixer 2 : son jeu Input était en attente -> adopté
+m2.handle("/Notify/CurrentLayer", [("i", 1), ("i", 0)])     # puis seulement l'index change
+sh = m2.layers_snapshot()["shown"]
+check("adopté au CurrentLayer qui suit (Mixer 1 : Mix, couche Masters ; Mixer 2 : Input)", sh[0]["kind"] == "mix"
+      and sh[0]["index"] == 2 and sh[1]["kind"] == "input" and sh[1]["index"] == 0)
+m2.handle("/Notify/CurrentLayer", [("i", 0), ("i", 0)])
+check("autre couche du même jeu : index mis à jour", m2.layers_snapshot()["shown"][0]["index"] == 0)
+rev = m2.sets_rev
+m2.handle("/Notify/Layers", layers_msg(0, 0, [("DCA 1", [(0, 3)])]))
+m2.handle("/Notify/CurrentLayer", [("i", 0), ("i", 0)])
+check("Spill : affiché, pas mémorisé", m2.layers_snapshot()["shown"][0]["kind"] is None and m2.sets_rev == rev
+      and "mix" in m2.layers_snapshot()["sets"])
+m3 = M.LV1Mixer()
+m3.load_sets({"mix": [["Groups", [[1, 0], None]]], "bidon": [], "input": "pas une liste"})
+check("mémoire rechargée (clés connues, valeurs propres)", m3.layers_snapshot()["sets"] == {"mix": [("Groups", [(1, 0), None])]})
+m3.handle("/Notify/TrackColor", [("i", 1), ("i", 0), ("i", 11), ("f", 0.1), ("f", 0.2), ("f", 0.3)])
+check("couleur d'une piste (n° de palette)", m3.snapshot()[(1, 0)]["pal"] == 11)
 
 # auditeurs de LV1Remote
 r = LV1Remote(log=lambda x: None)

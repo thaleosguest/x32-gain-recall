@@ -12,7 +12,8 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
   tablette -> Gain Recall
     /xgr/hello      i proto, s nom de l'appareil      toutes les secondes (présence) ; 1er hello -> tout l'état
     /xgr/sync                                          renvoyer tout l'état
-    /xgr/view/bank  i banque (0 = Ch 1-16 … 4 = 65-80)  vue fixe de CETTE tablette (la LV1 ne bouge pas)
+    /xgr/view/layer s mode, i n° (0..7)                vue fixe de CETTE tablette (la LV1 ne bouge pas) ; mode =
+                                                       factory | input | mix | custom (couches de la LV1, 27/10)
     /xgr/view/follow                                   la tablette suit de nouveau la couche de la LV1
     /xgr/g/k/u/gain f dB voulu                         voie u de la tranche k de la page de CETTE tablette
     /xgr/g/k/u/48v                                     bascule du 48V (déjà confirmée sur la tablette)
@@ -29,10 +30,12 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
       barre d'état : /xgr/console s, /xgr/console/ok i, /xgr/lv1 s, /xgr/tablets i
       page SCENES (phase 3a) : /xgr/sc/count i ; scène n = 1..count : /xgr/sc/n/name s, /xgr/sc/n/info s (date),
         /xgr/sc/n/id s ; /xgr/sc/last s (dernier rappel), /xgr/sc/canundo i
-      vue (phase 2b, PAR TABLETTE) : /xgr/view/follow i (1 = suit la LV1), /xgr/view/bank i (0..4, -1 = couche
-        sans banque), /xgr/view/banks i (banques proposées)
+      vue (PAR TABLETTE) : /xgr/view/follow i (1 = suit la LV1) ; couches de la LV1 (27/10) : /xgr/nav/kinds s
+        (modes proposés, « factory,custom » ou « input,mix,custom »), /xgr/nav/kind s (mode affiché), /xgr/nav/index i
+        (couche affichée, -1 : aucune), /xgr/nav/n/name s (n = 1..8, noms des couches du mode affiché)
       page GAINS (phase 2a, calque du float sur la couche LV1 de Mixer 1) : /xgr/g/title s ; tranche k = 1..16 :
-        /xgr/g/k/name s (nom LV1), /xgr/g/k/ch i (n° du canal, 0 = tranche vide), /xgr/g/k/input s (source LV1
+        /xgr/g/k/name s (nom LV1), /xgr/g/k/kind s (in = entrée, bus, ro = master en lecture seule, "" = vide),
+        /xgr/g/k/ch i (n° du canal, 0 = tranche vide), /xgr/g/k/input s (source LV1
         « 1- EX 1 », stéréo « 1- EX 31/32 »), /xgr/g/k/color s (« RRGGBB » ou ""), /xgr/g/k/src s, /xgr/g/k/units i (0, 1 = « m », 2 =
         « l » + « r ») ; voie u : /xgr/g/k/u/gain f (0..1 de -12..+60 dB), /xgr/g/k/u/db s, /xgr/g/k/u/48v i
     /xgr/notify     s texte                            message ponctuel (erreur d'une action…)
@@ -154,13 +157,17 @@ def gain_messages(page):
     """Page GAINS (views.gain_page) -> messages. Les voies absentes ne sont pas envoyées (cachées sur la tablette)."""
     out = {"/xgr/g/title": (("s", page["title"]),),
            "/xgr/view/follow": (("i", 1 if page.get("follow", True) else 0),),
-           "/xgr/view/bank": (("i", -1 if page.get("bank") is None else int(page["bank"])),),
-           "/xgr/view/banks": (("i", int(page.get("banks", 4))),),
+           "/xgr/nav/kinds": (("s", ",".join(page.get("kinds") or [])),),
+           "/xgr/nav/kind": (("s", page.get("kind") or ""),),
+           "/xgr/nav/index": (("i", -1 if page.get("index") is None else int(page["index"])),),
            "/xgr/live": (("i", 1 if page.get("live") else 0),)}
     out.update(mix_messages("/xgr/lr", page.get("lr"), lr=True))
+    for n, name in enumerate((page.get("names") or [""] * 8)[:8], 1):
+        out["/xgr/nav/%d/name" % n] = (("s", name),)
     for k, st in enumerate(page["strips"], 1):
         base = "/xgr/g/%d" % k
         out[base + "/name"] = (("s", st["name"]),)
+        out[base + "/kind"] = (("s", st.get("kind", "in" if st["ch"] else "")),)
         out[base + "/ch"] = (("i", st["ch"] if st["ch"] > 0 else 0),)
         out[base + "/input"] = (("s", st["input"]),)
         out[base + "/color"] = (("s", st["color"]),)
@@ -176,7 +183,7 @@ def gain_messages(page):
 
 def parse_action(address, args):
     """Message de la tablette -> action de la liste fermée : (nom, paramètres…), ou None (ignoré).
-    ("sync",) ; ("bank", n) ; ("follow",) ; ("gain", k, u, dB) ; ("phantom", k, u) ; ("lv1", k, champ, valeur) —
+    ("sync",) ; ("layer", mode, n) ; ("follow",) ; ("gain", k, u, dB) ; ("phantom", k, u) ; ("lv1", k, champ, valeur) —
     k = tranche 1..16, u = m / l / r, champ = fader / pan / trim (valeur) ou mute / solo / phase (bascule, None)."""
     vals = arg_values(args)
     num = vals[0] if vals and isinstance(vals[0], (int, float)) and not isinstance(vals[0], bool) else None
@@ -193,8 +200,10 @@ def parse_action(address, args):
         return ("scene_save",)
     if address == "/xgr/view/follow":
         return ("follow",)
-    if address == "/xgr/view/bank":
-        return ("bank", int(num)) if num is not None and 0 <= num <= 4 else None
+    if address == "/xgr/view/layer":
+        if len(vals) < 2 or vals[0] not in views.KINDS or not isinstance(vals[1], (int, float)) or not 0 <= vals[1] <= 7:
+            return None
+        return ("layer", vals[0], int(vals[1]))
     parts = address.split("/")                       # ["", "xgr", "g", k, u, champ]
     if len(parts) == 6 and parts[1:3] == ["xgr", "g"] and parts[3].isdigit() and parts[4] in ("m", "l", "r"):
         k, u = int(parts[3]), parts[4]
