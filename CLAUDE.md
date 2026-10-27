@@ -579,8 +579,12 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   **9301**. Réglage TouchOSC : Connections > OSC UDP, Host = IP du PC, Send 9300, Receive 9301.
 - **Phase 0 faite (3.2.0-a1)** : `/xgr/hello [i proto, s nom]` toutes les secondes -> `/xgr/welcome [i proto, s version,
   s console, s ok|old_template|new_template]` ; page présence (voyant bleu LV1, état, consigne de réglage). Test
-  `tests/test_touchosc.py` (fausse tablette UDP) ; vérifié sur un serveur de test ET sur l'exe (RunAsInvoker). Pas
-  encore ouvert dans TouchOSC (il tournait chez Joseph : ne pas lui charger un fichier par-dessus son document).
+  `tests/test_touchosc.py` (fausse tablette UDP) ; vérifié sur un serveur de test ET sur l'exe (RunAsInvoker).
+  **Validé chez Joseph le 27/10** dans TouchOSC du PC (« Connected… 3.2.0-a1 », console X32RACK-07-BF-17). Ne jamais
+  charger un fichier dans SON TouchOSC ouvert (il travaille peut-être dessus) : il l'ouvre lui-même.
+  Idée de Joseph : TouchOSC du PC en **SERVEUR** (template + Lua + OSC en 127.0.0.1), tablette en **CLIENT** (Connections
+  > Client : rien à copier sur la tablette, elle affiche la surface du PC). Contours : `outline` False ; alignement / forme
+  posés en Lua (`AlignH.LEFT`, `Shape.CIRCLE`) faute de connaître les valeurs numériques du fichier.
   Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
   Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
 
