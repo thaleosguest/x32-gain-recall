@@ -19,6 +19,10 @@ function init()
   led = self:findByName('led', true)
   status = self:findByName('status', true)
   detail = self:findByName('detail', true)
+  -- alignement et forme par les constantes Lua (valeurs numériques du fichier non documentées)
+  self:findByName('title', true).textAlignH = AlignH.LEFT
+  self:findByName('footer', true).textAlignH = AlignH.LEFT
+  led.shape = Shape.CIRCLE
 end
 
 local function show(alive, text, sub, color)

@@ -33,11 +33,12 @@ def lua(name, **tokens):
 
 def label(name, frame, text, size, color=TEXT):
     return Node("LABEL", name, frame, {"background": False, "textSize": size, "textColor": color,
-                                       "interactive": False}, values={"text": text})
+                                       "interactive": False, "outline": False}, values={"text": text})
 
 
 def box(name, frame, color, **props):
-    return Node("BOX", name, frame, dict({"color": color, "background": True, "interactive": False}, **props))
+    return Node("BOX", name, frame, dict({"color": color, "background": True, "interactive": False, "outline": False},
+                                         **props))
 
 
 def build():
