@@ -5,7 +5,7 @@ erreur n'envoie plus de hello : « la tablette ne se connecte pas », a14).
 
 Il faut le module lupa (Lua dans Python) : `py -3.14 -m pip install --target <dossier> lupa`, puis
     py -3.14 tests/lua_bench.py [<dossier de lupa>]
-Le moteur est Lua 5.4 (lupa.lua54) ; TouchOSC suit le Lua 5.4 lui aussi (entiers / réels).
+Le moteur est Lua 5.1 (lupa.lua51), comme TouchOSC (manuel Hexler : « based on the Lua 5.1 language », 28/10).
 """
 import os
 import sys
@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
 if len(sys.argv) > 1:
     sys.path.insert(0, sys.argv[1])
-import lupa.lua54 as lupa  # noqa: E402
+import lupa.lua51 as lupa  # noqa: E402
 from touchosc import build_tosc, protocol as P, views  # noqa: E402
 from touchosc.tosc import Color, Rect  # noqa: E402
 
@@ -46,7 +46,7 @@ api.Response = { ABSOLUTE = 0, RELATIVE = 1 }
 api.sent = {}
 function api.sendOSC(path, ...) table.insert(api.sent, { path, select('#', ...) }) end
 api.math, api.string, api.table, api.pairs, api.ipairs, api.tostring, api.tonumber = math, string, table, pairs, ipairs, tostring, tonumber
-api.type, api.print, api.select, api.next, api.error = type, print, select, next, error
+api.type, api.print, api.select, api.next, api.error, api.unpack = type, print, select, next, error, unpack
 -- PAS de pcall / xpcall : absents du Lua de TouchOSC (a17, « attempt to call global 'pcall' (a nil value) »)
 
 local Control = {}
@@ -120,7 +120,12 @@ def run(messages, drop=None):
         while env.root.parent do env.root = env.root.parent end
         return env
     end''')
-    load = lua.eval("function(src, name, env) return load(src, name, 't', env) end")
+    load = lua.eval("""function(src, name, env)
+        local f, e = loadstring(src, name)
+        if not f then return nil, e end
+        setfenv(f, env)
+        return f
+    end""")
     call = lua.eval('''function(env, fname, ...)
         local f = rawget(env, fname)
         if f == nil then return true end
