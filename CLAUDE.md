@@ -671,7 +671,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Joseph : « phase, trim, pan, mute sont des touches LV1 » -> Ø, Trim, pan, MUTE, fader, cue, A / B, LR = `lv1_key` /
   contrôles non interactifs gris (OFF 90,90,90) jusqu'à la phase 5. Banques / FOLLOW / SYNC dans la rangée du haut (à
   la place des User keys), état en bas. Messages ajoutés : `/xgr/g/k/ch`, `/xgr/g/k/input`. 902 contrôles (62 ko) :
-  fluidité sur la R10 à vérifier (sinon réduire les graduations des faders, 136 contrôles).
+  fluidité : **« ça a l'air de rester fluide » (Joseph, 27/10)** — sinon réduire les graduations des faders (136).
 
 ## Reste à faire / idées
 
