@@ -606,6 +606,12 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   « Looking for… » (son hello partait vers elle-même). Claude l'avait mal décrit -> la décision « mode serveur par défaut »
   reposait sur une erreur. Bon usage : serveur de l'éditeur = distribuer le template ; la tablette parle à Gain Recall
   par le RÉSEAU (Host = IP du PC) -> il faut le mode réseau + autorisation des tablettes + pare-feu UDP 9300.
+  **R10 en réseau VALIDÉE le 27/10 (3.2.0-a3)** : exe lancé `--touchosc-lan --touchosc-allow 192.168.1.20`, règle pare-feu
+  UDP 9300 entrante (profil Privé, créée par Joseph en admin), R10 : Connections > OSC UDP Host 192.168.1.16 Send 9300
+  Receive 9301 (elle n'était PAS configurée : 0 paquet reçu) + Client vers 192.168.1.16 port 6666 entré à la main (le
+  serveur n'apparaissait pas dans la liste). Diagnostic : `/api/state["touchosc"]` (écoute, autorisées, tablettes,
+  refusées, `rx`, dernier expéditeur ; lisible depuis le PC sans code). À corriger : en mode réseau, le PC lui-même est
+  refusé quand il passe par son adresse réseau (seul 127.x est toujours accepté).
 
 ## Reste à faire / idées
 
