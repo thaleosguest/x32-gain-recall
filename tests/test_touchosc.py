@@ -63,6 +63,11 @@ check("16 tranches : bandeau, nom, source, voies m / l / r", all("g%d_%s" % (k, 
       for part in ("band", "name", "src", "m_knob", "m_db", "m_48", "l_knob", "r_48l")) and "g17_band" not in names)
 check("potards : RADIAL non interactifs (lecture seule en 2a)", names["g1_m_knob"].get("type") == "RADIAL"
       and tosc.props_of(names["g1_m_knob"])["interactive"] == "0")
+fr = lambda n: {k: int(v) for k, v in tosc.props_of(names[n])["frame"].items()}
+l48, rk = fr("g7_l_48"), fr("g7_r_knob")
+check("stéréo empilée : voie droite sous la gauche, même largeur que le mono, repères L / R",
+      rk["y"] > l48["y"] + l48["h"] and fr("g7_l_knob")["x"] == fr("g7_r_knob")["x"]
+      and fr("g7_l_db")["w"] == fr("g7_m_db")["w"] and "g7_l_side" in names and "g7_m_side" not in names)
 order = [tosc.props_of(n)["name"] for n in root.find("children")]
 check("panneau de connexion par-dessus les tranches", order.index("panel") > order.index("g16_r_48l"))
 

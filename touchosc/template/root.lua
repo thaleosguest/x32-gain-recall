@@ -44,9 +44,9 @@ function init()
       c[n] = self:findByName(n, true)
     end
     for _, u in ipairs(UNITS) do
-      for _, part in ipairs({ 'knob', 'db', '48', '48l' }) do
+      for _, part in ipairs({ 'knob', 'db', '48', '48l', 'side' }) do
         local n = 'g' .. k .. '_' .. u .. '_' .. part
-        c[n] = self:findByName(n, true)
+        c[n] = self:findByName(n, true)        -- « side » (repère L / R) : voies stéréo seulement, nil en mono
       end
     end
   end
@@ -65,11 +65,12 @@ function init()
 end
 
 function setUnits(k, n)
-  -- 0 voie : rien ; 1 : « m » pleine largeur ; 2 : « l » + « r » (canal stéréo, gains non liés)
+  -- 0 voie : rien ; 1 : « m » ; 2 : « l » au-dessus de « r » (canal stéréo, gains non liés)
   local show = { m = (n == 1), l = (n == 2), r = (n == 2) }
   for _, u in ipairs(UNITS) do
-    for _, part in ipairs({ 'knob', 'db', '48', '48l' }) do
-      c['g' .. k .. '_' .. u .. '_' .. part].visible = show[u]
+    for _, part in ipairs({ 'knob', 'db', '48', '48l', 'side' }) do
+      local ctl = c['g' .. k .. '_' .. u .. '_' .. part]
+      if ctl then ctl.visible = show[u] end
     end
   end
 end

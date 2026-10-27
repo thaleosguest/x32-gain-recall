@@ -631,7 +631,10 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   sous l'en-tête, titre de couche en bleu, 16 tranches (pas 120 px : bandeau, nom, source, RADIAL + dB + 48V rouge
   (209,52,59) comme PH_ON) pré-créées en m / l / r (TouchOSC ne crée pas de contrôle en Lua : visibilité), panneau
   de connexion PAR-DESSUS, caché une fois connecté. Vérifié sur les données réelles de Joseph (Ch 49-64, FireRoom
-  L 15/16 EXP 31/32 à 12 dB) et sur l'exe. Pas encore vu sur la R10.
+  L 15/16 EXP 31/32 à 12 dB) et sur l'exe. **Vu par Joseph le 27/10 sur le PC ET la R10** (identiques ; « TouchOSC: 2 »).
+  Retouche demandée (a6) : stéréo EMPILÉE (« l » au-dessus de « r », pleine largeur, repères L / R) au lieu de deux
+  petits potards côte à côte. Moitié basse de l'écran gardée libre (contrôle LV1, phase 5). Phase 2b prévue : banques
+  1-16 … 65-80 en boutons directs + FOLLOW LV1 (défaut), vue PAR TABLETTE (la couche de la LV1 ne bouge pas).
 
 ## Reste à faire / idées
 

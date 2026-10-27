@@ -24,8 +24,11 @@ ORANGE, DARK = Color(255, 153, 38), Color(43, 43, 43)
 
 # Page GAINS : 16 tranches de STRIP_W, au pas STRIP_PITCH, à partir de STRIP_X0
 STRIP_X0, STRIP_PITCH, STRIP_W, STRIP_Y = 40, 120, 112, 180
-# voies d'une tranche : mono « m » pleine largeur, stéréo « l » / « r » demi-largeur ; (dx, largeur, potard, tailles)
-UNITS = {"m": (0, STRIP_W, 104, 30, 20), "l": (0, 56, 52, 20, 14), "r": (56, 56, 52, 20, 14)}
+# voies d'une tranche (y du haut, potard, taille du dB, 48V largeur x hauteur, taille, repère) : mono « m », stéréo
+# « l » au-dessus de « r », pleine largeur toutes les deux (Joseph, 27/10 : même taille à toucher que le mono)
+UNITS = {"m": (STRIP_Y + 140, 104, 30, 80, 56, 20, ""),
+         "l": (STRIP_Y + 140, 96, 26, 72, 46, 18, "L"),
+         "r": (STRIP_Y + 360, 96, 26, 72, 46, 18, "R")}
 
 
 def lua(name, **tokens):
@@ -66,16 +69,15 @@ def strip(k):
     out = [box(g + "band", (x, STRIP_Y, STRIP_W, 14), DARK),
            label(g + "name", (x, STRIP_Y + 20, STRIP_W, 60), "", 24),
            label(g + "src", (x, STRIP_Y + 80, STRIP_W, 40), "", 15, MUTED)]
-    for u, (dx, w, knob, db_size, ph_size) in UNITS.items():
-        ux = x + dx
-        top = STRIP_Y + (140 if u == "m" else 150)
-        out += [Node("RADIAL", g + u + "_knob", (ux + (w - knob) // 2, top, knob, knob),
+    for u, (top, knob, db_size, ph_w, ph_h, ph_size, side) in UNITS.items():
+        ph = (x + (STRIP_W - ph_w) // 2, top + knob + db_size + 34, ph_w, ph_h)
+        out += [Node("RADIAL", g + u + "_knob", (x + (STRIP_W - knob) // 2, top, knob, knob),
                      {"color": MUTED, "background": True, "outline": False, "interactive": False}),
-                label(g + u + "_db", (ux, top + knob + 6, w, db_size + 20), "-", db_size),
-                box(g + u + "_48", (ux + w // 2 - (40 if u == "m" else 22), top + knob + db_size + 34,
-                                    80 if u == "m" else 44, 56 if u == "m" else 44), DARK),
-                label(g + u + "_48l", (ux + w // 2 - (40 if u == "m" else 22), top + knob + db_size + 34,
-                                       80 if u == "m" else 44, 56 if u == "m" else 44), "48V", ph_size, MUTED)]
+                label(g + u + "_db", (x, top + knob + 6, STRIP_W, db_size + 20), "-", db_size),
+                box(g + u + "_48", ph, DARK),
+                label(g + u + "_48l", ph, "48V", ph_size, MUTED)]
+        if side:                                # repère de la voie stéréo, en haut à gauche du potard
+            out.append(label(g + u + "_side", (x, top - 4, 24, 28), side, 18, MUTED))
     return out
 
 
