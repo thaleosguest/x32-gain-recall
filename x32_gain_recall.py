@@ -40,6 +40,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 import uuid
 import webbrowser
 from datetime import datetime
@@ -53,7 +54,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a12"
+APP_VERSION = "3.2.0-a13"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -3621,11 +3622,65 @@ def app_data_dir():
 
 
 def touchosc_state():
-    """Etat donne au pont TouchOSC : merged_snapshot + mixer de la LV1 (lv1/model.py, phase 5)."""
+    """Etat donne au pont TouchOSC : merged_snapshot + mixer de la LV1 (lv1/model.py, phase 5) + scenes (phase 3a)."""
     s = merged_snapshot()
     s["lv1_mixer"] = MIXER.snapshot() if MIXER else {}
     s["lv1_live"] = bool(MIXER_REMOTE and MIXER_REMOTE.connected())
+    s["presets"] = [{"id": p["id"], "name": p.get("name") or "", "created": p.get("created") or ""}
+                    for p in (STORE.all() if STORE else [])]
     return s
+
+
+def api_local(path, body):
+    """POST a l'API web de cette appli depuis l'appli elle-meme (127.0.0.1 : pas de code d'acces). Pour les gestes rares
+    des tablettes (scenes, routing) : memes verifications que le float et la page, rien de recopie. Rend le JSON."""
+    req = urllib.request.Request(LOCAL_URL.rstrip("/") + path, data=json.dumps(body).encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode("utf-8") or "{}")
+
+
+def recall_text(name, r):
+    """Resultat d'un rappel pour la tablette : « Recalled 'Show 1': 32 gains, 4x 48V, verified »."""
+    parts = ["%d gains" % r.get("sent_gain", 0)]
+    if r.get("sent_phantom"):
+        parts.append("%dx 48V" % r["sent_phantom"])
+    if r.get("bad"):
+        parts.append("%d NOT confirmed" % len(r["bad"]))
+    elif r.get("verified"):
+        parts.append("verified")
+    if r.get("skipped"):
+        parts.append("console(s) %s skipped" % ", ".join(map(str, r["skipped"])))
+    return "Recalled '%s': %s" % (name, ", ".join(parts))
+
+
+def touchosc_scene(op, *args):
+    """Scenes depuis une tablette (phase 3a) : rappel (id, 48V), annulation, enregistrement (nom automatique). Sur un
+    fil a part (un rappel verifie peut prendre quelques secondes) ; le resultat part a toutes les tablettes."""
+    def run():
+        try:
+            if op == "recall":
+                pid, phantom = args
+                pr = STORE.get(pid)
+                if not pr:
+                    msg = "Scene not found (deleted on the PC?)"
+                else:
+                    r = api_local("/api/presets/recall", {"id": pid, "phantom": bool(phantom)})
+                    msg = recall_text(pr.get("name", ""), r["result"]) if r.get("ok") else r.get("error") or "Recall failed"
+            elif op == "undo":
+                msg = "Last recall undone" if api_local("/api/presets/undo", {}).get("ok") else "Nothing to undo"
+            elif op == "save":
+                r = api_local("/api/presets/save", {"name": ""})
+                pr = STORE.get(r.get("id")) if r.get("ok") else None
+                msg = ("Saved '%s' (rename it on the PC)" % pr["name"]) if pr else (r.get("error") or "Not saved")
+            else:
+                return
+        except (OSError, ValueError, KeyError) as e:
+            msg = "Gain Recall error: %s" % e
+        if TOUCHOSC:
+            TOUCHOSC.notify_all(msg)
+    threading.Thread(target=run, daemon=True, name="touchosc-scene").start()
+    return None
 
 
 def start_mixer():
@@ -4103,7 +4158,10 @@ def main():
         TOUCHOSC = touchosc.bridge.start(APP_VERSION, touchosc_state, port=a.touchosc_port,
                                          lan=not (a.touchosc_local or a.local_only), allow=allow,
                                          actions={"gain": touchosc_gain, "phantom": touchosc_phantom,
-                                                  "lv1": touchosc_lv1})
+                                                  "lv1": touchosc_lv1,
+                                                  "scene_recall": lambda pid, ph: touchosc_scene("recall", pid, ph),
+                                                  "scene_undo": lambda: touchosc_scene("undo"),
+                                                  "scene_save": lambda: touchosc_scene("save")})
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

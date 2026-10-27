@@ -189,29 +189,109 @@ def lr_strip():
             *lv1_key(g + "cue", (x + 20, CUE[0], w - 40, CUE[1]), "CUE", 14)]
 
 
+def hidden(name, text=""):
+    """Libellé invisible qui sert de variable partagée entre les scripts de la page (sélection, page de liste…)."""
+    return Node("LABEL", name, (0, 0, 10, 10), {"visible": False, "interactive": False, "background": False},
+                values={"text": text})
+
+
+def key(name, frame, text, size, script, color=PANEL):
+    """Case au style LV1 (fond, liseré gris, texte) + bouton transparent par-dessus qui porte le script."""
+    return [box(name, frame, color, outline=True), label(name + "_l", frame, text, size),
+            overlay(name + "_b", frame, script)]
+
+
+SC_ROWS, SC_ROW_Y, SC_ROW_H = 12, 150, 76
+
+
+def scenes_page():
+    """Page SCENES (phase 3a, le panneau Scènes du float) : liste paginée (sélection sur la tablette), RECALL confirmé
+    (« OK? » puis 2e appui) avec « + 48V », UNDO, SAVE (nom automatique). Cachée au départ."""
+    g = Node("GROUP", "page_scenes", (0, 0, W, H), {"background": False, "visible": False})
+    g.add(label("sc_title", (40, 76, 600, 60), "SCENES", 30), hidden("sc_sel"), hidden("sc_off", "0"),
+          hidden("sc_selid"), hidden("sc_ph", "0"), hidden("sc_count", "0"),
+          box("sc_list", (40, 140, 1180, 920), PANEL, outline=True))
+    for r in range(1, SC_ROWS + 1):
+        y = SC_ROW_Y + (SC_ROW_H + 0) * (r - 1)
+        g.add(box("sc_row%d" % r, (50, y, 1160, SC_ROW_H - 4), DARK),
+              label("sc_row%d_name" % r, (70, y, 800, SC_ROW_H - 4), "", 28),
+              label("sc_row%d_info" % r, (880, y, 310, SC_ROW_H - 4), "", 22, MUTED),
+              overlay("sc_row%d_b" % r, (50, y, 1160, SC_ROW_H - 4),
+                      "function onValueChanged(key)\n"
+                      "  if key == 'x' and self.values.x == 1 then\n"
+                      "    self.parent:findByName('sc_sel', false).values.text = '%d'\n"
+                      "  end\nend\n" % r))
+    page_step = ("function onValueChanged(key)\n"
+                 "  if key ~= 'x' or self.values.x ~= 1 then return end\n"
+                 "  local off = self.parent:findByName('sc_off', false)\n"
+                 "  local n = tonumber(self.parent:findByName('sc_count', false).values.text) or 0\n"
+                 "  local o = (tonumber(off.values.text) or 0) + %d\n"
+                 "  if o >= 0 and o < n then off.values.text = tostring(o) end\n"
+                 "end\n")
+    g.add(*key("sc_prev", (50, 1072, 200, 60), "<", 30, page_step % -SC_ROWS),
+          *key("sc_next", (1010, 1072, 200, 60), ">", 30, page_step % SC_ROWS),
+          label("sc_pageinfo", (260, 1072, 740, 60), "", 22, MUTED),
+          box("sc_side", (1260, 140, 700, 920), PANEL, outline=True),
+          label("sc_sel_name", (1290, 160, 640, 70), "No scene selected", 34),
+          label("sc_sel_info", (1290, 230, 640, 40), "", 22, MUTED),
+          box("sc_recall", (1290, 300, 400, 110), PANEL, outline=True),
+          label("sc_recall_l", (1290, 300, 400, 110), "RECALL", 36),
+          overlay("sc_recall_b", (1290, 300, 400, 110), lua("recall.lua")),
+          *key("sc_48", (1710, 300, 220, 110), "+ 48V", 28,
+               "function onValueChanged(key)\n"
+               "  if key ~= 'x' or self.values.x ~= 1 then return end\n"
+               "  local ph = self.parent:findByName('sc_ph', false)\n"
+               "  local on = ph.values.text ~= '1'\n"
+               "  ph.values.text = on and '1' or '0'\n"
+               "  self.parent:findByName('sc_48', false).color = on and Color(209/255, 52/255, 59/255, 1)"
+               " or Color(17/255, 17/255, 17/255, 1)\n"
+               "end\n"),
+          *key("sc_undo", (1290, 430, 300, 90), "UNDO", 28, tap("/xgr/sc/undo")),
+          *key("sc_save", (1630, 430, 300, 90), "SAVE NEW", 28, tap("/xgr/sc/save")),
+          label("sc_last", (1290, 560, 640, 120), "", 22, MUTED),
+          label("sc_help", (1290, 900, 640, 140), "Tap a scene, then RECALL twice (confirm). + 48V also recalls the "
+                "phantom power. SAVE NEW stores the current gains (rename it on the PC).", 18, MUTED))
+    return g
+
+
+def routing_page():
+    """Page ROUTING (phase 3b, à venir). Cachée au départ."""
+    g = Node("GROUP", "page_routing", (0, 0, W, H), {"background": False, "visible": False})
+    g.add(label("rt_title", (40, 76, 600, 60), "ROUTING", 30),
+          label("rt_soon", (40, 300, 1900, 80), "Routing profiles: coming next (phase 3b)", 30, MUTED))
+    return g
+
+
 def build():
     root = Node("GROUP", "root", (0, 0, W, H), {"color": BG, "background": True},
                 script=lua("root.lua", PROTO=P.PROTO, PORT_IN=P.PORT_IN, PORT_OUT=P.PORT_OUT, STRIPS=16))
-    # rangée du haut (à la place des User keys de la LV1)
+    # pages (phase 3a) : une seule visible à la fois, choisie par les onglets ; la page Mixer = la page Mixer de la LV1
+    mixer = Node("GROUP", "page_mixer", (0, 0, W, H), {"background": False})
+    for k in range(1, 17):
+        mixer.add(*strip(k))
+    mixer.add(*lr_strip())
+    root.add(mixer, scenes_page(), routing_page())
+    # rangée du haut (à la place des User keys de la LV1) : onglets, banques + FOLLOW (page Mixer), état
+    root.add(box("header", (0, 0, W, 62), PANEL))
+    for n, (page, text) in enumerate((("mixer", "MIXER"), ("scenes", "SCENES"), ("routing", "ROUTING"))):
+        x, y, w, h = 12 + 116 * n, 8, 108, 46
+        root.add(Node("BUTTON", "tab_" + page, (x, y, w, h), {"color": MUTED, "background": False, "outline": True},
+                      script=lua("tab.lua", PAGE=page)),
+                 label("tab_%s_label" % page, (x, y, w, h), text, 20, BLUE if page == "mixer" else TEXT))
     root.add(
-        box("header", (0, 0, W, 62), PANEL),
-        label("title", (12, 8, 280, 46), "X/M32 GAIN RECALL", 22),
-        *button("follow", (864, 8, 170, 46), "FOLLOW LV1", "/xgr/view/follow", size=20),
-        label("g_title", (1046, 8, 300, 46), "", 24, BLUE),
+        *button("follow", (880, 8, 160, 46), "FOLLOW LV1", "/xgr/view/follow", size=18),
+        label("g_title", (1050, 8, 290, 46), "", 24, BLUE),
         label("notify", (1350, 8, 380, 46), "", 18, ORANGE),
         *button("sync", (1740, 8, 150, 46), "SYNC", P.SYNC, size=22),
         box("led", (1910, 12, 38, 38), Color(90, 90, 90)),
     )
     for n, text in enumerate(BANKS):           # banques : vue de CETTE tablette (la LV1 ne bouge pas)
-        root.add(*button("bank%d" % n, (300 + 112 * n, 8, 104, 46), text, "/xgr/view/bank", arg=n, size=20))
-    for k in range(1, 17):
-        root.add(*strip(k))
-    root.add(*lr_strip())
+        root.add(*button("bank%d" % n, (370 + 100 * n, 8, 94, 46), text, "/xgr/view/bank", arg=n, size=18))
     root.add(                                   # ligne d'état en bas, puis panneau de connexion PAR-DESSUS tout
-        label("console", (14, 1164, 600, 30), "-", 16, MUTED),
-        label("lv1", (630, 1164, 700, 30), "-", 16, MUTED),
-        label("tablets", (1340, 1164, 300, 30), "-", 16, MUTED),
-        label("footer", (1660, 1164, 330, 30), "X/M32 Gain Recall - protocol %d" % P.PROTO, 14, MUTED),
+        label("console", (14, 1164, 520, 30), "-", 16, MUTED),
+        label("lv1", (550, 1164, 640, 30), "-", 16, MUTED),
+        label("tablets", (1200, 1164, 220, 30), "-", 16, MUTED),
+        label("footer", (1430, 1164, 560, 30), "X/M32 GAIN RECALL - protocol %d" % P.PROTO, 14, MUTED),
         box("panel", (100, 250, 1800, 600), PANEL),
         box("panel_line", (100, 250, 1800, 4), LINE),
         label("status", (140, 330, 1720, 120), "Looking for X/M32 Gain Recall...", 44),

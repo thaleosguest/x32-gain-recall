@@ -86,6 +86,14 @@ class Bridge(threading.Thread):
     def notify(self, ip, text):
         self.send(ip, P.NOTIFY, [("s", text)])
 
+    def notify_all(self, text):
+        """Message à toutes les tablettes (résultat d'un rappel de scène, qui les concerne toutes)."""
+        with self.lock:
+            ips = list(self.tablets)
+        for ip in ips:
+            self.notify(ip, text)
+        self._published = 0.0
+
     # -- réception ----------------------------------------------------------
     def handle(self, data, addr):
         try:

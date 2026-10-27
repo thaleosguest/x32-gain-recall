@@ -19,11 +19,16 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
     /xgr/g/k/set/fader f dB | pan f -1..1 | trim f dB  commandes de la LV1 du canal de la tranche k (phase 5b)
     /xgr/g/k/set/mute | solo | phase                   bascules (d'après l'état annoncé par la LV1)
     (rien pour LR : lecture seule, décision de Joseph du 27/10)
+    /xgr/sc/recall  s id, i 48V (0|1)                  rappel d'une scène (déjà confirmé sur la tablette)
+    /xgr/sc/undo                                       annule le dernier rappel
+    /xgr/sc/save                                       enregistre une scène (nom automatique, à renommer sur le PC)
   Gain Recall -> tablette
     /xgr/welcome    i proto, s version, s console, s ok|old_template|new_template|pending
                     pending : tablette pas encore autorisée (rien d'autre ne lui est envoyé)
     état (envoyé quand il change, tout à l'arrivée et sur /xgr/sync) : voir state_messages()
       barre d'état : /xgr/console s, /xgr/console/ok i, /xgr/lv1 s, /xgr/tablets i
+      page SCENES (phase 3a) : /xgr/sc/count i ; scène n = 1..count : /xgr/sc/n/name s, /xgr/sc/n/info s (date),
+        /xgr/sc/n/id s ; /xgr/sc/last s (dernier rappel), /xgr/sc/canundo i
       vue (phase 2b, PAR TABLETTE) : /xgr/view/follow i (1 = suit la LV1), /xgr/view/bank i (0..4, -1 = couche
         sans banque), /xgr/view/banks i (banques proposées)
       page GAINS (phase 2a, calque du float sur la couche LV1 de Mixer 1) : /xgr/g/title s ; tranche k = 1..16 :
@@ -98,6 +103,18 @@ def state_messages(state, tablets=1, page=None):
         "/xgr/tablets": (("i", int(tablets)),),
     }
     out.update(gain_messages(page if page is not None else views.gain_page(state)))
+    out.update(scene_messages(views.scene_page(state)))
+    return out
+
+
+def scene_messages(sp):
+    """Page SCENES -> messages (la liste entière : la tablette pagine et sélectionne elle-même)."""
+    out = {"/xgr/sc/count": (("i", len(sp["items"])),), "/xgr/sc/last": (("s", sp["last"]),),
+           "/xgr/sc/canundo": (("i", 1 if sp["can_undo"] else 0),)}
+    for n, it in enumerate(sp["items"], 1):
+        out["/xgr/sc/%d/name" % n] = (("s", it["name"]),)
+        out["/xgr/sc/%d/info" % n] = (("s", it["info"]),)
+        out["/xgr/sc/%d/id" % n] = (("s", it["id"]),)
     return out
 
 
@@ -165,6 +182,15 @@ def parse_action(address, args):
     num = vals[0] if vals and isinstance(vals[0], (int, float)) and not isinstance(vals[0], bool) else None
     if address == SYNC:
         return ("sync",)
+    if address == "/xgr/sc/recall":
+        if not vals or not isinstance(vals[0], str) or not vals[0]:
+            return None
+        ph = vals[1] if len(vals) > 1 and isinstance(vals[1], (int, float)) else 0
+        return ("scene_recall", vals[0][:40], bool(ph))
+    if address == "/xgr/sc/undo":
+        return ("scene_undo",)
+    if address == "/xgr/sc/save":
+        return ("scene_save",)
     if address == "/xgr/view/follow":
         return ("follow",)
     if address == "/xgr/view/bank":

@@ -698,7 +698,22 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `pan.lua` (horizontal, 120 px centre -> côté), `trim.lua` (vertical, 6 px / 0,5 dB) : envois espacés de 30 ms, valeur
   finale au lâcher ; MUTE / CUE / Ø = boutons transparents (`tap`). Racine : `DRAG_OF` + `busyCtl` (retours ignorés
   pendant le geste et 1 s après) + recalage 200 ms (`applyMix`). Vérifié : test (décodage, LR refusé, canal par page)
-  et faux mixer (commandes exactes). Pas encore essayé sur la vraie LV1.
+  et faux mixer (commandes exactes). **Validé par Joseph le 27/10 (« top »).**
+- **Décision de Joseph (27/10) : TOUTES les phases avant de publier** (3 scènes + routing, 4 Stage Patch, puis livraison :
+  template dans la release, annonce Bonjour / DNS-SD pour « Browse » de TouchOSC, pare-feu par l'installeur + entrée du
+  float, Total Control 0.8).
+- **Phase 3a faite (3.2.0-a13, 27/10) : onglets + page SCENES.** Template en PAGES : groupes `page_mixer` (tranches + LR),
+  `page_scenes`, `page_routing` (vide, 3b) ; onglets MIXER / SCENES / ROUTING (`tab.lua`, sur la tablette seulement ;
+  banques / FOLLOW / titre de couche sur MIXER seulement) ; titre déplacé en bas. Les scripts des contrôles d'une page
+  trouvent leurs voisins par `self.parent` (= le groupe de la page). Page SCENES : liste entière envoyée par Gain Recall
+  (`touchosc_state()["presets"]` -> `views.scene_page` -> `/xgr/sc/count`, `/xgr/sc/n/{name,info,id}`, `/xgr/sc/last`,
+  `/xgr/sc/canundo`) ; pagination (12 lignes) et sélection SUR LA TABLETTE via des libellés cachés (`hidden()` : sc_sel,
+  sc_off, sc_selid, sc_ph, sc_count : variables partagées entre scripts, sans `notify`) ; sélection gardée par id.
+  RECALL (`recall.lua` : « OK? » 3 s puis 2e appui, « SELECT A SCENE » sans sélection) + « + 48V » ; UNDO ; SAVE NEW (nom
+  auto « Scene 27/10 14:32 »). Actions `/xgr/sc/{recall s id i ph, undo, save}` -> `touchosc_scene` : appelle l'API
+  LOCALE (`api_local`, mêmes vérifications que le float) sur un fil, résultat à TOUTES les tablettes (`notify_all`,
+  `recall_text`). Vérifié : tests + SAVE / UNDO de bout en bout (serveur de test, APPDATA temporaire ; aucun rappel sur
+  la vraie X32). Pas d'interpréteur Lua sur ce PC (lupa : sources seulement) : Lua vérifié dans TouchOSC par Joseph.
 
 ## Reste à faire / idées
 

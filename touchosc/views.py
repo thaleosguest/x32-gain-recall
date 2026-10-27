@@ -195,6 +195,39 @@ def unit_idx(page, k, u):
     return units[names.index(u)]["idx"] if u in names else None
 
 
+def scene_info(created):
+    """Date d'une scène pour la liste : « 27/10 14:32 » (ISO enregistré par Gain Recall), sinon le texte tel quel."""
+    c = str(created or "")
+    if len(c) >= 16 and c[4] == "-" and c[10] == "T":
+        return "%s/%s %s" % (c[8:10], c[5:7], c[11:16])
+    return c
+
+
+def last_recall_text(lr):
+    """Dernier rappel (état de Gain Recall, last_recall) : « Last recall: 'Show 1', 32 gains, verified »."""
+    if not lr or not lr.get("name") and not lr.get("sent_gain"):
+        return "No recall yet"
+    parts = ["%d gains" % (lr.get("sent_gain") or 0)]
+    if lr.get("sent_phantom"):
+        parts.append("%dx 48V" % lr["sent_phantom"])
+    if lr.get("bad"):
+        parts.append("%d NOT confirmed" % len(lr["bad"]))
+    elif lr.get("verified"):
+        parts.append("verified")
+    elif lr.get("verified") is None:
+        parts.append("checking...")
+    return "Last recall: '%s', %s" % (lr.get("name") or "?", ", ".join(parts))
+
+
+def scene_page(state):
+    """Page SCENES (phase 3a) : {"items": [{"id", "name", "info"}], "last", "can_undo"} — scènes dans l'ordre du
+    magasin de Gain Recall (comme le float)."""
+    state = state or {}
+    items = [{"id": p.get("id") or "", "name": p.get("name") or "(no name)", "info": scene_info(p.get("created"))}
+             for p in state.get("presets") or []]
+    return {"items": items, "last": last_recall_text(state.get("last_recall")), "can_undo": bool(state.get("can_undo"))}
+
+
 def unit_names(n):
     """Emplacements des voies dans une tranche du template : mono « m » (pleine largeur), stéréo « l » + « r »."""
     return {1: ["m"], 2: ["l", "r"]}.get(n, [])

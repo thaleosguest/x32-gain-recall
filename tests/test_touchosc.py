@@ -100,13 +100,30 @@ check("5b : gestes fader / pan / Trim (glisser) et MUTE / CUE / Ø (appui) sur c
 check("5b : LR sans aucun geste (lecture seule)", not any(n.startswith("lr_") and n.endswith(("_drag", "_b"))
       for n in names))
 check("5b : retours ignorés pendant le geste du fader / pan / Trim", "local DRAG_OF" in script and "function applyMix" in script)
+# phase 3a : onglets et page SCENES
+pages = {tosc.props_of(n)["name"]: n for n in root.find("children") if tosc.props_of(n)["name"].startswith("page_")}
+check("3a : pages Mixer / Scenes / Routing, seule Mixer visible au départ", sorted(pages) == ["page_mixer", "page_routing",
+      "page_scenes"] and tosc.props_of(pages["page_scenes"]).get("visible") == "0"
+      and tosc.props_of(pages["page_routing"]).get("visible") == "0" and "visible" not in tosc.props_of(pages["page_mixer"]))
+check("3a : tranches dans la page Mixer, scènes dans la page Scenes", any(tosc.props_of(n)["name"] == "g3_fader"
+      for n in pages["page_mixer"].iter("node")) and any(tosc.props_of(n)["name"] == "sc_row12_b"
+      for n in pages["page_scenes"].iter("node")))
+check("3a : onglets (tab.lua, rien envoyé)", all("local PAGE = '%s'" % p in tosc.props_of(names["tab_" + p])["script"]
+      and "sendOSC" not in tosc.props_of(names["tab_" + p])["script"] for p in ("mixer", "scenes", "routing")))
+rs = tosc.props_of(names["sc_recall_b"])["script"]
+check("3a : RECALL confirmé (OK? puis 2e appui), id et + 48V lus dans les libellés cachés",
+      "'/xgr/sc/recall', selid.values.text" in rs and "'OK?'" in rs and "'SELECT A SCENE'" in rs
+      and tosc.props_of(names["sc_ph"])["visible"] == "0" and "sendOSC('/xgr/sc/undo')" in tosc.props_of(names["sc_undo_b"])["script"]
+      and "sendOSC('/xgr/sc/save')" in tosc.props_of(names["sc_save_b"])["script"])
+check("3a : script racine (liste, page, sélection gardée par id)", "function paintScenes" in script
+      and "'^/xgr/sc/(%d+)/(%a+)$'" in script and "SC_INK" in script)
 check("vumètre : barre FADER lecture seule ; script racine : setMix / setLive", names["g3_meter"].get("type") == "FADER"
       and tosc.props_of(names["g3_meter"])["interactive"] == "0" and "function setMix" in script
       and "local function setLive" in script and "'^/xgr/lr/(%a+)$'" in script)
 check("commandes de la LV1 (phase 5) sans effet : fader, pan, Trim non interactifs", all(
       tosc.props_of(names[n])["interactive"] == "0" for n in ("g3_fader", "g3_pan", "g3_trim", "g3_mute", "lr_fader")))
 check("tranche LR à droite des 16 tranches", fr("lr_band")["x"] > fr("g16_band")["x"] and "lr_num" in names)
-order = [tosc.props_of(n)["name"] for n in root.find("children")]
+order = [tosc.props_of(n)["name"] for n in root.iter("node")]          # ordre du document (= ordre de dessin)
 check("panneau de connexion par-dessus les tranches", order.index("panel") > order.index("g16_r_48l"))
 
 # ── protocole
@@ -188,6 +205,20 @@ check("5b : commandes LV1 décodées, bornées ; LR refusé", P.parse_action("/x
       and P.parse_action("/xgr/g/1/set/phase", []) == ("lv1", 1, "phase", None)
       and P.parse_action("/xgr/g/1/set/fader", []) is None and P.parse_action("/xgr/g/1/set/rien", []) is None
       and P.parse_action("/xgr/lr/set/fader", [("f", 0.0)]) is None and P.parse_action("/xgr/lr/set/mute", []) is None)
+check("3a : actions scènes", P.parse_action("/xgr/sc/recall", [("s", "abc123"), ("i", 1)]) == ("scene_recall", "abc123", True)
+      and P.parse_action("/xgr/sc/recall", [("s", "abc123")]) == ("scene_recall", "abc123", False)
+      and P.parse_action("/xgr/sc/recall", []) is None and P.parse_action("/xgr/sc/recall", [("s", "")]) is None
+      and P.parse_action("/xgr/sc/undo", []) == ("scene_undo",) and P.parse_action("/xgr/sc/save", []) == ("scene_save",))
+sp = views.scene_page({"presets": [{"id": "a1", "name": "Show 1", "created": "2026-10-27T14:32:10"}, {"id": "b2", "name": ""}],
+                       "last_recall": {"name": "Show 1", "sent_gain": 32, "sent_phantom": 4, "verified": True, "bad": []},
+                       "can_undo": True})
+check("3a : page scènes (date courte, sans nom, dernier rappel)", sp["items"] == [{"id": "a1", "name": "Show 1", "info": "27/10 14:32"},
+      {"id": "b2", "name": "(no name)", "info": ""}] and sp["last"] == "Last recall: 'Show 1', 32 gains, 4x 48V, verified"
+      and sp["can_undo"] is True and views.scene_page({})["last"] == "No recall yet"
+      and views.last_recall_text({"name": "X", "sent_gain": 3, "bad": [1, 2]}) == "Last recall: 'X', 3 gains, 2 NOT confirmed")
+scm = P.scene_messages(sp)
+check("3a : messages scènes", scm["/xgr/sc/count"] == (("i", 2),) and scm["/xgr/sc/1/id"] == (("s", "a1"),)
+      and scm["/xgr/sc/2/name"] == (("s", "(no name)"),) and scm["/xgr/sc/canundo"] == (("i", 1),))
 gm = P.gain_messages(page)
 check("actions : banque, follow, gain borné, 48V ; le reste ignoré", P.parse_action("/xgr/view/bank", [("i", 2)]) == ("bank", 2)
       and P.parse_action("/xgr/view/bank", [("f", 1.0)]) == ("bank", 1) and P.parse_action("/xgr/view/bank", [("i", 7)]) is None
@@ -320,6 +351,17 @@ send("/xgr/g/2/set/mute")
 drain(0.3)
 check("5b : commande LV1 sur le canal de la page de la tablette (banque 17-32 : tranche 2 = canal 18)",
       lcalls == [(18, "fader", -6.0), (18, "mute", None)])
+scalls = []
+b.actions.update({"scene_recall": lambda pid, ph: scalls.append(("recall", pid, ph)),
+                  "scene_undo": lambda: scalls.append(("undo",)), "scene_save": lambda: scalls.append(("save",))})
+send("/xgr/sc/recall", [("s", "a1"), ("i", 1)])
+send("/xgr/sc/undo")
+send("/xgr/sc/save")
+drain(0.3)
+check("3a : gestes scènes transmis à Gain Recall", scalls == [("recall", "a1", True), ("undo",), ("save",)])
+b.notify_all("Recalled 'Show 1'")
+got, _o = drain(0.3)
+check("3a : résultat diffusé à toutes les tablettes", got.get(P.NOTIFY) == ["Recalled 'Show 1'"])
 send("/xgr/view/follow")
 drain(0.5)
 send(P.HELLO, [("i", P.PROTO)])          # présence (la vraie tablette s'annonce chaque seconde ; oubliée après LOST_S)
