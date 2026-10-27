@@ -563,6 +563,27 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
 - Reste : sorties (OUT 7 = Genelec) = repère seulement, pas encore le chemin LV1 ->
   carte -> User Out -> AES50 ; sélecteur de sorties 1-8 / 9-16 de la S16 ; page web.
 
+## TABLETTE TOUCHOSC (branche `dev-3.2`, commencé le 27/10/2026)
+
+- Demande de Joseph : TouchOSC (Hexler, version actuelle, fichiers `.tosc`) sur sa tablette **Doogee R10** (Android 13,
+  10,36", 2000 x 1200) = calque de Gain Recall (gains sur les canaux LV1, scènes, routing, stage patch) + contrôle de la
+  LV1 « comme MyFOH ». Plan validé (27/10) : **tout dans Gain Recall** (indépendant de la X-Touch ; la LV1 accepte
+  plusieurs télécommandes), phases 0 socle / 1 pont / 2 page GAINS / 3 SCÈNES + ROUTING / 4 STAGE PATCH / 5 contrôle
+  LV1 (`lv1/model.py` repris du `handle` de XTouch-LV1) / 6 livraison (3.2.0 + template ; Total Control 0.8).
+- `touchosc/` : `tosc.py` (écriture / lecture `.tosc` = XML `lexml version='3'` compressé zlib, format relevé dans les
+  chaînes de TouchOSC.exe ; propriétés typées s/b/i/f/c/r ; ID = uuid5 du chemin -> fichier identique à chaque
+  génération), `build_tosc.py` (`py -m touchosc.build_tosc [sortie]`, défaut `dist/touchosc/`), `template/root.lua`
+  (TOUTE la logique côté tablette en Lua : pas de `<messages>` à décrire), `protocol.py` (PROTO, ports, messages ;
+  fonctions pures), `bridge.py` (fil UDP, tablettes par IP, réponse sur PORT_OUT de la tablette).
+- Ports : Gain Recall écoute **UDP 9300** (`--touchosc-port`, 0 = coupé ; 127.0.0.1 avec `--local-only`), la tablette
+  **9301**. Réglage TouchOSC : Connections > OSC UDP, Host = IP du PC, Send 9300, Receive 9301.
+- **Phase 0 faite (3.2.0-a1)** : `/xgr/hello [i proto, s nom]` toutes les secondes -> `/xgr/welcome [i proto, s version,
+  s console, s ok|old_template|new_template]` ; page présence (voyant bleu LV1, état, consigne de réglage). Test
+  `tests/test_touchosc.py` (fausse tablette UDP) ; vérifié sur un serveur de test ET sur l'exe (RunAsInvoker). Pas
+  encore ouvert dans TouchOSC (il tournait chez Joseph : ne pas lui charger un fichier par-dessus son document).
+  Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
+  Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
+
 ## Reste à faire / idées
 
 - **Signature de l'exe : écartée** par Joseph (2026-10-13 ; payante : Azure Trusted Signing ~10 $/mois ou

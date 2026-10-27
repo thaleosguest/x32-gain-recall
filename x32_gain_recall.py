@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.2.0-a1"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1743,6 +1743,7 @@ def scan_network(timeout=1.5, port=X32_PORT):
 
 
 FLOAT_QT = True   # 3.0.0 : float Qt (x32_qt_float.py, multi-touch) ; float tk de la 2.x en secours (--tk-float)
+TOUCHOSC = None   # pont des tablettes TouchOSC (touchosc/bridge.py, 3.2), None si desactive ou port pris
 FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
@@ -3792,12 +3793,14 @@ def browse_folder(initial):
 
 
 def main():
-    global STORE, ROUTINGS, STAGE, X32_PORT
+    global STORE, ROUTINGS, STAGE, X32_PORT, TOUCHOSC
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--version", action="version", version="%s %s - by %s" % (APP_NAME, APP_VERSION, APP_AUTHOR))
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
+    ap.add_argument("--touchosc-port", type=int, default=9300,
+                    help="port UDP des tablettes TouchOSC (defaut 9300 ; 0 = desactive)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur (defaut depuis la 3.0.1)")
     ap.add_argument("--browser", action="store_true", help="ouvre aussi la page dans le navigateur au lancement")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
@@ -3981,6 +3984,10 @@ def main():
     update_card_map()
     threading.Thread(target=consoles_loop, daemon=True).start()
     threading.Thread(target=stage_loop, daemon=True).start()
+    if a.touchosc_port:
+        import touchosc.bridge
+        TOUCHOSC = touchosc.bridge.start(APP_VERSION, CLIENT.snapshot, port=a.touchosc_port,
+                                         bind="127.0.0.1" if a.local_only else "0.0.0.0")
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()
