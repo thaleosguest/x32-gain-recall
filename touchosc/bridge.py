@@ -30,6 +30,7 @@ class Bridge(threading.Thread):
         self.lock = threading.Lock()
         self.tablets = {}        # ip -> {"name", "proto", "seen", "sent": {adresse: arguments déjà envoyés}}
         self.refused = set()     # adresses refusées déjà signalées au journal
+        self.rx, self.last_rx = 0, None   # diagnostic (27/10, R10 muette) : paquets reçus, dernier (ip, adresse, instant)
         self._state, self._published = {}, 0.0
         self._stop = threading.Event()
 
@@ -80,6 +81,8 @@ class Bridge(threading.Thread):
         except (ValueError, IndexError, UnicodeError):
             return
         ip = addr[0]
+        self.rx += 1
+        self.last_rx = (ip, address, time.time())
         if not P.allowed(ip, self.allow):
             if ip not in self.refused:
                 self.refused.add(ip)
@@ -132,9 +135,17 @@ class Bridge(threading.Thread):
                 self.log("TouchOSC : tablette %s partie" % ip)
 
     def snapshot(self):
-        """Tablettes vues : [{"ip", "name", "proto"}] (pour /api/state, plus tard)."""
+        """Tablettes vues : [{"ip", "name", "proto"}]."""
         with self.lock:
             return [{"ip": ip, "name": t["name"], "proto": t["proto"]} for ip, t in sorted(self.tablets.items())]
+
+    def status(self):
+        """État du pont pour /api/state["touchosc"] : écoute, tablettes, refusées, paquets reçus et dernier reçu."""
+        last = self.last_rx
+        return {"listen": "%s:%d" % (self.sock.getsockname()[0], self.port), "reply_port": self.reply_port,
+                "allow": sorted(self.allow), "tablets": self.snapshot(), "refused": sorted(self.refused),
+                "rx": self.rx, "last": {"ip": last[0], "address": last[1], "ago": round(time.time() - last[2], 1)}
+                if last else None}
 
     def run(self):
         while not self._stop.is_set():
