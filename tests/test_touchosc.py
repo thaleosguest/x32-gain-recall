@@ -7,6 +7,9 @@ nouveau sur /xgr/sync ; actions de la liste fermée, erreur renvoyée en /xgr/no
 Autorisation (décision de Joseph, 27/10) : tablette inconnue en attente (welcome « pending », rien d'autre), oui ->
 acceptée, non -> ignorée ; le PC lui-même toujours accepté (127.x ou ses adresses réseau). Adresses de documentation
 192.0.2.x pour les fausses tablettes réseau (aucun vrai appareil touché).
+Phase 2a (27/10) : page GAINS = 16 tranches de la couche LV1 de Mixer 1 (canal -> EXP -> préampli, stéréo en deux
+voies, EXP sans préampli = pas de voie, tranche sans canal vide, titre de couche) ; un gain qui change ne renvoie que
+sa voie ; template : 16 tranches (bandeau, nom, source, voies m / l / r) et panneau de connexion par-dessus.
 
     py tests/test_touchosc.py
 """
@@ -17,7 +20,7 @@ import tempfile
 import time
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, HERE)
-from touchosc import build_tosc, protocol as P, tosc
+from touchosc import build_tosc, protocol as P, tosc, views
 from touchosc.bridge import Bridge
 from lv1.osc_sniffer import decode_message, encode_message
 
@@ -56,6 +59,12 @@ sync = names["sync"]
 check("bouton SYNC : BUTTON qui envoie /xgr/sync", sync.get("type") == "BUTTON"
       and "sendOSC('%s')" % P.SYNC in tosc.props_of(sync)["script"])
 check("libellé du bouton non interactif", tosc.props_of(names["sync_label"])["interactive"] == "0")
+check("16 tranches : bandeau, nom, source, voies m / l / r", all("g%d_%s" % (k, part) in names for k in range(1, 17)
+      for part in ("band", "name", "src", "m_knob", "m_db", "m_48", "l_knob", "r_48l")) and "g17_band" not in names)
+check("potards : RADIAL non interactifs (lecture seule en 2a)", names["g1_m_knob"].get("type") == "RADIAL"
+      and tosc.props_of(names["g1_m_knob"])["interactive"] == "0")
+order = [tosc.props_of(n)["name"] for n in root.find("children")]
+check("panneau de connexion par-dessus les tranches", order.index("panel") > order.index("g16_r_48l"))
 
 # ── protocole
 check("hello entier", P.parse_hello([("i", 1), ("s", "R10")]) == (1, "R10"))
@@ -79,12 +88,41 @@ check("autorisées : PC toujours, réseau sur liste", P.allowed("127.0.0.1", ())
 check("welcome en attente : rien sur la console", [v for _t, v in P.welcome(P.PROTO, "3.2", {"connected": True}, pending=True)[1]]
       == [P.PROTO, "3.2", "", "pending"])
 
+# ── page GAINS (views)
+gstate = {"lv1_layers": {"mixer1": {"mode": 0, "page": 0, "bank": 0, "channels": list(range(1, 17))}},
+          "exp_map": {32: 1, 33: 2, 0: 17, 130: 1003}, "lv1_sources": {"1": [1, 2], "2": [17], "7": [11], "3": [1003]},
+          "lv1_channels": {"1": {"label": "P170 ST", "color": "#ff4f4f"}, "2": {"label": "Kick"}},
+          "gains": [None] * 256, "phantom": [0] * 256}
+gstate["gains"][32], gstate["gains"][33], gstate["gains"][0] = 32.5, 30.0, -4.0
+gstate["phantom"][0] = 1
+page = views.gain_page(gstate)
+st1, st2, st3, st7 = page["strips"][0], page["strips"][1], page["strips"][2], page["strips"][6]
+check("titre de couche", page["title"] == "Ch 1-16" and len(page["strips"]) == 16)
+check("stéréo : deux voies, A 1/2, EXP 1/2, couleur", [u["idx"] for u in st1["units"]] == [32, 33]
+      and st1["src"] == "A 1/2  EXP 1/2" and st1["color"] == "FF4F4F" and st1["label"] == "P170 ST")
+check("mono : une voie, gain et 48V", [(u["idx"], u["db"], u["phantom"]) for u in st2["units"]] == [(0, -4.0, True)]
+      and st2["src"] == "L 1  EXP 17")
+check("console 2 : 2·L 3, EXP 2·3", st3["src"] == "2·L 3  EXP 2·3")
+check("EXP sans préampli : pas de voie", st7["units"] == [] and st7["src"] == "no X32 preamp" and st7["label"] == "In 7")
+gl = {"mixer1": {"mode": 1, "page": 2, "bank": None, "channels": [5, None] + [None] * 14}}
+cust = views.gain_page({"lv1_layers": gl})
+check("couche Custom, tranche sans canal vide", cust["title"] == "Custom 3" and cust["strips"][1] == {
+      "ch": 0, "label": "", "color": "", "units": [], "src": ""})
+check("pas de couche d'entrées", views.gain_page({})["title"] == "No input channels on this layer")
+check("dB et course", views.db_text(32.5) == "32.5" and views.db_text(None) == "-" and views.gain_frac(-12) == 0.0
+      and views.gain_frac(60) == 1.0 and views.gain_frac(24) == 0.5)
+gm = P.gain_messages(page)
+check("messages : stéréo l / r, mono m, rien pour les voies absentes", gm["/xgr/g/1/units"] == (("i", 2),)
+      and gm["/xgr/g/1/l/db"] == (("s", "32.5"),) and gm["/xgr/g/1/r/db"] == (("s", "30.0"),)
+      and gm["/xgr/g/2/m/48v"] == (("i", 1),) and "/xgr/g/1/m/db" not in gm and "/xgr/g/7/m/db" not in gm
+      and gm["/xgr/g/title"] == (("s", "Ch 1-16"),))
+
 # ── pont, avec une fausse tablette
 tab = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 tab.bind(("127.0.0.1", 0))
 tab.settimeout(0.5)
 logs = []
-state = {"connected": True, "info": {"name": "X32RACK-JS"}, "exp_map": {0: 1}, "lv1_count": 64}
+state = dict(gstate, connected=True, info={"name": "X32RACK-JS"}, lv1_count=64)
 b = Bridge("3.2.0-a2", lambda: dict(state), port=0, reply_port=tab.getsockname()[1], log=logs.append)
 b.PUBLISH_EVERY = 0.05
 b.start()
@@ -119,6 +157,11 @@ check("rien de changé : rien envoyé", order == [])
 state["lv1_count"] = 80
 got, order = drain(0.3)
 check("changement : seulement le message concerné", order == ["/xgr/lv1"] and got["/xgr/lv1"][0].startswith("80 LV1"))
+state["gains"] = list(state["gains"])
+state["gains"][33] = 36.0
+got, order = drain(0.3)
+check("gain changé : seulement sa voie (potard + dB)", sorted(order) == ["/xgr/g/1/r/db", "/xgr/g/1/r/gain"]
+      and got["/xgr/g/1/r/db"] == ["36.0"])
 send(P.SYNC)
 got, order = drain(0.3)
 check("SYNC : tout l'état renvoyé", {"/xgr/console", "/xgr/console/ok", "/xgr/lv1", "/xgr/tablets"} <= set(order))

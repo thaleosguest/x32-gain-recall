@@ -621,6 +621,17 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `denied` jusqu'au prochain lancement (rien d'enregistré ; retire l'adresse si elle était retenue). `--touchosc-allow`
   ajoute des adresses d'office. Règle de pare-feu UDP 9300 : par l'installeur Total Control (UAC), phase 6.
   **Validé chez Joseph le 27/10** (R10 en attente -> question du float -> Allow -> Connected).
+- **Phase 2a faite (3.2.0-a5, 27/10) : page GAINS en lecture seule** = calque du float sur la couche LV1 de **Mixer 1**.
+  `touchosc/views.py` (pur) : `gain_page(état)` -> titre de couche (« Ch 49-64 », « Custom 3 ») + 16 tranches {canal,
+  label, couleur RRGGBB, src « A 1/2  EXP 1/2 », voies [{idx, db, phantom}]} ; canal -> EXP (lv1_sources) -> préampli
+  (exp_map inversée), EXP sans préampli = pas de voie (« no X32 preamp »), tranche sans canal vide. `strip_tag` /
+  `exp_txt` RECOPIÉS de x32_gain_float (l'importer depuis le pont relancerait x32_gain_recall, qui tourne en __main__).
+  Messages : `/xgr/g/title`, `/xgr/g/k/{name,color,src,units}`, voies `/xgr/g/k/{m|l|r}/{gain,db,48v}` (mono « m »
+  pleine largeur, stéréo « l » + « r » ; voies absentes non envoyées, cachées par Lua). Template : barre d'état compacte
+  sous l'en-tête, titre de couche en bleu, 16 tranches (pas 120 px : bandeau, nom, source, RADIAL + dB + 48V rouge
+  (209,52,59) comme PH_ON) pré-créées en m / l / r (TouchOSC ne crée pas de contrôle en Lua : visibilité), panneau
+  de connexion PAR-DESSUS, caché une fois connecté. Vérifié sur les données réelles de Joseph (Ch 49-64, FireRoom
+  L 15/16 EXP 31/32 à 12 dB) et sur l'exe. Pas encore vu sur la R10.
 
 ## Reste à faire / idées
 

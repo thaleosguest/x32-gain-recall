@@ -16,8 +16,14 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
     /xgr/welcome    i proto, s version, s console, s ok|old_template|new_template|pending
                     pending : tablette pas encore autorisée (rien d'autre ne lui est envoyé)
     état (envoyé quand il change, tout à l'arrivée et sur /xgr/sync) : voir state_messages()
+      barre d'état : /xgr/console s, /xgr/console/ok i, /xgr/lv1 s, /xgr/tablets i
+      page GAINS (phase 2a, calque du float sur la couche LV1 de Mixer 1) : /xgr/g/title s ; tranche k = 1..16 :
+        /xgr/g/k/name s, /xgr/g/k/color s (« RRGGBB » ou ""), /xgr/g/k/src s, /xgr/g/k/units i (0, 1 = « m », 2 =
+        « l » + « r ») ; voie u : /xgr/g/k/u/gain f (0..1 de -12..+60 dB), /xgr/g/k/u/db s, /xgr/g/k/u/48v i
     /xgr/notify     s texte                            message ponctuel (erreur d'une action…)
 """
+from . import views
+
 PROTO = 1
 PORT_IN = 9300          # Gain Recall écoute ici (Send Port de TouchOSC)
 PORT_OUT = 9301         # la tablette écoute ici (Receive Port de TouchOSC)
@@ -75,12 +81,30 @@ def state_messages(state, tablets=1):
     exp = len(state.get("exp_map") or {})
     n = state.get("lv1_count") or 0
     lv1 = ("%d LV1 channels known, %d X32 sources on EXP" % (n, exp)) if n else "No LV1 session read"
-    return {
+    out = {
         "/xgr/console": (("s", console),),
         "/xgr/console/ok": (("i", 1 if state.get("connected") else 0),),
         "/xgr/lv1": (("s", lv1),),
         "/xgr/tablets": (("i", int(tablets)),),
     }
+    out.update(gain_messages(views.gain_page(state)))
+    return out
+
+
+def gain_messages(page):
+    """Page GAINS (views.gain_page) -> messages. Les voies absentes ne sont pas envoyées (cachées sur la tablette)."""
+    out = {"/xgr/g/title": (("s", page["title"]),)}
+    for k, st in enumerate(page["strips"], 1):
+        base = "/xgr/g/%d" % k
+        out[base + "/name"] = (("s", st["label"]),)
+        out[base + "/color"] = (("s", st["color"]),)
+        out[base + "/src"] = (("s", st["src"]),)
+        out[base + "/units"] = (("i", len(st["units"])),)
+        for u, unit in zip(views.unit_names(len(st["units"])), st["units"]):
+            out["%s/%s/gain" % (base, u)] = (("f", round(views.gain_frac(unit["db"]), 4)),)
+            out["%s/%s/db" % (base, u)] = (("s", views.db_text(unit["db"])),)
+            out["%s/%s/48v" % (base, u)] = (("i", 1 if unit["phantom"] else 0),)
+    return out
 
 
 def parse_action(address, args):

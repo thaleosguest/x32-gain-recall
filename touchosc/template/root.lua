@@ -5,6 +5,7 @@
 -- Les valeurs PROTO / ports sont remplacées à la génération (touchosc/protocol.py est la référence).
 
 local PROTO = __PROTO__
+local STRIPS = __STRIPS__
 local HELLO_MS = 1000
 local LOST_MS = 3500
 local NOTIFY_MS = 6000
@@ -13,33 +14,73 @@ local BLUE = Color(56 / 255, 201 / 255, 1, 1)        -- bleu « actif » de la L
 local TEXT = Color(231 / 255, 231 / 255, 231 / 255, 1)
 local GREY = Color(0.35, 0.35, 0.35, 1)
 local MUTED = Color(160 / 255, 160 / 255, 160 / 255, 1)
+local DARK = Color(43 / 255, 43 / 255, 43 / 255, 1)
 local ORANGE = Color(1, 0.6, 0.15, 1)
+local RED = Color(209 / 255, 52 / 255, 59 / 255, 1)  -- 48V actif, comme le float (PH_ON)
 
 local lastHello = -HELLO_MS
 local lastSeen = nil
 local shown = nil
 local notifyAt = nil
 local c = {}                                          -- contrôles par nom
+local UNITS = { 'm', 'l', 'r' }
 
--- état reçu (adresse -> nom du LABEL qui affiche le texte)
-local TEXTS = { ['/xgr/console'] = 'console', ['/xgr/lv1'] = 'lv1' }
+-- textes de la barre d'état (adresse -> LABEL, préfixe)
+local TEXTS = { ['/xgr/console'] = { 'console', 'Console: ' }, ['/xgr/lv1'] = { 'lv1', '' } }
+
+local function hexColor(h)
+  if h == nil or #h ~= 6 then return nil end
+  return Color(tonumber(h:sub(1, 2), 16) / 255, tonumber(h:sub(3, 4), 16) / 255, tonumber(h:sub(5, 6), 16) / 255, 1)
+end
 
 function init()
-  for _, name in ipairs({ 'led', 'status', 'detail', 'console', 'lv1', 'tablets', 'notify', 'sync' }) do
+  for _, name in ipairs({ 'led', 'status', 'detail', 'console', 'lv1', 'tablets', 'notify', 'sync', 'panel',
+                          'panel_line', 'g_title' }) do
     c[name] = self:findByName(name, true)
   end
+  for k = 1, STRIPS do
+    for _, part in ipairs({ 'band', 'name', 'src' }) do
+      local n = 'g' .. k .. '_' .. part
+      c[n] = self:findByName(n, true)
+    end
+    for _, u in ipairs(UNITS) do
+      for _, part in ipairs({ 'knob', 'db', '48', '48l' }) do
+        local n = 'g' .. k .. '_' .. u .. '_' .. part
+        c[n] = self:findByName(n, true)
+      end
+    end
+  end
   -- alignement et forme par les constantes Lua (valeurs numériques du fichier non documentées)
-  for _, name in ipairs({ 'title', 'footer', 'console', 'lv1', 'tablets', 'k_console', 'k_lv1', 'k_tablets' }) do
+  for _, name in ipairs({ 'title', 'footer', 'console', 'lv1' }) do
     self:findByName(name, true).textAlignH = AlignH.LEFT
   end
   c.led.shape = Shape.CIRCLE
   c.sync.outlineStyle = OutlineStyle.FULL
+  for k = 1, STRIPS do
+    for _, u in ipairs(UNITS) do
+      c['g' .. k .. '_' .. u .. '_48'].outline = true
+    end
+    setUnits(k, 0)
+  end
 end
 
-local function show(alive, text, sub, color)
+function setUnits(k, n)
+  -- 0 voie : rien ; 1 : « m » pleine largeur ; 2 : « l » + « r » (canal stéréo, gains non liés)
+  local show = { m = (n == 1), l = (n == 2), r = (n == 2) }
+  for _, u in ipairs(UNITS) do
+    for _, part in ipairs({ 'knob', 'db', '48', '48l' }) do
+      c['g' .. k .. '_' .. u .. '_' .. part].visible = show[u]
+    end
+  end
+end
+
+local function show(alive, ok, text, sub, color)
   c.led.color = color
   c.status.values.text = text
   c.detail.values.text = sub
+  for _, name in ipairs({ 'panel', 'panel_line', 'status', 'detail' }) do
+    c[name].visible = not ok
+  end
   shown = alive
   if not alive then
     c.console.values.text = '-'
@@ -56,7 +97,7 @@ function update()
   end
   local alive = lastSeen ~= nil and now - lastSeen < LOST_MS
   if not alive and shown ~= false then
-    show(false, 'Looking for X/M32 Gain Recall...',
+    show(false, false, 'Looking for X/M32 Gain Recall...',
          'Connections > OSC (UDP): Host = LV1 PC address (127.0.0.1 on that PC), Send Port __PORT_IN__, Receive Port __PORT_OUT__',
          GREY)
   end
@@ -66,25 +107,69 @@ function update()
   end
 end
 
+local function onStrip(k, field, v)
+  local g = 'g' .. k .. '_'
+  if field == 'name' then
+    c[g .. 'name'].values.text = v
+  elseif field == 'src' then
+    c[g .. 'src'].values.text = v
+  elseif field == 'color' then
+    local col = hexColor(v)
+    c[g .. 'band'].color = col or DARK
+    for _, u in ipairs(UNITS) do
+      c[g .. u .. '_knob'].color = col or MUTED
+    end
+  elseif field == 'units' then
+    setUnits(k, math.floor(v))
+  end
+end
+
+local function onUnit(k, u, field, v)
+  local g = 'g' .. k .. '_' .. u .. '_'
+  if field == 'gain' then
+    c[g .. 'knob'].values.x = v
+  elseif field == 'db' then
+    c[g .. 'db'].values.text = v
+  elseif field == '48v' then
+    local on = math.floor(v) == 1
+    c[g .. '48'].color = on and RED or DARK
+    c[g .. '48l'].textColor = on and TEXT or MUTED
+  end
+end
+
 function onReceiveOSC(message, connections)
   local path, args = message[1], message[2]
   if path == '/xgr/welcome' then
     lastSeen = getMillis()
     local version, console, state = args[2].value, args[3].value, args[4].value
     if state == 'ok' then
-      show(true, 'Connected to X/M32 Gain Recall ' .. version, 'Console: ' .. console, BLUE)
+      show(true, true, 'Connected to X/M32 Gain Recall ' .. version, 'Console: ' .. console, BLUE)
     elseif state == 'pending' then
-      show(true, 'Waiting for approval', 'Allow this tablet in X/M32 Gain Recall, on the LV1 PC', ORANGE)
+      show(true, false, 'Waiting for approval', 'Allow this tablet in X/M32 Gain Recall, on the LV1 PC', ORANGE)
     elseif state == 'old_template' then
-      show(true, 'Template out of date', 'Get the template that comes with Gain Recall ' .. version, ORANGE)
+      show(true, false, 'Template out of date', 'Get the template that comes with Gain Recall ' .. version, ORANGE)
     else
-      show(true, 'Gain Recall out of date', 'This template needs a newer Gain Recall (running ' .. version .. ')', ORANGE)
+      show(true, false, 'Gain Recall out of date', 'This template needs a newer Gain Recall (running ' .. version .. ')', ORANGE)
     end
     return true
   end
-  local name = TEXTS[path]
-  if name then
-    c[name].values.text = args[1].value
+  local k, u, field = path:match('^/xgr/g/(%d+)/([mlr])/(%w+)$')
+  if k then
+    onUnit(tonumber(k), u, field, args[1].value)
+    return true
+  end
+  k, field = path:match('^/xgr/g/(%d+)/(%a+)$')
+  if k then
+    onStrip(tonumber(k), field, args[1].value)
+    return true
+  end
+  if path == '/xgr/g/title' then
+    c.g_title.values.text = args[1].value
+    return true
+  end
+  local t = TEXTS[path]
+  if t then
+    c[t[1]].values.text = t[2] .. args[1].value
     return true
   end
   if path == '/xgr/console/ok' then
@@ -92,8 +177,8 @@ function onReceiveOSC(message, connections)
     return true
   end
   if path == '/xgr/tablets' then
-    -- instances TouchOSC qui parlent à Gain Recall (mode serveur : 1, le PC ; les tablettes clientes n'y comptent pas)
-    c.tablets.values.text = math.floor(args[1].value) .. ' connected'
+    -- instances TouchOSC qui parlent à Gain Recall
+    c.tablets.values.text = 'TouchOSC: ' .. math.floor(args[1].value)
     return true
   end
   if path == '/xgr/notify' then
