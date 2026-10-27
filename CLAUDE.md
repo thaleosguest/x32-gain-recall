@@ -655,6 +655,14 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   puis potard et dB recalés sur la console ; `_drag` et `_48b` cachés avec leur voie.
   **a8 validée par Joseph le 27/10** (« bien mieux »). Piège vu : il testait l'exe a8 avec le template a7 encore ouvert
   dans TouchOSC (même nom de fichier dans chaque dossier de test) : toujours lui faire rouvrir le .tosc du BON dossier.
+  48V (OK? puis confirmation) et banques / FOLLOW LV1 **validés par Joseph le 27/10**.
+- **DA voulue par Joseph (27/10, capture de sa page Mixer 1 en SndChk avec le float)** : le template doit ressembler à une
+  page Mixer de la LV1, tranche par tranche, de haut en bas : bouton de source (fond teal, « 1- EX 1 », 2 lignes en
+  stéréo, rouge = couleur du canal), A / B, cadre préampli (le float : « A1 = EXP 1 », potard, dB, 48V ; stéréo côte à
+  côte), Ø + Trim (valeur bleue + potard), bandeau du nom à la couleur du canal, « A » + potard de pan, MUTE, valeur du
+  fader (bleu) + crête du vumètre, fader avec échelle +10…−∞ et vumètre, numéro + bouton casque (cue) ; tranche LR à
+  droite (C / M, Master) ; rangée des User keys en haut. Proposé : « phase 2c » = cette disposition, le non-branché
+  (Ø, Trim, pan, MUTE, fader, cue, LR) dessiné grisé jusqu'à la phase 5.
 
 ## Reste à faire / idées
 
