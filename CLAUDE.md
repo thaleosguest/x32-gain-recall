@@ -646,6 +646,13 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `phantom.lua` (BUTTON transparent sur la case : « OK? » 3 s puis 2e appui) ; banques + FOLLOW LV1 dans l'en-tête, titre
   de couche dans la barre d'état ; `paintBanks` (bank / banks arrivent dans un ordre quelconque). Valeurs d'énumération
   déduites des chaînes de TouchOSC.exe : listées À L'ENVERS de leur valeur (MOMENTARY=0 … ; ABSOLUTE=0, RELATIVE=1).
+  **Retour de Joseph sur l'a7 (PC et R10) : potards « erratiques »** (valeur qui revient au départ, trop rapide) : potard
+  rond en relatif = tourner autour d'un petit potard (72 dB en un geste) + garde-fou anti-saut (> 3 dB) qui annulait
+  les gestes rapides. **a8 : glisser VERTICAL** (`drag.lua` sur un BUTTON transparent pleine largeur posé sur le potard,
+  `onPointer` + `PointerState`, 5 px par pas de 0,5 dB `DRAG_STEP_PX`, à partir de la valeur affichée : aucun saut
+  possible ; potard et dB mis à jour sous le doigt) ; potard = affichage (non interactif, `knob.lua` supprimé).
+  Script racine : retours de la console ignorés pendant le glisser ET 1 s après (`HOLD_MS`, comme le float 800 ms),
+  puis potard et dB recalés sur la console ; `_drag` et `_48b` cachés avec leur voie.
 
 ## Reste à faire / idées
 

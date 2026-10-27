@@ -26,7 +26,28 @@ local c = {}                                          -- contrôles par nom
 local UNITS = { 'm', 'l', 'r' }
 local BANKS = 5
 local srv = {}                                        -- potard -> dernière valeur de la console (0..1)
+local srvDb = {}                                      -- potard -> dernier texte dB de la console
 local lastResync = 0
+local HOLD_MS = 1000                                  -- après un glisser : retours de la console ignorés (comme le float)
+local holdUntil, wasDragging = {}, {}
+
+local function dragging(name)
+  -- name = potard « gK_U_knob » ; le geste passe par le bouton transparent « gK_U_drag » posé dessus
+  local d = c[name:gsub('_knob$', '_drag')]
+  return d ~= nil and d.values.touch
+end
+
+local function busy(name, now)
+  -- sous le doigt, ou lâché il y a moins de HOLD_MS : la valeur affichée est celle du geste
+  local on = dragging(name)
+  if on then
+    wasDragging[name] = true
+  elseif wasDragging[name] then
+    wasDragging[name] = nil
+    holdUntil[name] = now + HOLD_MS
+  end
+  return on or (holdUntil[name] ~= nil and now < holdUntil[name])
+end
 local curBank, nBanks = -1, BANKS                     -- banque affichée (-1 : couche sans banque), banques proposées
 
 function paintBanks()
@@ -60,7 +81,7 @@ function init()
       c[n] = self:findByName(n, true)
     end
     for _, u in ipairs(UNITS) do
-      for _, part in ipairs({ 'knob', 'db', '48', '48l', 'side' }) do
+      for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b', 'side' }) do
         local n = 'g' .. k .. '_' .. u .. '_' .. part
         c[n] = self:findByName(n, true)        -- « side » (repère L / R) : voies stéréo seulement, nil en mono
       end
@@ -84,7 +105,7 @@ function setUnits(k, n)
   -- 0 voie : rien ; 1 : « m » ; 2 : « l » au-dessus de « r » (canal stéréo, gains non liés)
   local show = { m = (n == 1), l = (n == 2), r = (n == 2) }
   for _, u in ipairs(UNITS) do
-    for _, part in ipairs({ 'knob', 'db', '48', '48l', 'side' }) do
+    for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b', 'side' }) do
       local ctl = c['g' .. k .. '_' .. u .. '_' .. part]
       if ctl then ctl.visible = show[u] end
     end
@@ -119,12 +140,14 @@ function update()
          GREY)
   end
   if now - lastResync > 200 then
-    -- potard lâché (ou geste bloqué par son garde-fou) : remis sur la valeur de la console
+    -- potard lâché depuis plus de HOLD_MS : calé sur la valeur de la console
     lastResync = now
     for name, v in pairs(srv) do
       local knob = c[name]
-      if not knob.values.touch and math.abs(knob.values.x - v) > 0.0005 then
-        knob.values.x = v
+      if not busy(name, now) then
+        if math.abs(knob.values.x - v) > 0.0005 then knob.values.x = v end
+        local dbl = c[name:gsub('_knob$', '_db')]
+        if srvDb[name] and dbl.values.text ~= srvDb[name] then dbl.values.text = srvDb[name] end
       end
     end
   end
@@ -155,11 +178,12 @@ local function onUnit(k, u, field, v)
   local g = 'g' .. k .. '_' .. u .. '_'
   if field == 'gain' then
     srv[g .. 'knob'] = v
-    if not c[g .. 'knob'].values.touch then     -- sous le doigt : le retour de la console ne se bat pas avec le geste
+    if not busy(g .. 'knob', getMillis()) then   -- glisser en cours ou tout juste fini : le retour ne s'y oppose pas
       c[g .. 'knob'].values.x = v
     end
   elseif field == 'db' then
-    c[g .. 'db'].values.text = v
+    srvDb[g .. 'knob'] = v
+    if not busy(g .. 'knob', getMillis()) then c[g .. 'db'].values.text = v end
   elseif field == '48v' then
     local on = math.floor(v) == 1
     c[g .. '48'].color = on and RED or DARK

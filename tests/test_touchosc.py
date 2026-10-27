@@ -64,11 +64,15 @@ check("bouton SYNC : BUTTON qui envoie /xgr/sync", sync.get("type") == "BUTTON"
 check("libellé du bouton non interactif", tosc.props_of(names["sync_label"])["interactive"] == "0")
 check("16 tranches : bandeau, nom, source, voies m / l / r", all("g%d_%s" % (k, part) in names for k in range(1, 17)
       for part in ("band", "name", "src", "m_knob", "m_db", "m_48", "l_knob", "r_48l")) and "g17_band" not in names)
-kp = tosc.props_of(names["g1_m_knob"])
-check("potards : RADIAL actifs, RELATIFS, script qui envoie le gain de SA voie", names["g1_m_knob"].get("type") == "RADIAL"
-      and kp["interactive"] == "1" and kp["response"] == "1" and "'/xgr/g/1/m/gain'" in kp["script"]
-      and "Response.RELATIVE" in kp["script"] and "math.abs(v - last) > 3" in kp["script"]
-      and "'/xgr/g/16/r/gain'" in tosc.props_of(names["g16_r_knob"])["script"])
+kp, dp = tosc.props_of(names["g1_m_knob"]), tosc.props_of(names["g1_m_drag"])
+check("potard = affichage ; glisser vertical par un bouton transparent posé dessus (retour de Joseph sur l'a7)",
+      names["g1_m_knob"].get("type") == "RADIAL" and kp["interactive"] == "0" and "script" not in kp
+      and names["g1_m_drag"].get("type") == "BUTTON" and dp["color"]["a"] == "0"
+      and "'/xgr/g/1/m/gain'" in dp["script"] and "'g1_m_knob'" in dp["script"] and "'g1_m_db'" in dp["script"]
+      and "local STEP_PX = 5" in dp["script"] and "PointerState.BEGIN" in dp["script"]
+      and "'/xgr/g/16/r/gain'" in tosc.props_of(names["g16_r_drag"])["script"])
+check("script racine : retours ignorés pendant et 1 s après un glisser", "local HOLD_MS = 1000" in script
+      and "'_drag'" in script and "'48b'" in script)
 pp = tosc.props_of(names["g7_l_48b"])
 check("48V : bouton transparent sur la case, OK? puis confirmation dans les 3 s", names["g7_l_48b"].get("type") == "BUTTON"
       and "'/xgr/g/7/l/48v'" in pp["script"] and "'g7_l_48l'" in pp["script"] and "'OK?'" in pp["script"]
@@ -81,6 +85,9 @@ l48, rk = fr("g7_l_48"), fr("g7_r_knob")
 check("stéréo empilée : voie droite sous la gauche, même largeur que le mono, repères L / R",
       rk["y"] > l48["y"] + l48["h"] and fr("g7_l_knob")["x"] == fr("g7_r_knob")["x"]
       and fr("g7_l_db")["w"] == fr("g7_m_db")["w"] and "g7_l_side" in names and "g7_m_side" not in names)
+dk, dd = fr("g7_l_knob"), fr("g7_l_drag")
+check("glisser sur toute la largeur de la tranche, à la hauteur du potard", dd["y"] == dk["y"] and dd["h"] == dk["h"]
+      and dd["w"] == 112)
 order = [tosc.props_of(n)["name"] for n in root.find("children")]
 check("panneau de connexion par-dessus les tranches", order.index("panel") > order.index("g16_r_48l"))
 

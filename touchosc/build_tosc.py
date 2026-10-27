@@ -5,7 +5,7 @@ Joseph ; TouchOSC met à l'échelle sur un autre écran).
 
 Phase 0 (27/10/2026) : présence. Phase 1 : barre d'état, SYNC, messages. Phase 2a : page GAINS, 16 tranches calquées
 sur la couche LV1 ; le panneau de connexion ne s'affiche que tant que Gain Recall ne répond pas. Phase 2b : banques
-1-16 … 65-80 + FOLLOW LV1 (vue par tablette), potards de gain relatifs (knob.lua), 48V à confirmer (phantom.lua).
+1-16 … 65-80 + FOLLOW LV1 (vue par tablette), gain au glisser vertical (drag.lua), 48V à confirmer (phantom.lua).
 """
 import os
 import sys
@@ -24,6 +24,7 @@ BG, PANEL, TEXT, MUTED, LINE = Color(71, 71, 71), Color(17, 17, 17), Color(231, 
     Color(120, 120, 120)
 ORANGE, DARK, CLEAR = Color(255, 153, 38), Color(43, 43, 43), Color(0, 0, 0, 0)
 BANKS = ["1-16", "17-32", "33-48", "49-64", "65-80"]
+DRAG_STEP_PX = 5         # glisser vertical sur un potard : 5 px par pas de 0,5 dB (~10 px par dB ; 72 dB = 720 px)
 
 # Page GAINS : 16 tranches de STRIP_W, au pas STRIP_PITCH, à partir de STRIP_X0
 STRIP_X0, STRIP_PITCH, STRIP_W, STRIP_Y = 40, 120, 112, 180
@@ -80,11 +81,12 @@ def strip(k):
     for u, (top, knob, db_size, ph_w, ph_h, ph_size, side) in UNITS.items():
         ph = (x + (STRIP_W - ph_w) // 2, top + knob + db_size + 34, ph_w, ph_h)
         path = "/xgr/g/%d/%s/" % (k, u)
-        out += [Node("RADIAL", g + u + "_knob", (x + (STRIP_W - knob) // 2, top, knob, knob),
-                     {"color": MUTED, "background": True, "outline": False, "interactive": True,
-                      "response": 1},                     # 1 = relatif (Response.RELATIVE, reposé en Lua)
-                     script=lua("knob.lua", PATH=path + "gain", GMIN=views.GAIN_MIN,
-                                GSPAN=views.GAIN_MAX - views.GAIN_MIN)),
+        kf = (x + (STRIP_W - knob) // 2, top, knob, knob)
+        out += [Node("RADIAL", g + u + "_knob", kf,           # affichage seulement : le geste passe par _drag
+                     {"color": MUTED, "background": True, "outline": False, "interactive": False}),
+                overlay(g + u + "_drag", (x, top, STRIP_W, knob),
+                        lua("drag.lua", PATH=path + "gain", KNOB=g + u + "_knob", DB=g + u + "_db",
+                            GMIN=views.GAIN_MIN, GSPAN=views.GAIN_MAX - views.GAIN_MIN, STEP_PX=DRAG_STEP_PX)),
                 label(g + u + "_db", (x, top + knob + 6, STRIP_W, db_size + 20), "-", db_size),
                 box(g + u + "_48", ph, DARK),
                 label(g + u + "_48l", ph, "48V", ph_size, MUTED),
