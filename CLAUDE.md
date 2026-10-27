@@ -585,6 +585,10 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Idée de Joseph : TouchOSC du PC en **SERVEUR** (template + Lua + OSC en 127.0.0.1), tablette en **CLIENT** (Connections
   > Client : rien à copier sur la tablette, elle affiche la surface du PC). Contours : `outline` False ; alignement / forme
   posés en Lua (`AlignH.LEFT`, `Shape.CIRCLE`) faute de connaître les valeurs numériques du fichier.
+  **R10 en client validée le 27/10** (Wi-Fi 192.168.1.20 -> serveur TouchOSC du PC, **TCP 6666**). Blocage d'abord
+  (« connecting… » sur Wi-Fi ET Tailscale) : Wi-Fi classé **Public** + aucune règle pare-feu pour TouchOSC ; Joseph a passé
+  le Wi-Fi en Privé et autorisé TouchOSC (commandes admin données, pas exécutées par Claude : réglage de sécurité).
+  Tailscale (PC 100.113.68.110) : pas de découverte automatique (multicast), adresse à entrer à la main.
   Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
   Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
 
