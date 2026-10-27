@@ -589,6 +589,8 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   (« connecting… » sur Wi-Fi ET Tailscale) : Wi-Fi classé **Public** + aucune règle pare-feu pour TouchOSC ; Joseph a passé
   le Wi-Fi en Privé et autorisé TouchOSC (commandes admin données, pas exécutées par Claude : réglage de sécurité).
   Tailscale (PC 100.113.68.110) : pas de découverte automatique (multicast), adresse à entrer à la main.
+  Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
+  Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
 - **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
   en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
   (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`
@@ -597,9 +599,13 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   fournies par x32_gain_recall ; une chaîne rendue = erreur -> `/xgr/notify` (ligne orange, 6 s). L'état vient de
   `merged_snapshot` DANS le processus (les poignées HTTP sont minces : mêmes fonctions, sans le détour HTTP). Mesuré :
   ~1 % d'un cœur avec une tablette. En mode serveur, Gain Recall ne voit QU'UN client (TouchOSC du PC), pas les tablettes
-  clientes (ligne « TOUCHOSC »). Page : CONSOLE / LV1 / TOUCHOSC. Exe de test `dist.2.0-a2-test` (+ .tosc).
-  Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
-  Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
+  clientes (ligne « TOUCHOSC »). Page : CONSOLE / LV1 / TOUCHOSC. Exe de test `dist\3.2.0-a2-test` (+ .tosc).
+- **CORRECTION (27/10, essai de Joseph sur la R10)** : le « serveur » de TouchOSC est le RÉSEAU DE L'ÉDITEUR (manuel Hexler,
+  Editor · Network) : il pousse le DOCUMENT aux clients, mais chaque client est une surface autonome (ses scripts, SES
+  connexions OSC ; valeurs envoyées une fois à la connexion). Ce n'est PAS un miroir : la tablette cliente affichait
+  « Looking for… » (son hello partait vers elle-même). Claude l'avait mal décrit -> la décision « mode serveur par défaut »
+  reposait sur une erreur. Bon usage : serveur de l'éditeur = distribuer le template ; la tablette parle à Gain Recall
+  par le RÉSEAU (Host = IP du PC) -> il faut le mode réseau + autorisation des tablettes + pare-feu UDP 9300.
 
 ## Reste à faire / idées
 

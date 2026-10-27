@@ -1,5 +1,6 @@
 -- X/M32 Gain Recall for eMotion LV1 : script racine du template TouchOSC (généré par touchosc/build_tosc.py).
--- Mode par défaut : ce template tourne dans le TouchOSC du PC (serveur, OSC vers 127.0.0.1), la tablette en client.
+-- Chaque TouchOSC fait tourner ce script et parle LUI-MÊME à Gain Recall, y compris une tablette cliente du réseau de
+-- l'éditeur (qui ne reçoit que le document) : sur la tablette, Host = adresse du PC de la LV1.
 -- /xgr/hello toutes les secondes ; Gain Recall répond /xgr/welcome puis envoie l'état quand il change (protocol.py).
 -- Les valeurs PROTO / ports sont remplacées à la génération (touchosc/protocol.py est la référence).
 
@@ -56,7 +57,7 @@ function update()
   local alive = lastSeen ~= nil and now - lastSeen < LOST_MS
   if not alive and shown ~= false then
     show(false, 'Looking for X/M32 Gain Recall...',
-         'TouchOSC on the LV1 PC > Connections > OSC (UDP): Host 127.0.0.1, Send Port __PORT_IN__, Receive Port __PORT_OUT__',
+         'Connections > OSC (UDP): Host = LV1 PC address (127.0.0.1 on that PC), Send Port __PORT_IN__, Receive Port __PORT_OUT__',
          GREY)
   end
   if notifyAt ~= nil and now - notifyAt > NOTIFY_MS then
