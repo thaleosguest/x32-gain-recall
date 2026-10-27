@@ -53,6 +53,31 @@ UNITS = {"m": (0, STRIP_W, 60, 20, 56, 13), "l": (0, STRIP_W // 2, 46, 15, 44, 1
          "r": (STRIP_W // 2, STRIP_W // 2, 46, 15, 44, 11)}
 
 
+SCRIPT_MAX = 16000      # octets : TouchOSC ne charge pas un script plus long (racine de 17,7 Ko muette depuis l'a13, 14,2 Ko OK
+#                         en a12 ; limite probable 16 384) -> commentaires retirés à la génération + refus au-delà
+
+
+def strip_comments(src):
+    """Script sans ses commentaires « -- … » ni lignes vides (ils restent dans les fichiers du dépôt). Un « -- » à
+    l'intérieur d'une chaîne est gardé : on ne coupe qu'après un nombre pair de guillemets."""
+    out = []
+    for line in src.split("\n"):
+        cut, quote = None, None
+        for i, ch in enumerate(line):
+            if quote:
+                if ch == quote and line[i - 1] != "\\":
+                    quote = None
+            elif ch in "'\"":
+                quote = ch
+            elif line.startswith("--", i):
+                cut = i
+                break
+        code = (line[:cut] if cut is not None else line).strip()      # indentation aussi : Lua n'en a pas besoin
+        if code:
+            out.append(code)
+    return "\n".join(out) + "\n"
+
+
 def lua(name, **tokens):
     with open(os.path.join(HERE, "template", name), encoding="utf-8") as f:
         src = f.read()
@@ -60,6 +85,10 @@ def lua(name, **tokens):
         src = src.replace("__%s__" % k, str(v))
     if "__" in src.replace("__index", "").replace("__newindex", ""):
         raise ValueError("jeton non remplacé dans %s" % name)
+    src = strip_comments(src)
+    if len(src.encode("utf-8")) > SCRIPT_MAX:
+        raise ValueError("script %s trop long pour TouchOSC : %d octets (max %d)" % (name, len(src.encode("utf-8")),
+                                                                                    SCRIPT_MAX))
     return src
 
 

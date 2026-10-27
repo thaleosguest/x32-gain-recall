@@ -447,6 +447,9 @@ send(P.LUA_ERROR, [("s", "update: attempt to index a nil value")])
 drain(0.3)
 check("a15 : erreur Lua du template notée une fois au journal et dans le diagnostic",
       sum("erreur Lua de 127.0.0.1" in m for m in logs) == 1 and b.status()["lua_errors"][-1]["text"].startswith("update:"))
+check("a16 : scripts sous la limite de TouchOSC (16 Ko), sans commentaires", all(len((tosc.props_of(n).get("script") or "")
+      .encode("utf-8")) <= build_tosc.SCRIPT_MAX for n in x.iter("node")) and "\n--" not in script
+      and build_tosc.strip_comments("x = 'a -- b' -- note\n  -- seul\n") == "x = 'a -- b'\n")
 check("a15 : hello en premier, erreurs protégées et remontées", script.index("sendOSC('/xgr/hello'") < script.index(
       "pcall(doUpdate") and "pcall(doInit, self)" in script and "pcall(doReceive, message)" in script
       and "sendOSC('/xgr/error', msg)" in script)
