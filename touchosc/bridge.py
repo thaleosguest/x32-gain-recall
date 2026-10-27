@@ -37,6 +37,7 @@ class Bridge(threading.Thread):
         self.denied = set()      # refusées pendant ce lancement
         self.own = local_addresses()
         self.rx, self.last_rx = 0, None   # diagnostic (27/10, R10 muette) : paquets reçus, dernier (ip, adresse, instant)
+        self.lua_errors = []              # [(ip, texte, instant)] : erreurs Lua remontées par les templates (a15)
         self._state, self._published = {}, 0.0
         self._stop = threading.Event()
 
@@ -103,6 +104,14 @@ class Bridge(threading.Thread):
         ip = addr[0]
         self.rx += 1
         self.last_rx = (ip, address, time.time())
+        if address == P.LUA_ERROR and P.allowed(ip, self.allow, self.own):
+            text = str(args[0][1])[:300] if args and args[0][0] == "s" else "?"
+            with self.lock:
+                fresh = all(t != text for _i, t, _w in self.lua_errors)
+                self.lua_errors = (self.lua_errors + [(ip, text, time.time())])[-20:]
+            if fresh:
+                self.log("TouchOSC : erreur Lua de %s : %s" % (ip, text))
+            return
         if not P.allowed(ip, self.allow, self.own):
             if ip in self.denied or address != P.HELLO:
                 return
@@ -219,6 +228,7 @@ class Bridge(threading.Thread):
             allow, denied = sorted(self.allow), sorted(self.denied)
         return {"listen": "%s:%d" % (self.sock.getsockname()[0], self.port), "reply_port": self.reply_port,
                 "allow": allow, "tablets": self.snapshot(), "pending": pending, "denied": denied,
+                "lua_errors": [{"ip": i, "text": t, "ago": round(time.time() - w, 1)} for i, t, w in self.lua_errors],
                 "rx": self.rx, "last": {"ip": last[0], "address": last[1], "ago": round(time.time() - last[2], 1)}
                 if last else None}
 

@@ -48,6 +48,7 @@ PORT_OUT = 9301         # la tablette écoute ici (Receive Port de TouchOSC)
 LOST_S = 4.0            # tablette oubliée sans hello depuis ce délai
 
 HELLO, WELCOME, SYNC, NOTIFY = "/xgr/hello", "/xgr/welcome", "/xgr/sync", "/xgr/notify"
+LUA_ERROR = "/xgr/error"   # s texte : erreur Lua du template (a15), écrite dans le journal et le diagnostic
 
 
 def arg_values(args):

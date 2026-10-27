@@ -442,6 +442,14 @@ send(P.SYNC)
 got, _o = drain(0.3)
 check("état en erreur : le pont tient (dernier état gardé)", b.is_alive() and any("illisible" in m for m in logs)
       and "/xgr/console" in got)
+send(P.LUA_ERROR, [("s", "update: attempt to index a nil value")])
+send(P.LUA_ERROR, [("s", "update: attempt to index a nil value")])
+drain(0.3)
+check("a15 : erreur Lua du template notée une fois au journal et dans le diagnostic",
+      sum("erreur Lua de 127.0.0.1" in m for m in logs) == 1 and b.status()["lua_errors"][-1]["text"].startswith("update:"))
+check("a15 : hello en premier, erreurs protégées et remontées", script.index("sendOSC('/xgr/hello'") < script.index(
+      "pcall(doUpdate") and "pcall(doInit, self)" in script and "pcall(doReceive, message)" in script
+      and "sendOSC('/xgr/error', msg)" in script)
 stt = b.status()
 check("diagnostic : écoute, paquets reçus, dernier, autorisées, refusées", stt["listen"].startswith("127.0.0.1:")
       and stt["rx"] > 5 and stt["last"]["ip"] == "127.0.0.1" and stt["allow"] == [NEW] and stt["denied"] == [OTHER]
