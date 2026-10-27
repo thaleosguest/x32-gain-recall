@@ -596,8 +596,17 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   TouchOSC (mode édition). Banc `tests/lua_bench.py` (lupa **lua51** comme TouchOSC, `py -3.14 tests/lua_bench.py <scratchpad>/luaenv`) SANS
   pcall. **Manuel Hexler résumé : skill utilisateur `touchosc`** (`~/.claude/skills/touchosc/`) : Lua 5.1, base
   réduite à error/ipairs/next/pairs/print/select/tonumber/tostring/unpack/type, API mal utilisée = script arrêté,
-  Shared Scripts (`require`) pour répartir un gros script, serveur MCP intégré (1.5.4+, seulement avec l'accord de Joseph). Taille : a13 (17,7 Ko) muet, cause non prouvée (pcall ajouté juste après) ; `build_tosc` retire commentaires
+  Shared Scripts (`require`) pour répartir un gros script, serveur MCP intégré (1.5.4+, seulement avec l'accord de Joseph).
+  Taille : a13 (17,7 Ko) muet, cause non prouvée (pcall ajouté juste après) ; `build_tosc` retire commentaires
   / indentation et refuse > 16 000 octets par script ; racine ~15 Ko -> la répartir avant d'en ajouter.
+- **a17 validée par Joseph le 28/10** (PC + R10 connectés, couches qui changent ; « le reste fonctionne »). Connexion
+  « laborieuse » : il a dû déconnecter / reconnecter le serveur de l'éditeur (la R10 gardait sans doute l'ancien document
+  au script arrêté ; `init` n'est relancé chez un client qu'à un gros changement de document). **a18 (28/10)** : après un
+  changement de couche, une ou deux tranches restaient figées jusqu'à SYNC = paquets UDP perdus à l'arrivée (300-400
+  d'un coup, rien au journal) que le pont croyait reçus -> `Bridge.MAX_BURST` 120 messages modifiés par tablette et par
+  tour + `REFRESH_PER_TICK` 15 messages déjà envoyés renvoyés en tournant (tout l'état repasse en ~3-4 s). Template
+  inchangé depuis l'a17 (seul l'exe change). Tests : `REFRESH_PER_TICK = 0` pour les vérifications « seulement ce qui a
+  changé » ; renvoyer un hello dans les blocs longs (tablette oubliée après LOST_S).
 - **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
   en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
   (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`
