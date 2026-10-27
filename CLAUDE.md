@@ -653,6 +653,8 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   possible ; potard et dB mis à jour sous le doigt) ; potard = affichage (non interactif, `knob.lua` supprimé).
   Script racine : retours de la console ignorés pendant le glisser ET 1 s après (`HOLD_MS`, comme le float 800 ms),
   puis potard et dB recalés sur la console ; `_drag` et `_48b` cachés avec leur voie.
+  **a8 validée par Joseph le 27/10** (« bien mieux »). Piège vu : il testait l'exe a8 avec le template a7 encore ouvert
+  dans TouchOSC (même nom de fichier dans chaque dossier de test) : toujours lui faire rouvrir le .tosc du BON dossier.
 
 ## Reste à faire / idées
 
