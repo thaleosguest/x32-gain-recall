@@ -46,7 +46,8 @@ api.Response = { ABSOLUTE = 0, RELATIVE = 1 }
 api.sent = {}
 function api.sendOSC(path, ...) table.insert(api.sent, { path, select('#', ...) }) end
 api.math, api.string, api.table, api.pairs, api.ipairs, api.tostring, api.tonumber = math, string, table, pairs, ipairs, tostring, tonumber
-api.type, api.print, api.select, api.next, api.error, api.pcall = type, print, select, next, error, pcall
+api.type, api.print, api.select, api.next, api.error = type, print, select, next, error
+-- PAS de pcall / xpcall : absents du Lua de TouchOSC (a17, « attempt to call global 'pcall' (a nil value) »)
 
 local Control = {}
 Control.__index = Control
@@ -157,8 +158,6 @@ def run(messages, drop=None):
     sent = [api.sent[i][1] for i in range(1, len(api.sent) + 1)]
     if "/xgr/hello" not in sent:
         errors.append("root : aucun /xgr/hello envoyé")
-    if "/xgr/error" in sent:
-        errors.append("root : /xgr/error envoyé (erreur Lua remontée)")
     mk = lua.eval('''function(path, args)
         return { path, args }
     end''')
@@ -202,8 +201,4 @@ def sample_messages():
 if __name__ == "__main__":
     errs = run(sample_messages())
     print("\n".join(errs) if errs else "OK : tous les scripts chargent, init / update / messages sans erreur")
-    # robustesse (a15) : un contrôle manquant -> erreur remontée, mais le hello part quand même
-    rob = run(sample_messages(), drop="sc_off")
-    good = "root : /xgr/error envoyé (erreur Lua remontée)" in rob and "root : aucun /xgr/hello envoyé" not in rob
-    print("robustesse (sc_off retiré) : %s" % ("OK, erreur remontée et hello envoyé" if good else "ÉCHEC %s" % rob))
-    sys.exit(1 if errs or not good else 0)
+    sys.exit(1 if errs else 0)

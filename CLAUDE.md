@@ -591,6 +591,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Tailscale (PC 100.113.68.110) : pas de découverte automatique (multicast), adresse à entrer à la main.
   Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
   Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
+- **Lua de TouchOSC (a13-a17, 27-28/10)** : **PAS de `pcall`** (« CONTROL(ROOT) RUNTIME ERROR: attempt to call global
+  'pcall' (a nil value) » : script racine arrêté dès init, plus de hello = « ne se connecte pas »). Erreurs : journal de
+  TouchOSC (mode édition). Banc `tests/lua_bench.py` (lupa, `py -3.14 tests/lua_bench.py <scratchpad>/luaenv`) SANS
+  pcall. Taille : a13 (17,7 Ko) muet, cause non prouvée (pcall ajouté juste après) ; `build_tosc` retire commentaires
+  / indentation et refuse > 16 000 octets par script ; racine ~15 Ko -> la répartir avant d'en ajouter.
 - **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
   en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
   (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`

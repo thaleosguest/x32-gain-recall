@@ -450,9 +450,8 @@ check("a15 : erreur Lua du template notée une fois au journal et dans le diagno
 check("a16 : scripts sous la limite de TouchOSC (16 Ko), sans commentaires", all(len((tosc.props_of(n).get("script") or "")
       .encode("utf-8")) <= build_tosc.SCRIPT_MAX for n in x.iter("node")) and "\n--" not in script
       and build_tosc.strip_comments("x = 'a -- b' -- note\n  -- seul\n") == "x = 'a -- b'\n")
-check("a15 : hello en premier, erreurs protégées et remontées", script.index("sendOSC('/xgr/hello'") < script.index(
-      "pcall(doUpdate") and "pcall(doInit, self)" in script and "pcall(doReceive, message)" in script
-      and "sendOSC('/xgr/error', msg)" in script)
+check("a17 : hello en premier, pas de pcall (absent du Lua de TouchOSC)", script.index("sendOSC('/xgr/hello'") <
+      script.index("function onReceiveOSC") and "pcall(" not in script)
 stt = b.status()
 check("diagnostic : écoute, paquets reçus, dernier, autorisées, refusées", stt["listen"].startswith("127.0.0.1:")
       and stt["rx"] > 5 and stt["last"]["ip"] == "127.0.0.1" and stt["allow"] == [NEW] and stt["denied"] == [OTHER]

@@ -200,25 +200,9 @@ local function hexColor(h)
   return Color(tonumber(h:sub(1, 2), 16) / 255, tonumber(h:sub(3, 4), 16) / 255, tonumber(h:sub(5, 6), 16) / 255, 1)
 end
 
--- Erreurs Lua (a15, la tablette restait muette sans qu'on voie pourquoi) : jamais bloquantes, et envoyées à Gain
--- Recall (/xgr/error), qui les écrit dans son journal et son diagnostic. Une même erreur au plus toutes les 2 s.
-local lastErr, lastErrAt = nil, -10000
-
-local function report(where, err)
-  local msg = where .. ': ' .. tostring(err)
-  local now = getMillis()
-  if msg ~= lastErr or now - lastErrAt > 2000 then
-    lastErr, lastErrAt = msg, now
-    sendOSC('/xgr/error', msg)
-  end
-end
-
+-- PAS de pcall dans le Lua de TouchOSC (a17 : « attempt to call global 'pcall' (a nil value) », script arrêté dès
+-- init, hello compris) : les erreurs s'affichent dans le journal de TouchOSC (CONTROL(ROOT) RUNTIME ERROR).
 function init()
-  local ok, err = pcall(doInit, self)
-  if not ok then report('init', err) end
-end
-
-function doInit(self)
   for _, name in ipairs({ 'led', 'status', 'detail', 'console', 'lv1', 'tablets', 'notify', 'sync', 'panel',
                           'panel_line', 'g_title', 'follow_label' }) do
     c[name] = self:findByName(name, true)
@@ -316,11 +300,6 @@ function update()
     lastHello = now
     sendOSC('/xgr/hello', PROTO, 'TouchOSC')
   end
-  local ok, err = pcall(doUpdate, now)
-  if not ok then report('update', err) end
-end
-
-function doUpdate(now)
   -- page SCENES : ligne touchée (sc_sel = n° de ligne), page changée (sc_off), liste reçue
   local off = tonumber(c.sc_off.values.text) or 0
   local sel = c.sc_sel.values.text
@@ -420,15 +399,6 @@ local function onUnit(k, u, field, v)
 end
 
 function onReceiveOSC(message, connections)
-  local ok, res = pcall(doReceive, message)
-  if not ok then
-    report('receive ' .. tostring(message[1]), res)
-    return true
-  end
-  return res
-end
-
-function doReceive(message)
   local path, args = message[1], message[2]
   if path == '/xgr/welcome' then
     lastSeen = getMillis()
