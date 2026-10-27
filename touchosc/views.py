@@ -56,11 +56,25 @@ def _info(channels, ch):
     return (channels or {}).get(str(ch)) or (channels or {}).get(ch) or {}
 
 
-def gain_page(state, surface="mixer1"):
-    """{"title", "strips": [16 x {"ch", "label", "color" (« RRGGBB » ou ""), "units": [{"idx", "db", "phantom"}],
-    "src"}]} pour la couche affichée de `surface` (Mixer 1 par défaut, comme le float principal)."""
+def bank_count(state):
+    """Banques de 16 entrées que la tablette propose (1-16 … 65-80), d'après le nombre de canaux LV1 connus."""
+    n = int((state or {}).get("lv1_count") or 0)
+    return max(1, min(5, (n + STRIPS - 1) // STRIPS)) if n else 4
+
+
+def gain_page(state, surface="mixer1", bank=None):
+    """{"title", "follow", "bank", "banks", "strips": [16 x {"ch", "label", "color" (« RRGGBB » ou ""), "units":
+    [{"idx", "db", "phantom"}], "src"}]}. bank None = couche affichée sur la LV1 (`surface`, Mixer 1 par défaut, comme
+    le float) ; bank 0..4 = vue fixe de la tablette (Ch 1-16 … 65-80, phase 2b : la LV1 ne bouge pas)."""
     state = state or {}
-    lay = (state.get("lv1_layers") or {}).get(surface) or (state.get("lv1_layer") if surface == "mixer1" else None) or {}
+    banks = bank_count(state)
+    if bank is not None and 0 <= bank < banks:
+        lay = {"mode": 0, "page": bank, "bank": bank,
+               "channels": list(range(bank * STRIPS + 1, bank * STRIPS + STRIPS + 1))}
+    else:
+        bank = None
+        lay = ((state.get("lv1_layers") or {}).get(surface) or (state.get("lv1_layer") if surface == "mixer1" else None)
+               or {})
     chans = list(lay.get("channels") or [])[:STRIPS]
     chans += [None] * (STRIPS - len(chans))
     exp_to_idx = {}
@@ -90,7 +104,18 @@ def gain_page(state, surface="mixer1"):
         color = (info.get("color") or "").lstrip("#").upper()
         strips.append({"ch": ch, "label": info.get("label") or ("In %d" % ch if ch > 0 else ""),
                        "color": color if len(color) == 6 else "", "units": units, "src": src or "no X32 preamp"})
-    return {"title": layer_title(lay), "strips": strips}
+    shown = lay.get("bank") if lay.get("channels") else None
+    return {"title": layer_title(lay), "follow": bank is None, "bank": shown, "banks": banks, "strips": strips}
+
+
+def unit_idx(page, k, u):
+    """Préampli de la voie u (« m », « l », « r ») de la tranche k (1..16) de la page affichée, ou None (la tranche a
+    changé entre l'affichage et le geste)."""
+    if not page or not 1 <= k <= len(page["strips"]):
+        return None
+    units = page["strips"][k - 1]["units"]
+    names = unit_names(len(units))
+    return units[names.index(u)]["idx"] if u in names else None
 
 
 def unit_names(n):

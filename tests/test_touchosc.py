@@ -10,6 +10,9 @@ acceptée, non -> ignorée ; le PC lui-même toujours accepté (127.x ou ses adr
 Phase 2a (27/10) : page GAINS = 16 tranches de la couche LV1 de Mixer 1 (canal -> EXP -> préampli, stéréo en deux
 voies, EXP sans préampli = pas de voie, tranche sans canal vide, titre de couche) ; un gain qui change ne renvoie que
 sa voie ; template : 16 tranches (bandeau, nom, source, voies m / l / r) et panneau de connexion par-dessus.
+Phase 2b (27/10) : vue PAR TABLETTE (banques 1-16 … 65-80, FOLLOW LV1, banques au-delà de la configuration ignorées) ;
+gestes traduits en préamplis d'après la page de CETTE tablette (gain borné -12..60, 48V = bascule), tranche changée
+-> message ; template : potards RELATIFS avec script, bouton 48V transparent à confirmer, boutons de banque / FOLLOW.
 
     py tests/test_touchosc.py
 """
@@ -61,8 +64,18 @@ check("bouton SYNC : BUTTON qui envoie /xgr/sync", sync.get("type") == "BUTTON"
 check("libellé du bouton non interactif", tosc.props_of(names["sync_label"])["interactive"] == "0")
 check("16 tranches : bandeau, nom, source, voies m / l / r", all("g%d_%s" % (k, part) in names for k in range(1, 17)
       for part in ("band", "name", "src", "m_knob", "m_db", "m_48", "l_knob", "r_48l")) and "g17_band" not in names)
-check("potards : RADIAL non interactifs (lecture seule en 2a)", names["g1_m_knob"].get("type") == "RADIAL"
-      and tosc.props_of(names["g1_m_knob"])["interactive"] == "0")
+kp = tosc.props_of(names["g1_m_knob"])
+check("potards : RADIAL actifs, RELATIFS, script qui envoie le gain de SA voie", names["g1_m_knob"].get("type") == "RADIAL"
+      and kp["interactive"] == "1" and kp["response"] == "1" and "'/xgr/g/1/m/gain'" in kp["script"]
+      and "Response.RELATIVE" in kp["script"] and "math.abs(v - last) > 3" in kp["script"]
+      and "'/xgr/g/16/r/gain'" in tosc.props_of(names["g16_r_knob"])["script"])
+pp = tosc.props_of(names["g7_l_48b"])
+check("48V : bouton transparent sur la case, OK? puis confirmation dans les 3 s", names["g7_l_48b"].get("type") == "BUTTON"
+      and "'/xgr/g/7/l/48v'" in pp["script"] and "'g7_l_48l'" in pp["script"] and "'OK?'" in pp["script"]
+      and pp["color"]["a"] == "0")
+check("banques 1-16 … 65-80 et FOLLOW LV1", all("sendOSC('/xgr/view/bank', %d)" % n in tosc.props_of(names["bank%d" % n])["script"]
+      for n in range(5)) and "sendOSC('/xgr/view/follow')" in tosc.props_of(names["follow"])["script"]
+      and tosc.props_of(names["bank4_label"]) is not None)
 fr = lambda n: {k: int(v) for k, v in tosc.props_of(names[n])["frame"].items()}
 l48, rk = fr("g7_l_48"), fr("g7_r_knob")
 check("stéréo empilée : voie droite sous la gauche, même largeur que le mono, repères L / R",
@@ -117,6 +130,20 @@ check("pas de couche d'entrées", views.gain_page({})["title"] == "No input chan
 check("dB et course", views.db_text(32.5) == "32.5" and views.db_text(None) == "-" and views.gain_frac(-12) == 0.0
       and views.gain_frac(60) == 1.0 and views.gain_frac(24) == 0.5)
 gm = P.gain_messages(page)
+check("actions : banque, follow, gain borné, 48V ; le reste ignoré", P.parse_action("/xgr/view/bank", [("i", 2)]) == ("bank", 2)
+      and P.parse_action("/xgr/view/bank", [("f", 1.0)]) == ("bank", 1) and P.parse_action("/xgr/view/bank", [("i", 7)]) is None
+      and P.parse_action("/xgr/view/follow", []) == ("follow",)
+      and P.parse_action("/xgr/g/3/l/gain", [("f", 30.5)]) == ("gain", 3, "l", 30.5)
+      and P.parse_action("/xgr/g/3/m/gain", [("f", 99.0)]) == ("gain", 3, "m", 60.0)
+      and P.parse_action("/xgr/g/16/r/48v", []) == ("phantom", 16, "r")
+      and P.parse_action("/xgr/g/17/m/gain", [("f", 1.0)]) is None and P.parse_action("/xgr/g/1/x/gain", [("f", 1.0)]) is None
+      and P.parse_action("/xgr/g/1/m/gain", []) is None)
+b1 = views.gain_page(dict(gstate, lv1_count=64), bank=1)
+check("vue fixe : banque 2 = Ch 17-32, ne suit plus", b1["title"] == "Ch 17-32" and b1["follow"] is False and b1["bank"] == 1
+      and b1["strips"][0]["ch"] == 17 and b1["banks"] == 4)
+check("banque au-delà de la configuration : suit la LV1", views.gain_page(dict(gstate, lv1_count=64), bank=4)["follow"] is True)
+check("voie -> préampli d'après la page", views.unit_idx(page, 1, "l") == 32 and views.unit_idx(page, 1, "r") == 33
+      and views.unit_idx(page, 2, "m") == 0 and views.unit_idx(page, 1, "m") is None and views.unit_idx(page, 7, "m") is None)
 check("messages : stéréo l / r, mono m, rien pour les voies absentes", gm["/xgr/g/1/units"] == (("i", 2),)
       and gm["/xgr/g/1/l/db"] == (("s", "32.5"),) and gm["/xgr/g/1/r/db"] == (("s", "30.0"),)
       and gm["/xgr/g/2/m/48v"] == (("i", 1),) and "/xgr/g/1/m/db" not in gm and "/xgr/g/7/m/db" not in gm
@@ -161,7 +188,8 @@ got, order = drain(0.3)
 check("rien de changé : rien envoyé", order == [])
 state["lv1_count"] = 80
 got, order = drain(0.3)
-check("changement : seulement le message concerné", order == ["/xgr/lv1"] and got["/xgr/lv1"][0].startswith("80 LV1"))
+check("changement : seulement les messages concernés (LV1, banques proposées)", order == ["/xgr/lv1", "/xgr/view/banks"]
+      and got["/xgr/lv1"][0].startswith("80 LV1") and got["/xgr/view/banks"] == [5])
 state["gains"] = list(state["gains"])
 state["gains"][33] = 36.0
 got, order = drain(0.3)
@@ -203,6 +231,25 @@ check("adresse réseau du PC : acceptée d'office", OWN in b.tablets)
 with b.lock:
     for ip in (NEW, OWN):
         b.tablets.pop(ip, None)
+
+# vue par tablette et gestes (2b)
+send("/xgr/view/bank", [("i", 1)])
+got, order = drain(0.3)
+check("banque 17-32 : titre, vue fixe, tranches de la banque", got.get("/xgr/g/title") == ["Ch 17-32"]
+      and got.get("/xgr/view/follow") == [0] and got.get("/xgr/view/bank") == [1])
+send("/xgr/view/follow")
+got, order = drain(0.3)
+check("FOLLOW LV1 : retour à la couche de la LV1", got.get("/xgr/g/title") == ["Ch 1-16"] and got.get("/xgr/view/follow") == [1])
+gcalls = []
+b.actions = {"gain": lambda idx, db: gcalls.append(("gain", idx, db)), "phantom": lambda idx: gcalls.append(("ph", idx))}
+send("/xgr/g/1/r/gain", [("f", 31.5)])
+send("/xgr/g/2/m/48v")
+drain(0.3)
+check("gain et 48V : préampli de la page de la tablette", gcalls == [("gain", 33, 31.5), ("ph", 0)])
+send("/xgr/g/7/m/gain", [("f", 20.0)])
+got, _o = drain(0.3)
+check("voie absente (EXP sans préampli) : message, rien envoyé", got.get(P.NOTIFY) == ["This strip just changed: try again"]
+      and len(gcalls) == 2)
 
 # actions : fonction fournie par Gain Recall, erreur renvoyée à la tablette
 calls = []

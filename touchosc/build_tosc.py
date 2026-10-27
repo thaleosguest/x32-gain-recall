@@ -4,12 +4,14 @@ Joseph ; TouchOSC met à l'échelle sur un autre écran).
     py -m touchosc.build_tosc [sortie.tosc]      (défaut : dist/touchosc/XM32_Gain_Recall_LV1.tosc)
 
 Phase 0 (27/10/2026) : présence. Phase 1 : barre d'état, SYNC, messages. Phase 2a : page GAINS, 16 tranches calquées
-sur la couche LV1 (lecture seule) ; le panneau de connexion ne s'affiche que tant que Gain Recall ne répond pas.
+sur la couche LV1 ; le panneau de connexion ne s'affiche que tant que Gain Recall ne répond pas. Phase 2b : banques
+1-16 … 65-80 + FOLLOW LV1 (vue par tablette), potards de gain relatifs (knob.lua), 48V à confirmer (phantom.lua).
 """
 import os
 import sys
 
 from . import protocol as P
+from . import views
 from .tosc import Color, Node, write
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -20,7 +22,8 @@ W, H = 2000, 1200
 # Couleurs relevées sur la LV1 (CLAUDE.md, « Style LV1 »)
 BG, PANEL, TEXT, MUTED, LINE = Color(71, 71, 71), Color(17, 17, 17), Color(231, 231, 231), Color(160, 160, 160), \
     Color(120, 120, 120)
-ORANGE, DARK = Color(255, 153, 38), Color(43, 43, 43)
+ORANGE, DARK, CLEAR = Color(255, 153, 38), Color(43, 43, 43), Color(0, 0, 0, 0)
+BANKS = ["1-16", "17-32", "33-48", "49-64", "65-80"]
 
 # Page GAINS : 16 tranches de STRIP_W, au pas STRIP_PITCH, à partir de STRIP_X0
 STRIP_X0, STRIP_PITCH, STRIP_W, STRIP_Y = 40, 120, 112, 180
@@ -51,19 +54,24 @@ def box(name, frame, color, **props):
                                          **props))
 
 
-def button(name, frame, text, osc):
-    """Bouton au style LV1 (fond 17, liseré 160, texte 231) qui envoie `osc` à l'appui. Libellé = LABEL posé dessus,
-    non interactif (le toucher passe au bouton)."""
+def button(name, frame, text, osc, arg=None, size=30):
+    """Bouton au style LV1 (fond 17, liseré 160, texte 231) qui envoie `osc` (avec `arg` entier) à l'appui. Libellé =
+    LABEL posé dessus, non interactif (le toucher passe au bouton)."""
     x, y, w, h = frame
     script = ("function onValueChanged(key)\n"
-              "  if key == 'x' and self.values.x == 1 then sendOSC('%s') end\n"
-              "end\n" % osc)
+              "  if key == 'x' and self.values.x == 1 then sendOSC('%s'%s) end\n"
+              "end\n" % (osc, "" if arg is None else ", %d" % arg))
     return [Node("BUTTON", name, frame, {"color": MUTED, "background": False, "outline": True}, script=script),
-            label(name + "_label", (x, y, w, h), text, 30)]
+            label(name + "_label", (x, y, w, h), text, size)]
+
+
+def overlay(name, frame, script):
+    """Bouton TRANSPARENT posé sur une case dessinée (48V) : reçoit le toucher, la case garde son apparence."""
+    return Node("BUTTON", name, frame, {"color": CLEAR, "background": False, "outline": False}, script=script)
 
 
 def strip(k):
-    """Tranche k (1..16) : bandeau couleur, nom LV1, source X32, puis les voies (potard, dB, 48V). Lecture seule en 2a."""
+    """Tranche k (1..16) : bandeau couleur, nom LV1, source X32, puis les voies (potard relatif, dB, 48V à confirmer)."""
     x = STRIP_X0 + STRIP_PITCH * (k - 1)
     g = "g%d_" % k
     out = [box(g + "band", (x, STRIP_Y, STRIP_W, 14), DARK),
@@ -71,11 +79,16 @@ def strip(k):
            label(g + "src", (x, STRIP_Y + 80, STRIP_W, 40), "", 15, MUTED)]
     for u, (top, knob, db_size, ph_w, ph_h, ph_size, side) in UNITS.items():
         ph = (x + (STRIP_W - ph_w) // 2, top + knob + db_size + 34, ph_w, ph_h)
+        path = "/xgr/g/%d/%s/" % (k, u)
         out += [Node("RADIAL", g + u + "_knob", (x + (STRIP_W - knob) // 2, top, knob, knob),
-                     {"color": MUTED, "background": True, "outline": False, "interactive": False}),
+                     {"color": MUTED, "background": True, "outline": False, "interactive": True,
+                      "response": 1},                     # 1 = relatif (Response.RELATIVE, reposé en Lua)
+                     script=lua("knob.lua", PATH=path + "gain", GMIN=views.GAIN_MIN,
+                                GSPAN=views.GAIN_MAX - views.GAIN_MIN)),
                 label(g + u + "_db", (x, top + knob + 6, STRIP_W, db_size + 20), "-", db_size),
                 box(g + u + "_48", ph, DARK),
-                label(g + u + "_48l", ph, "48V", ph_size, MUTED)]
+                label(g + u + "_48l", ph, "48V", ph_size, MUTED),
+                overlay(g + u + "_48b", ph, lua("phantom.lua", PATH=path + "48v", LABEL=g + u + "_48l"))]
         if side:                                # repère de la voie stéréo, en haut à gauche du potard
             out.append(label(g + u + "_side", (x, top - 4, 24, 28), side, 18, MUTED))
     return out
@@ -86,14 +99,17 @@ def build():
                 script=lua("root.lua", PROTO=P.PROTO, PORT_IN=P.PORT_IN, PORT_OUT=P.PORT_OUT, STRIPS=16))
     root.add(
         box("header", (0, 0, W, 110), PANEL),
-        label("title", (40, 20, 600, 70), "X/M32 GAIN RECALL", 40),
-        label("g_title", (700, 20, 600, 70), "", 40, Color(56, 201, 255)),
+        label("title", (40, 20, 520, 70), "X/M32 GAIN RECALL", 36),
+        *button("follow", (1250, 25, 230, 60), "FOLLOW LV1", "/xgr/view/follow", size=26),
         *button("sync", (1640, 25, 200, 60), "SYNC", P.SYNC),
         box("led", (1890, 30, 50, 50), Color(90, 90, 90)),
-        label("console", (40, 116, 700, 44), "-", 22, MUTED),
-        label("lv1", (760, 116, 860, 44), "-", 22, MUTED),
-        label("tablets", (1640, 116, 320, 44), "-", 22, MUTED),
+        label("console", (40, 116, 560, 44), "-", 22, MUTED),
+        label("g_title", (620, 116, 520, 44), "", 26, Color(56, 201, 255)),
+        label("lv1", (1160, 116, 600, 44), "-", 18, MUTED),
+        label("tablets", (1780, 116, 180, 44), "-", 18, MUTED),
     )
+    for n, text in enumerate(BANKS):           # banques : vue de CETTE tablette (la LV1 ne bouge pas)
+        root.add(*button("bank%d" % n, (580 + 130 * n, 25, 120, 60), text, "/xgr/view/bank", arg=n, size=26))
     for k in range(1, 17):
         root.add(*strip(k))
     root.add(                                   # panneau de connexion PAR-DESSUS les tranches (caché une fois connecté)

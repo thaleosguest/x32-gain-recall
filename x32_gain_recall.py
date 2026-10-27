@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a6"
+APP_VERSION = "3.2.0-a7"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -3618,6 +3618,27 @@ def app_data_dir():
     return os.getcwd()
 
 
+def touchosc_gain(idx, db):
+    """Geste de gain d'une tablette (pont TouchOSC, 3.2) : meme chemin que /api/gain. Rend un message d'erreur ou None."""
+    client, i = console_for(idx)
+    if client is None or not client.snapshot()["connected"]:
+        return "Console not connected"
+    return None if client.set_gain(i, float(db)) is not None else "Gain not sent"
+
+
+def touchosc_phantom(idx):
+    """48V d'une tablette (deja confirme sur la tablette) : bascule d'apres l'etat connu de la console, comme /api/phantom."""
+    client, i = console_for(idx)
+    if client is None or not client.snapshot()["connected"]:
+        return "Console not connected"
+    with client.lock:
+        on = client.phantom[i]
+    if on is None:                      # etat pas encore lu : « basculer » l'allumerait a l'aveugle
+        return "48V state not read yet"
+    client.set_phantom(i, not on)
+    return None
+
+
 def touchosc_decide(ip, allow):
     """Reponse a « Autoriser la tablette ? » (float) : oui = retenue dans les reglages (touchosc_allow), non = ignoree
     jusqu'au prochain lancement (rien d'enregistre)."""
@@ -4013,7 +4034,8 @@ def main():
         # 27/10 (Joseph) : reseau par defaut, seulement les tablettes autorisees (retenues dans les reglages)
         allow = list(st.get("touchosc_allow") or []) + [x.strip() for x in a.touchosc_allow.split(",") if x.strip()]
         TOUCHOSC = touchosc.bridge.start(APP_VERSION, merged_snapshot, port=a.touchosc_port,
-                                         lan=not (a.touchosc_local or a.local_only), allow=allow)
+                                         lan=not (a.touchosc_local or a.local_only), allow=allow,
+                                         actions={"gain": touchosc_gain, "phantom": touchosc_phantom})
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

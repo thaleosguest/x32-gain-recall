@@ -14,6 +14,7 @@ import time
 
 from lv1.osc_sniffer import decode_message, encode_message
 from . import protocol as P
+from . import views
 
 
 class Bridge(threading.Thread):
@@ -29,7 +30,9 @@ class Bridge(threading.Thread):
         self.sock.settimeout(0.05)
         self.port = self.sock.getsockname()[1]
         self.lock = threading.Lock()
-        self.tablets = {}        # ip -> {"name", "proto", "seen", "sent": {adresse: arguments déjà envoyés}}
+        # ip -> {"name", "proto", "seen", "sent": {adresse: arguments déjà envoyés}, "view": None (suit la LV1) ou
+        # banque 0..4, "page": dernière page GAINS envoyée (pour traduire ses gestes en préamplis)}
+        self.tablets = {}
         self.pending = {}        # ip -> {"name", "seen"} : tablettes inconnues qui attendent une réponse
         self.denied = set()      # refusées pendant ce lancement
         self.own = local_addresses()
@@ -48,16 +51,22 @@ class Bridge(threading.Thread):
     def publish(self, force_ip=None):
         """Envoie à chaque tablette les messages d'état qui ont changé pour elle (force_ip : tout, à celle-là)."""
         with self.lock:
-            ips = list(self.tablets)
-        if not ips:
+            views_of = {ip: t.get("view") for ip, t in self.tablets.items()}
+        if not views_of:
             return 0
-        msgs = P.state_messages(self.read_state(), tablets=len(ips))
+        state = self.read_state()
+        built = {}                           # vue -> (page, messages) : calculés une fois par vue
+        for v in set(views_of.values()):
+            page = views.gain_page(state, bank=v)
+            built[v] = (page, P.state_messages(state, tablets=len(views_of), page=page))
         n = 0
-        for ip in ips:
+        for ip, v in views_of.items():
+            page, msgs = built[v]
             with self.lock:
                 t = self.tablets.get(ip)
                 if t is None:
                     continue
+                t["page"] = page
                 if ip == force_ip:
                     t["sent"] = {}
                 todo = [(a, args) for a, args in sorted(msgs.items()) if t["sent"].get(a) != args]
@@ -126,11 +135,26 @@ class Bridge(threading.Thread):
         if act[0] == "sync":
             self.publish(force_ip=ip)
             return
+        if act[0] in ("bank", "follow"):         # vue de CETTE tablette : la couche de la LV1 ne bouge pas
+            with self.lock:
+                if ip in self.tablets:            # (oubliée entre-temps : rien)
+                    self.tablets[ip]["view"] = act[1] if act[0] == "bank" else None
+            self._published = 0.0
+            return
+        params = act[1:]
+        if act[0] in ("gain", "phantom"):         # voie de la page que CETTE tablette affiche -> préampli
+            with self.lock:
+                page = (self.tablets.get(ip) or {}).get("page")
+            idx = views.unit_idx(page, act[1], act[2])
+            if idx is None:
+                self.notify(ip, "This strip just changed: try again")
+                return
+            params = (idx,) + tuple(act[3:])
         fn = self.actions.get(act[0])
         if fn is None:
             return
         try:
-            err = fn(*act[1:])
+            err = fn(*params)
         except Exception as e:
             err = "Gain Recall error: %s" % e
             self.log("TouchOSC : action %s en erreur (%r)" % (act[0], e))

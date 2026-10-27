@@ -635,6 +635,17 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Retouche demandée (a6) : stéréo EMPILÉE (« l » au-dessus de « r », pleine largeur, repères L / R) au lieu de deux
   petits potards côte à côte. Moitié basse de l'écran gardée libre (contrôle LV1, phase 5). Phase 2b prévue : banques
   1-16 … 65-80 en boutons directs + FOLLOW LV1 (défaut), vue PAR TABLETTE (la couche de la LV1 ne bouge pas).
+- **Phase 2b faite (3.2.0-a7, 27/10) : contrôle depuis la tablette.** Vue PAR TABLETTE (`tablets[ip]["view"]` : None =
+  suit Mixer 1, ou banque 0..4 ; `views.gain_page(état, bank=…)`, `bank_count` d'après `lv1_count`, banques au-delà
+  grisées) ; `/xgr/view/bank i`, `/xgr/view/follow` ; messages `/xgr/view/{follow,bank,banks}`. Gestes : `/xgr/g/k/u/gain f`
+  (dB voulu, borné -12..60) et `/xgr/g/k/u/48v` (bascule) traduits en préampli d'après la PAGE de CETTE tablette
+  (`views.unit_idx`, voie disparue -> « This strip just changed ») -> `touchosc_gain` / `touchosc_phantom` (x32_gain_recall :
+  `console_for` + `set_gain` / `set_phantom`, comme l'API ; 48V d'état INCONNU (None) refusé : basculer l'allumerait).
+  Template : `knob.lua` (RADIAL `response` 1 + `Response.RELATIVE` en Lua ; envoi par pas de 0,5 dB pendant le toucher ;
+  saut > 3 dB d'un coup = geste bloqué), retour de la console ignoré sous le doigt puis potard recalé (200 ms) ;
+  `phantom.lua` (BUTTON transparent sur la case : « OK? » 3 s puis 2e appui) ; banques + FOLLOW LV1 dans l'en-tête, titre
+  de couche dans la barre d'état ; `paintBanks` (bank / banks arrivent dans un ordre quelconque). Valeurs d'énumération
+  déduites des chaînes de TouchOSC.exe : listées À L'ENVERS de leur valeur (MOMENTARY=0 … ; ABSOLUTE=0, RELATIVE=1).
 
 ## Reste à faire / idées
 

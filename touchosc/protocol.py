@@ -12,11 +12,17 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
   tablette -> Gain Recall
     /xgr/hello      i proto, s nom de l'appareil      toutes les secondes (présence) ; 1er hello -> tout l'état
     /xgr/sync                                          renvoyer tout l'état
+    /xgr/view/bank  i banque (0 = Ch 1-16 … 4 = 65-80)  vue fixe de CETTE tablette (la LV1 ne bouge pas)
+    /xgr/view/follow                                   la tablette suit de nouveau la couche de la LV1
+    /xgr/g/k/u/gain f dB voulu                         voie u de la tranche k de la page de CETTE tablette
+    /xgr/g/k/u/48v                                     bascule du 48V (déjà confirmée sur la tablette)
   Gain Recall -> tablette
     /xgr/welcome    i proto, s version, s console, s ok|old_template|new_template|pending
                     pending : tablette pas encore autorisée (rien d'autre ne lui est envoyé)
     état (envoyé quand il change, tout à l'arrivée et sur /xgr/sync) : voir state_messages()
       barre d'état : /xgr/console s, /xgr/console/ok i, /xgr/lv1 s, /xgr/tablets i
+      vue (phase 2b, PAR TABLETTE) : /xgr/view/follow i (1 = suit la LV1), /xgr/view/bank i (0..4, -1 = couche
+        sans banque), /xgr/view/banks i (banques proposées)
       page GAINS (phase 2a, calque du float sur la couche LV1 de Mixer 1) : /xgr/g/title s ; tranche k = 1..16 :
         /xgr/g/k/name s, /xgr/g/k/color s (« RRGGBB » ou ""), /xgr/g/k/src s, /xgr/g/k/units i (0, 1 = « m », 2 =
         « l » + « r ») ; voie u : /xgr/g/k/u/gain f (0..1 de -12..+60 dB), /xgr/g/k/u/db s, /xgr/g/k/u/48v i
@@ -66,9 +72,9 @@ def welcome(proto, version, state, pending=False):
                      ("s", "pending" if pending else template_state(proto))]
 
 
-def state_messages(state, tablets=1):
-    """État de Gain Recall (merged_snapshot) -> {adresse: (arguments OSC…)} à tenir à jour sur la tablette. Le pont
-    n'envoie que les adresses dont les arguments ont changé. Phase 1 : barre d'état (console, LV1, tablettes)."""
+def state_messages(state, tablets=1, page=None):
+    """État de Gain Recall (merged_snapshot) -> {adresse: (arguments OSC…)} à tenir à jour sur une tablette. Le pont
+    n'envoie que les adresses dont les arguments ont changé. page : views.gain_page de CETTE tablette (sa vue)."""
     state = state or {}
     consoles = state.get("consoles") or []
     up = sum(1 for c in consoles if c.get("connected"))
@@ -87,13 +93,16 @@ def state_messages(state, tablets=1):
         "/xgr/lv1": (("s", lv1),),
         "/xgr/tablets": (("i", int(tablets)),),
     }
-    out.update(gain_messages(views.gain_page(state)))
+    out.update(gain_messages(page if page is not None else views.gain_page(state)))
     return out
 
 
 def gain_messages(page):
     """Page GAINS (views.gain_page) -> messages. Les voies absentes ne sont pas envoyées (cachées sur la tablette)."""
-    out = {"/xgr/g/title": (("s", page["title"]),)}
+    out = {"/xgr/g/title": (("s", page["title"]),),
+           "/xgr/view/follow": (("i", 1 if page.get("follow", True) else 0),),
+           "/xgr/view/bank": (("i", -1 if page.get("bank") is None else int(page["bank"])),),
+           "/xgr/view/banks": (("i", int(page.get("banks", 4))),)}
     for k, st in enumerate(page["strips"], 1):
         base = "/xgr/g/%d" % k
         out[base + "/name"] = (("s", st["label"]),)
@@ -108,9 +117,25 @@ def gain_messages(page):
 
 
 def parse_action(address, args):
-    """Message de la tablette -> action de la liste fermée : (nom, paramètres…), ou None (ignoré). Phase 1 : sync."""
+    """Message de la tablette -> action de la liste fermée : (nom, paramètres…), ou None (ignoré).
+    ("sync",) ; ("bank", n) ; ("follow",) ; ("gain", k, u, dB) ; ("phantom", k, u) — k = tranche 1..16, u = m / l / r."""
+    vals = arg_values(args)
+    num = vals[0] if vals and isinstance(vals[0], (int, float)) and not isinstance(vals[0], bool) else None
     if address == SYNC:
         return ("sync",)
+    if address == "/xgr/view/follow":
+        return ("follow",)
+    if address == "/xgr/view/bank":
+        return ("bank", int(num)) if num is not None and 0 <= num <= 4 else None
+    parts = address.split("/")                       # ["", "xgr", "g", k, u, champ]
+    if len(parts) == 6 and parts[1:3] == ["xgr", "g"] and parts[3].isdigit() and parts[4] in ("m", "l", "r"):
+        k, u = int(parts[3]), parts[4]
+        if not 1 <= k <= views.STRIPS:
+            return None
+        if parts[5] == "gain" and num is not None:
+            return ("gain", k, u, max(views.GAIN_MIN, min(views.GAIN_MAX, float(num))))
+        if parts[5] == "48v":
+            return ("phantom", k, u)
     return None
 
 

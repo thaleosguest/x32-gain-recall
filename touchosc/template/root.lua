@@ -24,6 +24,18 @@ local shown = nil
 local notifyAt = nil
 local c = {}                                          -- contrôles par nom
 local UNITS = { 'm', 'l', 'r' }
+local BANKS = 5
+local srv = {}                                        -- potard -> dernière valeur de la console (0..1)
+local lastResync = 0
+local curBank, nBanks = -1, BANKS                     -- banque affichée (-1 : couche sans banque), banques proposées
+
+function paintBanks()
+  -- (bank et banks arrivent dans n'importe quel ordre : on repeint les deux à chaque fois)
+  for i = 0, BANKS - 1 do
+    c['bank' .. i].interactive = i < nBanks
+    c['bank' .. i .. '_label'].textColor = (i >= nBanks) and GREY or ((i == curBank) and BLUE or TEXT)
+  end
+end
 
 -- textes de la barre d'état (adresse -> LABEL, préfixe)
 local TEXTS = { ['/xgr/console'] = { 'console', 'Console: ' }, ['/xgr/lv1'] = { 'lv1', '' } }
@@ -35,8 +47,12 @@ end
 
 function init()
   for _, name in ipairs({ 'led', 'status', 'detail', 'console', 'lv1', 'tablets', 'notify', 'sync', 'panel',
-                          'panel_line', 'g_title' }) do
+                          'panel_line', 'g_title', 'follow_label' }) do
     c[name] = self:findByName(name, true)
+  end
+  for n = 0, BANKS - 1 do
+    c['bank' .. n] = self:findByName('bank' .. n, true)
+    c['bank' .. n .. '_label'] = self:findByName('bank' .. n .. '_label', true)
   end
   for k = 1, STRIPS do
     for _, part in ipairs({ 'band', 'name', 'src' }) do
@@ -102,6 +118,16 @@ function update()
          'Connections > OSC (UDP): Host = LV1 PC address (127.0.0.1 on that PC), Send Port __PORT_IN__, Receive Port __PORT_OUT__',
          GREY)
   end
+  if now - lastResync > 200 then
+    -- potard lâché (ou geste bloqué par son garde-fou) : remis sur la valeur de la console
+    lastResync = now
+    for name, v in pairs(srv) do
+      local knob = c[name]
+      if not knob.values.touch and math.abs(knob.values.x - v) > 0.0005 then
+        knob.values.x = v
+      end
+    end
+  end
   if notifyAt ~= nil and now - notifyAt > NOTIFY_MS then
     c.notify.values.text = ''
     notifyAt = nil
@@ -128,7 +154,10 @@ end
 local function onUnit(k, u, field, v)
   local g = 'g' .. k .. '_' .. u .. '_'
   if field == 'gain' then
-    c[g .. 'knob'].values.x = v
+    srv[g .. 'knob'] = v
+    if not c[g .. 'knob'].values.touch then     -- sous le doigt : le retour de la console ne se bat pas avec le geste
+      c[g .. 'knob'].values.x = v
+    end
   elseif field == 'db' then
     c[g .. 'db'].values.text = v
   elseif field == '48v' then
@@ -162,6 +191,21 @@ function onReceiveOSC(message, connections)
   k, field = path:match('^/xgr/g/(%d+)/(%a+)$')
   if k then
     onStrip(tonumber(k), field, args[1].value)
+    return true
+  end
+  if path == '/xgr/view/follow' then
+    c.follow_label.textColor = (args[1].value == 1) and BLUE or TEXT
+    return true
+  end
+  if path == '/xgr/view/bank' then
+    curBank = math.floor(args[1].value)
+    paintBanks()
+    return true
+  end
+  if path == '/xgr/view/banks' then
+    -- banques au-delà de la configuration de la LV1 (64 canaux : pas de 65-80) : grisées, sans effet
+    nBanks = math.floor(args[1].value)
+    paintBanks()
     return true
   end
   if path == '/xgr/g/title' then
