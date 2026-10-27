@@ -620,6 +620,7 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `/api/touchosc/allow` (PC seulement) -> `touchosc_decide` : oui = `settings["touchosc_allow"]` (retenu), non =
   `denied` jusqu'au prochain lancement (rien d'enregistré ; retire l'adresse si elle était retenue). `--touchosc-allow`
   ajoute des adresses d'office. Règle de pare-feu UDP 9300 : par l'installeur Total Control (UAC), phase 6.
+  **Validé chez Joseph le 27/10** (R10 en attente -> question du float -> Allow -> Connected).
 
 ## Reste à faire / idées
 
