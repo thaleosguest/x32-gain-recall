@@ -163,6 +163,10 @@ function init()
   end
   c.led.shape = Shape.CIRCLE
   c.sync.outlineStyle = OutlineStyle.FULL
+  self:findByName('follow', true).outlineStyle = OutlineStyle.FULL   -- (par défaut : coins, vus comme des crochets)
+  for n = 0, BANKS - 1 do
+    c['bank' .. n].outlineStyle = OutlineStyle.FULL
+  end
   for k = 1, STRIPS do
     setUnits(k, 0)
   end

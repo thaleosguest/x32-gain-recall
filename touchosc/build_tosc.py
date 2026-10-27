@@ -114,7 +114,7 @@ def strip(k):
            *lv1_key(g + "a", (x + 4, AB[0], w // 2 - 6, AB[1]), "A", 16),
            *lv1_key(g + "b", (x + w // 2 + 2, AB[0], w // 2 - 6, AB[1]), "B", 16),
            box(g + "pre", (x, PRE[0], w, PRE[1]), PANEL, outline=True),
-           label(g + "src", (x, PRE[0] + 4, w, 22), "", 13, MUTED)]
+           label(g + "src", (x, PRE[0] + 4, w, 22), "", 12, MUTED)]
     py = PRE[0]
     for u, (dx, uw, knob, db_size, ph_w, ph_size) in UNITS.items():
         ux = x + dx

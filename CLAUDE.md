@@ -684,7 +684,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   meter,mute,solo,pan,trim,trimv,phase,ab}`, `/xgr/lr/{fader,fval,peak,meter,mute}`, `/xgr/live` (fval « -144.0 » comme la
   LV1, crête au dB près sous -60 pour ne pas inonder). Lua : `setMix` / `setLive` (MUTE rouge, CUE / Ø / entrée bleus,
   tout gris sans LV1) ; vumètre = FADER lecture seule vert. Vérifié sur la vraie LV1 (P170 CUE, LR -0.2, faders -144).
-  `--hidden-import lv1.model`. Test `tests/test_lv1_model.py`. **5b à faire** : commandes (fader / pan / Trim au glisser,
+  `--hidden-import lv1.model`. Test `tests/test_lv1_model.py`. **Vu par Joseph le 27/10 : « ça suit »** (capture Ch 49-64).
+  Retouches a11 : TouchOSC n'affiche pas le retour à la ligne -> source stéréo « 1- EX 31/32 » (`views.input_names`) ;
+  cadre préampli « L15/16 = EXP 31/32 » (sans espace après la lettre, comme le float ; texte 12) ; banques / FOLLOW en
+  contour plein (`OutlineStyle.FULL` : par défaut des coins, vus comme des crochets).
+  **5b à faire** : commandes (fader / pan / Trim au glisser,
   MUTE / CUE / Ø à l'appui), LR jamais.
 
 ## Reste à faire / idées

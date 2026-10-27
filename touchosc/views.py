@@ -112,6 +112,15 @@ def input_name(e, slots):
     return ("%d- EX %d" % (slots[k], voie)) if k in slots else "EX %d" % voie
 
 
+def input_names(exps, slots):
+    """Bouton de source d'une tranche : « 1- EX 1 » ; stéréo de la même carte en une ligne, « 1- EX 31/32 » (TouchOSC
+    n'affiche pas le retour à la ligne de la LV1, essai de Joseph du 27/10 : « - EX 31 1- EX 3 »)."""
+    names = [input_name(e, slots) for e in exps]
+    if len(names) == 2 and names[0].rsplit(" ", 1)[0] == names[1].rsplit(" ", 1)[0]:
+        return "%s/%s" % (names[0], names[1].rsplit(" ", 1)[1])
+    return " + ".join(names)
+
+
 def _info(channels, ch):
     return (channels or {}).get(str(ch)) or (channels or {}).get(ch) or {}
 
@@ -156,18 +165,20 @@ def gain_page(state, surface="mixer1", bank=None):
         units = [{"idx": i, "db": gains[i] if i < len(gains) else None,
                   "phantom": bool(phantom[i]) if i < len(phantom) and phantom[i] is not None else False}
                  for i in idxs]
+        # comme le float sur la LV1 : « A1 = EXP 1 », « A7/8 = EXP 7/8 » (sans espace après la lettre : tient dans la case)
+        tags = [strip_tag(i).replace(" ", "") for i in idxs]
         if len(idxs) == 2 and strip_tag(idxs[0]).split()[0] == strip_tag(idxs[1]).split()[0]:
-            src = "%s/%s" % (strip_tag(idxs[0]), strip_tag(idxs[1]).split()[1])
+            src = "%s/%s" % (tags[0], strip_tag(idxs[1]).split()[1])
         else:
-            src = " + ".join(strip_tag(i) for i in idxs)
+            src = " + ".join(tags)
         mapped = [e for e in exps if e in exp_to_idx]
-        if mapped:                                   # comme le float : « A 7/8 = EXP 7/8 »
+        if mapped:
             src += " = EXP " + "/".join(exp_txt(e) for e in mapped)
         color = (info.get("color") or "").lstrip("#").upper()
         label = info.get("label") or ("In %d" % ch if ch > 0 else "")
         strips.append({"ch": ch, "label": label, "name": info.get("name") or label,
                        "color": color if len(color) == 6 else "", "units": units, "src": src or "no X32 preamp",
-                       "input": "\n".join(input_name(e, slots) for e in exps),
+                       "input": input_names(exps, slots),
                        "mix": mix_info(state.get("lv1_mixer"), (0, ch - 1), info) if ch > 0 else None})
     shown = lay.get("bank") if lay.get("channels") else None
     return {"title": layer_title(lay), "follow": bank is None, "bank": shown, "banks": banks, "strips": strips,

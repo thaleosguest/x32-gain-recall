@@ -134,11 +134,13 @@ page = views.gain_page(gstate)
 st1, st2, st3, st7 = page["strips"][0], page["strips"][1], page["strips"][2], page["strips"][6]
 check("titre de couche", page["title"] == "Ch 1-16" and len(page["strips"]) == 16)
 check("stéréo : deux voies, A 1/2, EXP 1/2, couleur", [u["idx"] for u in st1["units"]] == [32, 33]
-      and st1["src"] == "A 1/2 = EXP 1/2" and st1["color"] == "FF4F4F" and st1["label"] == "P170 ST"
-      and st1["input"] == "1- EX 1\n1- EX 2")
+      and st1["src"] == "A1/2 = EXP 1/2" and st1["color"] == "FF4F4F" and st1["label"] == "P170 ST"
+      and st1["input"] == "1- EX 1/2")
 check("mono : une voie, gain et 48V", [(u["idx"], u["db"], u["phantom"]) for u in st2["units"]] == [(0, -4.0, True)]
-      and st2["src"] == "L 1 = EXP 17" and st2["name"] == "Kick" and st2["input"] == "1- EX 17")
-check("console 2 : 2·L 3, EXP 2·3, carte inconnue -> EX 3", st3["src"] == "2·L 3 = EXP 2·3" and st3["input"] == "EX 3")
+      and st2["src"] == "L1 = EXP 17" and st2["name"] == "Kick" and st2["input"] == "1- EX 17")
+check("console 2 : 2·L3, EXP 2·3, carte inconnue -> EX 3", st3["src"] == "2·L3 = EXP 2·3" and st3["input"] == "EX 3")
+check("source : stéréo d'une même carte en une ligne, sinon « + »", views.input_names([31, 32], {0: 1}) == "1- EX 31/32"
+      and views.input_names([5, 1003], {0: 1}) == "1- EX 5 + EX 3" and views.input_names([], {}) == "")
 check("EXP sans préampli : pas de voie", st7["units"] == [] and st7["src"] == "no X32 preamp" and st7["label"] == "In 7")
 gl = {"mixer1": {"mode": 1, "page": 2, "bank": None, "channels": [5, None] + [None] * 14}}
 cust = views.gain_page({"lv1_layers": gl})
