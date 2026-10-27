@@ -29,7 +29,8 @@ BG, PANEL, TEXT, MUTED, LINE = Color(71, 71, 71), Color(17, 17, 17), Color(231, 
 ORANGE, DARK, CLEAR = Color(255, 153, 38), Color(43, 43, 43), Color(0, 0, 0, 0)
 INK = Color(17, 17, 17)                   # texte posé sur une couleur de canal (bandeaux de la LV1)
 BLUE, TEAL, LR_BLUE = Color(56, 201, 255), Color(15, 162, 171), Color(68, 138, 255)
-OFF = Color(90, 90, 90)                   # commandes de la LV1 pas encore branchées (phase 5)
+OFF = Color(90, 90, 90)                   # commandes de la LV1 : gris tant que la LV1 n'est pas connectée
+METER = Color(60, 200, 90)                # vumètres
 BANKS = ["1-16", "17-32", "33-48", "49-64", "65-80"]
 DRAG_STEP_PX = 5         # glisser vertical sur un potard : 5 px par pas de 0,5 dB (~10 px par dB ; 72 dB = 720 px)
 
@@ -95,7 +96,8 @@ def fader_block(g, x):
     y, h = FADER
     out = [Node("FADER", g + "fader", (x + 14, y, 34, h), {"color": OFF, "background": True, "outline": False,
                                                             "interactive": False}),
-           box(g + "meter", (x + 52, y, 6, h), PANEL)]
+           Node("FADER", g + "meter", (x + 52, y, 8, h), {"color": METER, "background": True, "outline": False,
+                                                           "interactive": False})]       # vumètre : barre, lecture seule
     for i, (t, f) in enumerate(SCALE):
         out.append(label("%sscale%d" % (g, i), (x + 60, y + int(f * (h - 20)), 50, 20), t, 13, OFF))
     return out

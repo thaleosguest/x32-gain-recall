@@ -92,6 +92,9 @@ check("page Mixer : source, A / B, préampli, Ø, Trim, nom, pan, MUTE, fader, n
       [fr("g3_" + n)["y"] for n in ("srcbox", "a", "pre", "phase", "trim_t", "band", "pan", "mute", "fval", "fader",
                                      "numbar", "cue")] == sorted(fr("g3_" + n)["y"] for n in ("srcbox", "a", "pre",
                                      "phase", "trim_t", "band", "pan", "mute", "fval", "fader", "numbar", "cue")))
+check("vumètre : barre FADER lecture seule ; script racine : setMix / setLive", names["g3_meter"].get("type") == "FADER"
+      and tosc.props_of(names["g3_meter"])["interactive"] == "0" and "function setMix" in script
+      and "local function setLive" in script and "'^/xgr/lr/(%a+)$'" in script)
 check("commandes de la LV1 (phase 5) sans effet : fader, pan, Trim non interactifs", all(
       tosc.props_of(names[n])["interactive"] == "0" for n in ("g3_fader", "g3_pan", "g3_trim", "g3_mute", "lr_fader")))
 check("tranche LR à droite des 16 tranches", fr("lr_band")["x"] > fr("g16_band")["x"] and "lr_num" in names)
@@ -140,8 +143,30 @@ check("EXP sans préampli : pas de voie", st7["units"] == [] and st7["src"] == "
 gl = {"mixer1": {"mode": 1, "page": 2, "bank": None, "channels": [5, None] + [None] * 14}}
 cust = views.gain_page({"lv1_layers": gl})
 check("couche Custom, tranche sans canal vide", cust["title"] == "Custom 3" and cust["strips"][1] == {
-      "ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": ""})
+      "ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": "", "mix": None})
 check("pas de couche d'entrées", views.gain_page({})["title"] == "No input channels on this layer")
+# phase 5a : commandes de la LV1 en lecture seule
+mixer = {(0, 0): {"fader": -4.5, "mute": True, "solo": False, "pan": None, "trim": {0: 3.5}, "phase": {0: False, 1: True},
+                  "meter": -12.3}, (3, 0): {"fader": -0.2, "mute": False, "solo": None, "pan": None, "trim": {},
+                  "phase": {}, "meter": -75.4}}
+lp = views.gain_page(dict(gstate, lv1_mixer=mixer, lv1_live=True,
+                          lv1_channels=dict(gstate["lv1_channels"], **{"1": {"label": "P170 ST", "color": "#ff4f4f",
+                                                                             "pan": 0.25, "input": "B"}})))
+mx = lp["strips"][0]["mix"]
+check("mixer : fader, mute, pan de la base (LV1 muette), trim, phase d'une voie, A / B, vumètre", mx == {
+      "fader": -4.5, "mute": True, "solo": False, "pan": 0.25, "trim": 3.5, "phase": True, "meter": -12.3, "input": "B"}
+      and lp["live"] is True and lp["strips"][1]["mix"] is None and lp["lr"]["fader"] == -0.2)
+check("courbe du fader LV1", views.fader_frac(10) == 1.0 and views.fader_frac(0) == 0.765 and views.fader_frac(-144) == 0.0
+      and views.fader_frac(None) == 0.0 and abs(views.fader_frac(-5) - 0.6475) < 1e-4)
+mm = P.gain_messages(lp)
+check("messages mixer : fader -144.0 comme la LV1, crête arrondie sous -60, pan 0..1, A / B", mm["/xgr/g/1/fval"] == (("s", "-4.5"),)
+      and mm["/xgr/g/1/mute"] == (("i", 1),) and mm["/xgr/g/1/pan"] == (("f", 0.625),) and mm["/xgr/g/1/ab"] == (("s", "B"),)
+      and mm["/xgr/g/1/trimv"] == (("s", "3.5"),) and mm["/xgr/g/1/phase"] == (("i", 1),) and mm["/xgr/live"] == (("i", 1),)
+      and mm["/xgr/lr/peak"] == (("s", "-75"),) and mm["/xgr/g/1/peak"] == (("s", "-12.3"),))
+check("LR en lecture seule : ni pan, ni Trim, ni CUE, ni A / B", sorted(a for a in mm if a.startswith("/xgr/lr/"))
+      == ["/xgr/lr/fader", "/xgr/lr/fval", "/xgr/lr/meter", "/xgr/lr/mute", "/xgr/lr/peak"])
+check("tranche sans info de la LV1 : tirets", mm["/xgr/g/2/fval"] == (("s", "-"),) and mm["/xgr/g/2/ab"] == (("s", ""),)
+      and P.mix_messages("/x", {"fader": -144.0})["/x/fval"] == (("s", "-144.0"),))
 check("dB et course", views.db_text(32.5) == "32.5" and views.db_text(None) == "-" and views.gain_frac(-12) == 0.0
       and views.gain_frac(60) == 1.0 and views.gain_frac(24) == 0.5)
 gm = P.gain_messages(page)

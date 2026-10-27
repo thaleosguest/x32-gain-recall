@@ -29,6 +29,47 @@ def exp_txt(e):
     return str(e) if e < 1000 else "%d·%d" % (e // 1000 + 1, e % 1000)
 
 
+# Course du fader de la LV1 (dB -> 0..1, haut = +10), relevée sur la capture de la page Mixer de Joseph (27/10) ; sert
+# aussi aux vumètres (même échelle à côté du fader). -144 = -inf.
+LV1_FADER = [(10.0, 1.0), (0.0, 0.765), (-10.0, 0.53), (-20.0, 0.415), (-30.0, 0.295), (-40.0, 0.18), (-60.0, 0.07),
+             (-144.0, 0.0)]
+LR_KEY = (3, 0)          # piste LR (groupe 3) : lecture seule sur la tablette (Joseph, 27/10, comme la X-Touch)
+
+
+def fader_frac(db):
+    if db is None or db <= LV1_FADER[-1][0]:
+        return 0.0
+    if db >= LV1_FADER[0][0]:
+        return 1.0
+    for (d1, p1), (d2, p2) in zip(LV1_FADER, LV1_FADER[1:]):
+        if d2 <= db <= d1:
+            return round(p2 + (p1 - p2) * (db - d2) / (d1 - d2), 4)
+    return 0.0
+
+
+def level_text(db, inf_below=-143.9):
+    """Valeur de fader / crête comme la LV1 : « -4.5 », « -Inf »."""
+    if db is None:
+        return "-"
+    return "-Inf" if db <= inf_below else "%.1f" % db
+
+
+def mix_info(mixer, key, chan_info=None):
+    """Piste (g, c) du mixer de la LV1 -> ce que la tranche affiche (phase 5a, lecture seule) ; None si la LV1 ne l'a
+    pas annoncée. Pan : celui annoncé, sinon celui de la base (chan_info, la LV1 ne l'envoie pas à la connexion)."""
+    t = (mixer or {}).get(key)
+    if t is None:
+        return None
+    pan = t.get("pan")
+    if pan is None:
+        pan = (chan_info or {}).get("pan")
+    meter = t.get("meter")
+    return {"fader": t.get("fader"), "mute": bool(t.get("mute")), "solo": bool(t.get("solo")),
+            "pan": 0.0 if pan is None else float(pan), "trim": (t.get("trim") or {}).get(0),
+            "phase": any((t.get("phase") or {}).values()), "meter": meter,
+            "input": (chan_info or {}).get("input") or "A"}
+
+
 def gain_frac(db):
     """dB -> 0..1 sur la course du préampli X32 (-12..+60), pour le potard."""
     if db is None:
@@ -106,7 +147,8 @@ def gain_page(state, surface="mixer1", bank=None):
     strips = []
     for ch in chans:
         if not ch:
-            strips.append({"ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": ""})
+            strips.append({"ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": "",
+                           "mix": None})
             continue
         info = _info(state.get("lv1_channels"), ch)
         exps = [int(e) for e in sources.get(ch, []) if e]
@@ -125,9 +167,11 @@ def gain_page(state, surface="mixer1", bank=None):
         label = info.get("label") or ("In %d" % ch if ch > 0 else "")
         strips.append({"ch": ch, "label": label, "name": info.get("name") or label,
                        "color": color if len(color) == 6 else "", "units": units, "src": src or "no X32 preamp",
-                       "input": "\n".join(input_name(e, slots) for e in exps)})
+                       "input": "\n".join(input_name(e, slots) for e in exps),
+                       "mix": mix_info(state.get("lv1_mixer"), (0, ch - 1), info) if ch > 0 else None})
     shown = lay.get("bank") if lay.get("channels") else None
-    return {"title": layer_title(lay), "follow": bank is None, "bank": shown, "banks": banks, "strips": strips}
+    return {"title": layer_title(lay), "follow": bank is None, "bank": shown, "banks": banks, "strips": strips,
+            "live": bool(state.get("lv1_live")), "lr": mix_info(state.get("lv1_mixer"), LR_KEY)}
 
 
 def unit_idx(page, k, u):

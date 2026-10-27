@@ -14,6 +14,7 @@ pour chacun le numéro dans la base et la couleur RVB que la LV1 envoie (via Com
 import re
 
 PARAM_COLOR = 592
+PARAM_BALANCE, BALANCE_SCALE = 436, 45.0   # pan d'une entrée (-45..+45) : relevé par XTouch-LV1 (lv1_db.input_pans)
 DEFAULT_COLOR_INDEX = 13
 PALETTE = (
     "#5E98A0", "#448AFF", "#689F38", "#1A8E66", "#92C3C7", "#5C7182", "#F5BB41", "#EE0074",   # 0-7
@@ -54,10 +55,14 @@ def read_channel_info(con):
             SELECT o.obj_index + 1, sc.name FROM snapshot_chainer sc JOIN object o ON o.id = sc.chainer_id
             WHERE o.obj_type = 0 AND sc.snapshot_id = -1
         """).fetchall())
-        colors = dict(con.execute("""
+        params = """
             SELECT o.obj_index + 1, p.param_value FROM snapshot_chainer_params p JOIN object o ON o.id = p.chainer_id
             WHERE o.obj_type = 0 AND p.snapshot_id = -1 AND p.param_id = ?
-        """, (PARAM_COLOR,)).fetchall())
+        """
+        colors = dict(con.execute(params, (PARAM_COLOR,)).fetchall())
+        pans = dict(con.execute(params, (PARAM_BALANCE,)).fetchall())
     except Exception:
         return {}
-    return {ch: {"name": (nm or "").strip(), "color": color_for(colors.get(ch))} for ch, nm in names.items()}
+    # pan : la LV1 ne l'annonce pas à la connexion (tablette TouchOSC, 3.2) ; pas de ligne = centre
+    return {ch: {"name": (nm or "").strip(), "color": color_for(colors.get(ch)),
+                 "pan": max(-1.0, min(1.0, float(pans.get(ch) or 0.0) / BALANCE_SCALE))} for ch, nm in names.items()}

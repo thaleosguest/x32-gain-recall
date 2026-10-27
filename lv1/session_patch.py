@@ -199,6 +199,8 @@ def read_session(db_path):
         widths = load_channel_widths(con)
         info = read_channel_info(con)
         selected = load_input_select(con)
+        for ch, i in info.items():                  # entrée A / B, affichée par la tablette TouchOSC (3.2)
+            i["input"] = selected.get(ch, "A")
         layer = read_layers(con)
         cur.execute("""
             SELECT id, dst_cluster_type, dst_cluster_type_index, dst_section_index, dst_channel_index,

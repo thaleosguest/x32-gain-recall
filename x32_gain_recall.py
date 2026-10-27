@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a9"
+APP_VERSION = "3.2.0-a10"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1744,6 +1744,8 @@ def scan_network(timeout=1.5, port=X32_PORT):
 
 FLOAT_QT = True   # 3.0.0 : float Qt (x32_qt_float.py, multi-touch) ; float tk de la 2.x en secours (--tk-float)
 TOUCHOSC = None   # pont des tablettes TouchOSC (touchosc/bridge.py, 3.2), None si desactive ou port pris
+MIXER = None      # lv1.model.LV1Mixer : etat du mixer de la LV1 pour les tablettes (phase 5), avec sa connexion
+MIXER_REMOTE = None
 FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
@@ -3618,6 +3620,25 @@ def app_data_dir():
     return os.getcwd()
 
 
+def touchosc_state():
+    """Etat donne au pont TouchOSC : merged_snapshot + mixer de la LV1 (lv1/model.py, phase 5)."""
+    s = merged_snapshot()
+    s["lv1_mixer"] = MIXER.snapshot() if MIXER else {}
+    s["lv1_live"] = bool(MIXER_REMOTE and MIXER_REMOTE.connected())
+    return s
+
+
+def start_mixer():
+    """Connexion OSC dediee a la LV1 (comme MyFOH ; elle accepte plusieurs telecommandes) qui tient lv1/model.py."""
+    global MIXER, MIXER_REMOTE
+    from lv1.model import LV1Mixer
+    from lv1.remote import LV1Remote
+    MIXER = LV1Mixer()
+    MIXER_REMOTE = LV1Remote(log=lambda m: print("Mixer " + m))
+    MIXER_REMOTE.listeners.append(MIXER.handle)
+    MIXER_REMOTE.start()
+
+
 def touchosc_gain(idx, db):
     """Geste de gain d'une tablette (pont TouchOSC, 3.2) : meme chemin que /api/gain. Rend un message d'erreur ou None."""
     client, i = console_for(idx)
@@ -4033,7 +4054,8 @@ def main():
         import touchosc.bridge
         # 27/10 (Joseph) : reseau par defaut, seulement les tablettes autorisees (retenues dans les reglages)
         allow = list(st.get("touchosc_allow") or []) + [x.strip() for x in a.touchosc_allow.split(",") if x.strip()]
-        TOUCHOSC = touchosc.bridge.start(APP_VERSION, merged_snapshot, port=a.touchosc_port,
+        start_mixer()
+        TOUCHOSC = touchosc.bridge.start(APP_VERSION, touchosc_state, port=a.touchosc_port,
                                          lan=not (a.touchosc_local or a.local_only), allow=allow,
                                          actions={"gain": touchosc_gain, "phantom": touchosc_phantom})
     start_tray()

@@ -251,7 +251,8 @@ class PatchMap:
                 out[ch] = {"color": None, "name": "Talk Back", "label": "Talk Back"}
                 continue
             i = info.get(ch, {})
-            out[ch] = {"color": i.get("color"), "name": i.get("name"), "label": display_name(ch, i.get("name"))}
+            out[ch] = {"color": i.get("color"), "name": i.get("name"), "label": display_name(ch, i.get("name")),
+                       "pan": i.get("pan"), "input": i.get("input")}
         return out
 
     def status(self):

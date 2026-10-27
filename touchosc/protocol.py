@@ -98,12 +98,46 @@ def state_messages(state, tablets=1, page=None):
     return out
 
 
+TRIM_SPAN = 20.0         # potard de Trim : ±20 dB sur sa course (affichage seulement ; la valeur exacte est écrite)
+
+
+def peak_text(db):
+    """Crête du vumètre : au dixième au-dessus de -60 dB, au dB près en dessous (le bruit de fond ne fait pas défiler les
+    chiffres à chaque trame), « -Inf » sans signal."""
+    if db is None or db <= -143.9:
+        return "-Inf"
+    return "%.1f" % db if db > -60 else "%.0f" % db
+
+
+def mix_messages(base, mix, lr=False):
+    """Commandes de la LV1 d'une tranche (phase 5a, lecture seule) : fader, valeur, crête, vumètre, MUTE ; tranches
+    d'entrée en plus : CUE, pan, Trim, Ø, A / B. mix None (LV1 pas connectée, tranche vide) : tout à « - » / 0."""
+    m = mix or {}
+    out = {base + "/fader": (("f", views.fader_frac(m.get("fader"))),),
+           base + "/fval": (("s", "%.1f" % m["fader"] if m.get("fader") is not None else "-"),),   # « -144.0 » (LV1)
+           base + "/meter": (("f", round(views.fader_frac(m.get("meter")), 2)),),
+           base + "/peak": (("s", peak_text(m.get("meter")) if mix else "-"),),
+           base + "/mute": (("i", 1 if m.get("mute") else 0),)}
+    if lr:
+        return out
+    trim = m.get("trim")
+    out.update({base + "/solo": (("i", 1 if m.get("solo") else 0),),
+                base + "/pan": (("f", round((max(-1.0, min(1.0, m.get("pan") or 0.0)) + 1) / 2, 4)),),
+                base + "/trim": (("f", round(max(0.0, min(1.0, ((trim or 0.0) + TRIM_SPAN) / (2 * TRIM_SPAN))), 4)),),
+                base + "/trimv": (("s", ("%.1f" % trim) if trim is not None else "-"),),
+                base + "/phase": (("i", 1 if m.get("phase") else 0),),
+                base + "/ab": (("s", m.get("input") or "" if mix else ""),)})
+    return out
+
+
 def gain_messages(page):
     """Page GAINS (views.gain_page) -> messages. Les voies absentes ne sont pas envoyées (cachées sur la tablette)."""
     out = {"/xgr/g/title": (("s", page["title"]),),
            "/xgr/view/follow": (("i", 1 if page.get("follow", True) else 0),),
            "/xgr/view/bank": (("i", -1 if page.get("bank") is None else int(page["bank"])),),
-           "/xgr/view/banks": (("i", int(page.get("banks", 4))),)}
+           "/xgr/view/banks": (("i", int(page.get("banks", 4))),),
+           "/xgr/live": (("i", 1 if page.get("live") else 0),)}
+    out.update(mix_messages("/xgr/lr", page.get("lr"), lr=True))
     for k, st in enumerate(page["strips"], 1):
         base = "/xgr/g/%d" % k
         out[base + "/name"] = (("s", st["name"]),)
@@ -112,6 +146,7 @@ def gain_messages(page):
         out[base + "/color"] = (("s", st["color"]),)
         out[base + "/src"] = (("s", st["src"]),)
         out[base + "/units"] = (("i", len(st["units"])),)
+        out.update(mix_messages(base, st.get("mix")))
         for u, unit in zip(views.unit_names(len(st["units"])), st["units"]):
             out["%s/%s/gain" % (base, u)] = (("f", round(views.gain_frac(unit["db"]), 4)),)
             out["%s/%s/db" % (base, u)] = (("s", views.db_text(unit["db"])),)

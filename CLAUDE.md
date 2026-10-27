@@ -672,6 +672,20 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   contrôles non interactifs gris (OFF 90,90,90) jusqu'à la phase 5. Banques / FOLLOW / SYNC dans la rangée du haut (à
   la place des User keys), état en bas. Messages ajoutés : `/xgr/g/k/ch`, `/xgr/g/k/input`. 902 contrôles (62 ko) :
   fluidité : **« ça a l'air de rester fluide » (Joseph, 27/10)** — sinon réduire les graduations des faders (136).
+- **Phase 5a faite (3.2.0-a10, 27/10) : commandes de la LV1 AFFICHÉES en direct (lecture seule).** Décisions de Joseph :
+  **LR en lecture seule** (comme la X-Touch), **A / B = indicateur** (aucune commande OSC connue par canal ; lu dans la
+  base : param 0, `session_patch.read_session` -> `info[ch]["input"]`). `lv1/model.py` (`LV1Mixer.handle`, repris de
+  XTouch-LV1 : /Channels avec purge des pistes disparues, Track/Out/Gain, Out/Mute, Solo, Track/Pan /45, TrackTrim et
+  PhaseState par voie, StemFormatForSource, Meters ~23/s sans abonnement, `METER_STALE` 1 s) ; connexion DÉDIÉE
+  (`start_mixer` : LV1Remote + `listeners`, ajout dans lv1/remote.py) lancée avec le pont. Écoute du 27/10 : à la connexion
+  la LV1 envoie /Channels, trims, phases, faders, vumètres ; PAS les pans -> lus dans la base (`channelinfo` param 436,
+  /45, `lv1_channels[ch]["pan"]`). `touchosc_state()` = merged_snapshot + `lv1_mixer` + `lv1_live`. Vue :
+  `views.mix_info`, `fader_frac` (courbe relevée sur la capture : 0 dB à 0,765) ; messages `/xgr/g/k/{fader,fval,peak,
+  meter,mute,solo,pan,trim,trimv,phase,ab}`, `/xgr/lr/{fader,fval,peak,meter,mute}`, `/xgr/live` (fval « -144.0 » comme la
+  LV1, crête au dB près sous -60 pour ne pas inonder). Lua : `setMix` / `setLive` (MUTE rouge, CUE / Ø / entrée bleus,
+  tout gris sans LV1) ; vumètre = FADER lecture seule vert. Vérifié sur la vraie LV1 (P170 CUE, LR -0.2, faders -144).
+  `--hidden-import lv1.model`. Test `tests/test_lv1_model.py`. **5b à faire** : commandes (fader / pan / Trim au glisser,
+  MUTE / CUE / Ø à l'appui), LR jamais.
 
 ## Reste à faire / idées
 

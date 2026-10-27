@@ -119,6 +119,7 @@ class LV1Remote:
         self.lock = threading.Lock()
         self.names, self.colors = {}, {}
         self.color_events = []           # [(canal, n° de palette, heure)] : changements vus (lv1/colorclick.py)
+        self.listeners = []              # fonctions (adresse, args) appelées pour CHAQUE message (lv1/model.py, 3.2)
         self.error = None
         self._stop = False
 
@@ -195,6 +196,11 @@ class LV1Remote:
         return buf
 
     def _handle(self, address, args):
+        for fn in self.listeners:
+            try:
+                fn(address, args)
+            except Exception as e:            # un auditeur en erreur ne doit pas couper la connexion
+                self.error = "auditeur : %r" % e
         v = [x for _t, x in args]
         if address == "/ping":
             self._send([("/pong", args)])

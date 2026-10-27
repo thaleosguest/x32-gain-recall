@@ -50,6 +50,65 @@ local function busy(name, now)
 end
 local curBank, nBanks = -1, BANKS                     -- banque affichée (-1 : couche sans banque), banques proposées
 
+-- Commandes de la LV1 (phase 5a, lecture seule) : « gK_ » pour une tranche, « lr_ » pour LR. Couleurs d'état comme la
+-- LV1 : MUTE actif rouge, CUE / Ø / entrée sélectionnée bleus ; tout gris tant que la LV1 n'est pas connectée.
+local OFF = Color(90 / 255, 90 / 255, 90 / 255, 1)
+local PANEL = Color(17 / 255, 17 / 255, 17 / 255, 1)
+local INK = PANEL
+local MIX_PARTS = { 'fader', 'fval', 'peak', 'meter', 'mute', 'mute_l', 'cue', 'cue_l', 'pan', 'pan_a', 'trim',
+                    'trim_v', 'trim_t', 'phase', 'phase_l', 'a', 'a_l', 'b', 'b_l' }
+local live = false
+local mixState = {}                                   -- « gK_mute » … -> dernière valeur reçue (repeinte par setLive)
+
+local function paintKey(p, part, on, onColor)
+  -- case de la LV1 (box + libellé « _l ») : allumée = fond de la couleur d'état, texte INK ; éteinte = fond sombre
+  local b, l = c[p .. part], c[p .. part .. '_l']
+  if b == nil then return end
+  b.color = (live and on) and onColor or PANEL
+  l.textColor = (not live) and OFF or (on and INK or TEXT)
+end
+
+function setMix(p, field, v)
+  mixState[p .. field] = v
+  if field == 'fader' or field == 'meter' or field == 'pan' or field == 'trim' then
+    local ctl = c[p .. field]
+    if ctl then ctl.values.x = v end
+  elseif field == 'fval' or field == 'peak' then
+    c[p .. field].values.text = v
+  elseif field == 'trimv' then
+    c[p .. 'trim_v'].values.text = v
+  elseif field == 'mute' then
+    paintKey(p, 'mute', v == 1, RED)
+  elseif field == 'solo' then
+    paintKey(p, 'cue', v == 1, BLUE)
+  elseif field == 'phase' then
+    paintKey(p, 'phase', v == 1, BLUE)
+  elseif field == 'ab' then
+    paintKey(p, 'a', v == 'A', BLUE)
+    paintKey(p, 'b', v == 'B', BLUE)
+  end
+end
+
+local function setLive(on)
+  live = on
+  local prefixes = { 'lr_' }
+  for k = 1, STRIPS do prefixes[#prefixes + 1] = 'g' .. k .. '_' end
+  for _, p in ipairs(prefixes) do
+    for _, part in ipairs({ 'fval', 'trim_v' }) do
+      if c[p .. part] then c[p .. part].textColor = on and BLUE or OFF end
+    end
+    for _, part in ipairs({ 'peak', 'trim_t', 'pan_a' }) do
+      if c[p .. part] then c[p .. part].textColor = on and TEXT or OFF end
+    end
+    for _, part in ipairs({ 'fader', 'pan', 'trim' }) do
+      if c[p .. part] then c[p .. part].color = on and MUTED or OFF end
+    end
+    for _, f in ipairs({ 'mute', 'solo', 'phase', 'ab' }) do
+      if mixState[p .. f] ~= nil then setMix(p, f, mixState[p .. f]) end
+    end
+  end
+end
+
 function paintBanks()
   -- (bank et banks arrivent dans n'importe quel ordre : on repeint les deux à chaque fois)
   for i = 0, BANKS - 1 do
@@ -80,6 +139,10 @@ function init()
       local n = 'g' .. k .. '_' .. part
       c[n] = self:findByName(n, true)
     end
+    for _, part in ipairs(MIX_PARTS) do
+      local n = 'g' .. k .. '_' .. part
+      c[n] = self:findByName(n, true)
+    end
     for _, u in ipairs(UNITS) do
       for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b' }) do
         local n = 'g' .. k .. '_' .. u .. '_' .. part
@@ -95,6 +158,9 @@ function init()
     c['g' .. k .. '_num'].textAlignH = AlignH.RIGHT
   end
   self:findByName('lr_num', true).textAlignH = AlignH.RIGHT
+  for _, part in ipairs(MIX_PARTS) do
+    c['lr_' .. part] = self:findByName('lr_' .. part, true)       -- nil pour ce que LR n'a pas (pan, Trim, A / B…)
+  end
   c.led.shape = Shape.CIRCLE
   c.sync.outlineStyle = OutlineStyle.FULL
   for k = 1, STRIPS do
@@ -179,6 +245,8 @@ local function onStrip(k, field, v)
     end
   elseif field == 'units' then
     setUnits(k, math.floor(v))
+  else
+    setMix(g, field, v)                       -- commandes de la LV1 (fader, mute, solo, pan, trim, phase, ab…)
   end
 end
 
@@ -223,6 +291,15 @@ function onReceiveOSC(message, connections)
   k, field = path:match('^/xgr/g/(%d+)/(%a+)$')
   if k then
     onStrip(tonumber(k), field, args[1].value)
+    return true
+  end
+  local lf = path:match('^/xgr/lr/(%a+)$')
+  if lf then
+    setMix('lr_', lf, args[1].value)
+    return true
+  end
+  if path == '/xgr/live' then
+    setLive(math.floor(args[1].value) == 1)
     return true
   end
   if path == '/xgr/view/follow' then
