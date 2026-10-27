@@ -19,6 +19,11 @@ from . import views
 
 class Bridge(threading.Thread):
     PUBLISH_EVERY = 0.1      # s : état relu et différences envoyées au plus 10 fois par seconde
+    # a18 (28/10, Joseph : « une ou deux tranches rémanentes » après un changement de couche, réparées par SYNC) : une
+    # couche = 300-400 paquets UDP d'un coup, la tablette en perdait (rien dans le journal : perdus à l'arrivée) et le
+    # pont les croyait reçus. Rafale bornée par tablette et par tour, et rafraîchissement tournant de l'état.
+    MAX_BURST = 120          # messages modifiés au plus par tablette et par tour (le reste au tour suivant)
+    REFRESH_PER_TICK = 15    # messages déjà envoyés renvoyés par tour (~500 messages : tout repassé en ~3-4 s)
 
     def __init__(self, version, state_fn=lambda: {}, port=P.PORT_IN, reply_port=P.PORT_OUT, bind="127.0.0.1",
                  allow=(), actions=None, log=print):
@@ -70,9 +75,18 @@ class Bridge(threading.Thread):
                 t["page"] = page
                 if ip == force_ip:
                     t["sent"] = {}
-                todo = [(a, args) for a, args in sorted(msgs.items()) if t["sent"].get(a) != args]
+                todo = [(a, args) for a, args in sorted(msgs.items()) if t["sent"].get(a) != args][:self.MAX_BURST]
                 for a, args in todo:
                     t["sent"][a] = args
+                # rafraîchissement tournant (a18) : quelques messages déjà envoyés, renvoyés tels quels ; un paquet
+                # perdu se répare seul en quelques secondes
+                done = sorted(a for a in msgs if t["sent"].get(a) == msgs[a])
+                if done:
+                    i = t.get("refresh", 0) % len(done)
+                    picked = (done[i:] + done[:i])[:self.REFRESH_PER_TICK]
+                    t["refresh"] = i + len(picked)
+                    sending = {a for a, _x in todo}
+                    todo += [(a, msgs[a]) for a in picked if a not in sending]
             for a, args in todo:
                 self.send(ip, a, list(args))
             n += len(todo)

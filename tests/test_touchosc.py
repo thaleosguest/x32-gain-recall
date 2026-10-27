@@ -282,6 +282,7 @@ logs = []
 state = dict(gstate, connected=True, info={"name": "X32RACK-JS"}, lv1_count=64)
 b = Bridge("3.2.0-a2", lambda: dict(state), port=0, reply_port=tab.getsockname()[1], log=logs.append)
 b.PUBLISH_EVERY = 0.05
+b.REFRESH_PER_TICK = 0          # vérifications « seulement ce qui a changé » ; rafraîchissement essayé plus bas (a18)
 b.start()
 
 
@@ -321,11 +322,27 @@ got, order = drain(0.3)
 check("gain changé : seulement sa voie (potard + dB)", sorted(order) == ["/xgr/g/1/r/db", "/xgr/g/1/r/gain"]
       and got["/xgr/g/1/r/db"] == ["36.0"])
 send(P.SYNC)
-got, order = drain(0.3)
+got_sync, order = drain(0.3)
+got = got_sync
 check("SYNC : tout l'état renvoyé", {"/xgr/console", "/xgr/console/ok", "/xgr/lv1", "/xgr/tablets"} <= set(order))
 send(P.HELLO, [("i", P.PROTO)])
 got, order = drain(0.3)
 check("hello suivant : welcome seul (pas tout l'état)", order == [P.WELCOME])
+full = set(got_sync)
+b.MAX_BURST = 5
+send(P.SYNC)
+got, order = drain(0.12)
+first = len(order)
+b.MAX_BURST = Bridge.MAX_BURST
+got, order2 = drain(0.4)
+check("a18 : rafale bornée par tour, le reste aux tours suivants", 5 <= first < len(full) and full <= set(order) | set(order2))
+b.REFRESH_PER_TICK = 60
+got, order = drain(0.8)
+b.REFRESH_PER_TICK = 0
+check("a18 : rafraîchissement tournant (rien de changé : tout l'état repasse, valeurs actuelles)", full <= set(order)
+      and got["/xgr/console"] == got_sync["/xgr/console"])
+send(P.HELLO, [("i", P.PROTO)])          # présence (oubliée après LOST_S sans hello)
+drain(0.2)
 
 tab.sendto(b"\x00\x01garbage", ("127.0.0.1", b.port))
 send(P.HELLO, [("f", float(P.PROTO - 1))])
@@ -385,6 +402,7 @@ drain(0.3)
 check("5b : commande LV1 sur la piste de la page de la tablette (Ch 17-32 : tranche 2 = entrée 18 = (0, 17))",
       lcalls == [(0, 17, "fader", -6.0), (0, 17, "mute", None)])
 state["lv1_sets"], state["lv1_mixer"] = sets80, mix80
+send(P.HELLO, [("i", P.PROTO)])          # présence (oubliée après LOST_S sans hello)
 send("/xgr/view/layer", [("s", "mix"), ("i", 1)])
 drain(0.3)
 send("/xgr/g/1/set/fader", [("f", 0.0)])
