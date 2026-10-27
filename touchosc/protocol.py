@@ -24,7 +24,8 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
       vue (phase 2b, PAR TABLETTE) : /xgr/view/follow i (1 = suit la LV1), /xgr/view/bank i (0..4, -1 = couche
         sans banque), /xgr/view/banks i (banques proposées)
       page GAINS (phase 2a, calque du float sur la couche LV1 de Mixer 1) : /xgr/g/title s ; tranche k = 1..16 :
-        /xgr/g/k/name s, /xgr/g/k/color s (« RRGGBB » ou ""), /xgr/g/k/src s, /xgr/g/k/units i (0, 1 = « m », 2 =
+        /xgr/g/k/name s (nom LV1), /xgr/g/k/ch i (n° du canal, 0 = tranche vide), /xgr/g/k/input s (source LV1
+        « 1- EX 1 », une ligne par voie), /xgr/g/k/color s (« RRGGBB » ou ""), /xgr/g/k/src s, /xgr/g/k/units i (0, 1 = « m », 2 =
         « l » + « r ») ; voie u : /xgr/g/k/u/gain f (0..1 de -12..+60 dB), /xgr/g/k/u/db s, /xgr/g/k/u/48v i
     /xgr/notify     s texte                            message ponctuel (erreur d'une action…)
 """
@@ -105,7 +106,9 @@ def gain_messages(page):
            "/xgr/view/banks": (("i", int(page.get("banks", 4))),)}
     for k, st in enumerate(page["strips"], 1):
         base = "/xgr/g/%d" % k
-        out[base + "/name"] = (("s", st["label"]),)
+        out[base + "/name"] = (("s", st["name"]),)
+        out[base + "/ch"] = (("i", st["ch"] if st["ch"] > 0 else 0),)
+        out[base + "/input"] = (("s", st["input"]),)
         out[base + "/color"] = (("s", st["color"]),)
         out[base + "/src"] = (("s", st["src"]),)
         out[base + "/units"] = (("i", len(st["units"])),)

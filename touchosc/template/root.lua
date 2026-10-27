@@ -76,14 +76,14 @@ function init()
     c['bank' .. n .. '_label'] = self:findByName('bank' .. n .. '_label', true)
   end
   for k = 1, STRIPS do
-    for _, part in ipairs({ 'band', 'name', 'src' }) do
+    for _, part in ipairs({ 'srcbox', 'input', 'band', 'name', 'src', 'numbar', 'num' }) do
       local n = 'g' .. k .. '_' .. part
       c[n] = self:findByName(n, true)
     end
     for _, u in ipairs(UNITS) do
-      for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b', 'side' }) do
+      for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b' }) do
         local n = 'g' .. k .. '_' .. u .. '_' .. part
-        c[n] = self:findByName(n, true)        -- « side » (repère L / R) : voies stéréo seulement, nil en mono
+        c[n] = self:findByName(n, true)
       end
     end
   end
@@ -91,23 +91,23 @@ function init()
   for _, name in ipairs({ 'title', 'footer', 'console', 'lv1' }) do
     self:findByName(name, true).textAlignH = AlignH.LEFT
   end
+  for k = 1, STRIPS do                                  -- numéro de canal à droite de son bandeau, comme la LV1
+    c['g' .. k .. '_num'].textAlignH = AlignH.RIGHT
+  end
+  self:findByName('lr_num', true).textAlignH = AlignH.RIGHT
   c.led.shape = Shape.CIRCLE
   c.sync.outlineStyle = OutlineStyle.FULL
   for k = 1, STRIPS do
-    for _, u in ipairs(UNITS) do
-      c['g' .. k .. '_' .. u .. '_48'].outline = true
-    end
     setUnits(k, 0)
   end
 end
 
 function setUnits(k, n)
-  -- 0 voie : rien ; 1 : « m » ; 2 : « l » au-dessus de « r » (canal stéréo, gains non liés)
+  -- 0 voie : rien ; 1 : « m » au centre ; 2 : « l » et « r » côte à côte (canal stéréo, gains non liés, comme le float)
   local show = { m = (n == 1), l = (n == 2), r = (n == 2) }
   for _, u in ipairs(UNITS) do
-    for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b', 'side' }) do
-      local ctl = c['g' .. k .. '_' .. u .. '_' .. part]
-      if ctl then ctl.visible = show[u] end
+    for _, part in ipairs({ 'knob', 'drag', 'db', '48', '48l', '48b' }) do
+      c['g' .. k .. '_' .. u .. '_' .. part].visible = show[u]
     end
   end
 end
@@ -161,11 +161,19 @@ local function onStrip(k, field, v)
   local g = 'g' .. k .. '_'
   if field == 'name' then
     c[g .. 'name'].values.text = v
+  elseif field == 'input' then
+    c[g .. 'input'].values.text = v
+  elseif field == 'ch' then
+    local n = math.floor(v)
+    c[g .. 'num'].values.text = (n > 0) and tostring(n) or ''
   elseif field == 'src' then
     c[g .. 'src'].values.text = v
   elseif field == 'color' then
+    -- comme la LV1 : bouton de source, bandeau du nom et bandeau du numéro à la couleur du canal
     local col = hexColor(v)
-    c[g .. 'band'].color = col or DARK
+    for _, part in ipairs({ 'srcbox', 'band', 'numbar' }) do
+      c[g .. part].color = col or DARK
+    end
     for _, u in ipairs(UNITS) do
       c[g .. u .. '_knob'].color = col or MUTED
     end

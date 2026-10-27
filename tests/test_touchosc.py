@@ -82,12 +82,19 @@ check("banques 1-16 … 65-80 et FOLLOW LV1", all("sendOSC('/xgr/view/bank', %d)
       and tosc.props_of(names["bank4_label"]) is not None)
 fr = lambda n: {k: int(v) for k, v in tosc.props_of(names[n])["frame"].items()}
 l48, rk = fr("g7_l_48"), fr("g7_r_knob")
-check("stéréo empilée : voie droite sous la gauche, même largeur que le mono, repères L / R",
-      rk["y"] > l48["y"] + l48["h"] and fr("g7_l_knob")["x"] == fr("g7_r_knob")["x"]
-      and fr("g7_l_db")["w"] == fr("g7_m_db")["w"] and "g7_l_side" in names and "g7_m_side" not in names)
-dk, dd = fr("g7_l_knob"), fr("g7_l_drag")
-check("glisser sur toute la largeur de la tranche, à la hauteur du potard", dd["y"] == dk["y"] and dd["h"] == dk["h"]
-      and dd["w"] == 112)
+lk, ld, rd, md = fr("g7_l_knob"), fr("g7_l_drag"), fr("g7_r_drag"), fr("g7_m_drag")
+check("stéréo côte à côte dans le cadre préampli (2c, comme le float sur la LV1)", rk["y"] == lk["y"] and rk["x"] > lk["x"]
+      and ld["w"] == rd["w"] == 56 and rd["x"] == ld["x"] + 56 and md["w"] == 112 and "g7_l_side" not in names)
+pre = fr("g7_pre")
+check("glisser : zone de la voie, dans le cadre préampli", ld["y"] >= pre["y"] and ld["y"] + ld["h"] <= pre["y"] + pre["h"]
+      and l48["y"] + l48["h"] <= pre["y"] + pre["h"])
+check("page Mixer : source, A / B, préampli, Ø, Trim, nom, pan, MUTE, fader, numéro, cue (de haut en bas)",
+      [fr("g3_" + n)["y"] for n in ("srcbox", "a", "pre", "phase", "trim_t", "band", "pan", "mute", "fval", "fader",
+                                     "numbar", "cue")] == sorted(fr("g3_" + n)["y"] for n in ("srcbox", "a", "pre",
+                                     "phase", "trim_t", "band", "pan", "mute", "fval", "fader", "numbar", "cue")))
+check("commandes de la LV1 (phase 5) sans effet : fader, pan, Trim non interactifs", all(
+      tosc.props_of(names[n])["interactive"] == "0" for n in ("g3_fader", "g3_pan", "g3_trim", "g3_mute", "lr_fader")))
+check("tranche LR à droite des 16 tranches", fr("lr_band")["x"] > fr("g16_band")["x"] and "lr_num" in names)
 order = [tosc.props_of(n)["name"] for n in root.find("children")]
 check("panneau de connexion par-dessus les tranches", order.index("panel") > order.index("g16_r_48l"))
 
@@ -117,22 +124,23 @@ check("welcome en attente : rien sur la console", [v for _t, v in P.welcome(P.PR
 gstate = {"lv1_layers": {"mixer1": {"mode": 0, "page": 0, "bank": 0, "channels": list(range(1, 17))}},
           "exp_map": {32: 1, 33: 2, 0: 17, 130: 1003}, "lv1_sources": {"1": [1, 2], "2": [17], "7": [11], "3": [1003]},
           "lv1_channels": {"1": {"label": "P170 ST", "color": "#ff4f4f"}, "2": {"label": "Kick"}},
-          "gains": [None] * 256, "phantom": [0] * 256}
+          "gains": [None] * 256, "phantom": [0] * 256, "consoles": [{"n": 0, "card": 1, "connected": True}]}
 gstate["gains"][32], gstate["gains"][33], gstate["gains"][0] = 32.5, 30.0, -4.0
 gstate["phantom"][0] = 1
 page = views.gain_page(gstate)
 st1, st2, st3, st7 = page["strips"][0], page["strips"][1], page["strips"][2], page["strips"][6]
 check("titre de couche", page["title"] == "Ch 1-16" and len(page["strips"]) == 16)
 check("stéréo : deux voies, A 1/2, EXP 1/2, couleur", [u["idx"] for u in st1["units"]] == [32, 33]
-      and st1["src"] == "A 1/2  EXP 1/2" and st1["color"] == "FF4F4F" and st1["label"] == "P170 ST")
+      and st1["src"] == "A 1/2 = EXP 1/2" and st1["color"] == "FF4F4F" and st1["label"] == "P170 ST"
+      and st1["input"] == "1- EX 1\n1- EX 2")
 check("mono : une voie, gain et 48V", [(u["idx"], u["db"], u["phantom"]) for u in st2["units"]] == [(0, -4.0, True)]
-      and st2["src"] == "L 1  EXP 17")
-check("console 2 : 2·L 3, EXP 2·3", st3["src"] == "2·L 3  EXP 2·3")
+      and st2["src"] == "L 1 = EXP 17" and st2["name"] == "Kick" and st2["input"] == "1- EX 17")
+check("console 2 : 2·L 3, EXP 2·3, carte inconnue -> EX 3", st3["src"] == "2·L 3 = EXP 2·3" and st3["input"] == "EX 3")
 check("EXP sans préampli : pas de voie", st7["units"] == [] and st7["src"] == "no X32 preamp" and st7["label"] == "In 7")
 gl = {"mixer1": {"mode": 1, "page": 2, "bank": None, "channels": [5, None] + [None] * 14}}
 cust = views.gain_page({"lv1_layers": gl})
 check("couche Custom, tranche sans canal vide", cust["title"] == "Custom 3" and cust["strips"][1] == {
-      "ch": 0, "label": "", "color": "", "units": [], "src": ""})
+      "ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": ""})
 check("pas de couche d'entrées", views.gain_page({})["title"] == "No input channels on this layer")
 check("dB et course", views.db_text(32.5) == "32.5" and views.db_text(None) == "-" and views.gain_frac(-12) == 0.0
       and views.gain_frac(60) == 1.0 and views.gain_frac(24) == 0.5)
@@ -155,6 +163,8 @@ check("messages : stéréo l / r, mono m, rien pour les voies absentes", gm["/xg
       and gm["/xgr/g/1/l/db"] == (("s", "32.5"),) and gm["/xgr/g/1/r/db"] == (("s", "30.0"),)
       and gm["/xgr/g/2/m/48v"] == (("i", 1),) and "/xgr/g/1/m/db" not in gm and "/xgr/g/7/m/db" not in gm
       and gm["/xgr/g/title"] == (("s", "Ch 1-16"),))
+check("messages : nom LV1, numéro de canal, source LV1", gm["/xgr/g/2/name"] == (("s", "Kick"),)
+      and gm["/xgr/g/2/ch"] == (("i", 2),) and gm["/xgr/g/2/input"] == (("s", "1- EX 17"),))
 
 # ── pont, avec une fausse tablette
 tab = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

@@ -663,6 +663,15 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   fader (bleu) + crête du vumètre, fader avec échelle +10…−∞ et vumètre, numéro + bouton casque (cue) ; tranche LR à
   droite (C / M, Master) ; rangée des User keys en haut. Proposé : « phase 2c » = cette disposition, le non-branché
   (Ø, Trim, pan, MUTE, fader, cue, LR) dessiné grisé jusqu'à la phase 5.
+- **Phase 2c faite (3.2.0-a9, 27/10) : template en page Mixer de la LV1.** 16 tranches (pas 116) + LR, rangées SRC, AB,
+  PRE, PHASE, TRIM, NAME, PAN, MUTE, FVAL, PEAK, FADER, NUM, CUE (constantes de build_tosc). Actif : bouton de source
+  (`views.input_name` : « 1- EX 15 », place de la carte = `consoles[k].card`, sinon « EX 15 » ; une ligne par voie),
+  cadre préampli (« A 7/8 = EXP 7/8 » comme le float, stéréo CÔTE À CÔTE, glisser par voie), bandeau du nom (nom LV1
+  brut « Channel 1 »), bandeau du numéro ; source / nom / numéro à la couleur du canal, texte INK (17,17,17).
+  Joseph : « phase, trim, pan, mute sont des touches LV1 » -> Ø, Trim, pan, MUTE, fader, cue, A / B, LR = `lv1_key` /
+  contrôles non interactifs gris (OFF 90,90,90) jusqu'à la phase 5. Banques / FOLLOW / SYNC dans la rangée du haut (à
+  la place des User keys), état en bas. Messages ajoutés : `/xgr/g/k/ch`, `/xgr/g/k/input`. 902 contrôles (62 ko) :
+  fluidité sur la R10 à vérifier (sinon réduire les graduations des faders, 136 contrôles).
 
 ## Reste à faire / idées
 

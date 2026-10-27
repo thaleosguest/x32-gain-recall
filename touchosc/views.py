@@ -52,6 +52,25 @@ def layer_title(lay):
     return "Layer %d" % ((lay.get("page") or 0) + 1)
 
 
+def card_slots(state):
+    """{console k: place de sa carte dans le rack de la LV1} (le « 1- » de « 1- EX 1 »), d'après consoles[].card."""
+    out = {}
+    for c in (state or {}).get("consoles") or []:
+        try:
+            if c.get("card"):
+                out[int(c.get("n") or 0)] = int(c["card"])
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def input_name(e, slots):
+    """Nom de la source LV1 d'un EXP, comme sur le bouton de source de la LV1 : « 1- EX 15 » (carte en place 1) ;
+    « EX 15 » si la place de la carte de cette console n'est pas connue."""
+    k, voie = divmod(int(e), 1000)
+    return ("%d- EX %d" % (slots[k], voie)) if k in slots else "EX %d" % voie
+
+
 def _info(channels, ch):
     return (channels or {}).get(str(ch)) or (channels or {}).get(ch) or {}
 
@@ -82,11 +101,12 @@ def gain_page(state, surface="mixer1", bank=None):
         if e:
             exp_to_idx.setdefault(int(e), int(k))
     sources = {int(k): v for k, v in (state.get("lv1_sources") or {}).items()}
+    slots = card_slots(state)
     gains, phantom = state.get("gains") or [], state.get("phantom") or []
     strips = []
     for ch in chans:
         if not ch:
-            strips.append({"ch": 0, "label": "", "color": "", "units": [], "src": ""})
+            strips.append({"ch": 0, "label": "", "name": "", "color": "", "units": [], "src": "", "input": ""})
             continue
         info = _info(state.get("lv1_channels"), ch)
         exps = [int(e) for e in sources.get(ch, []) if e]
@@ -99,11 +119,13 @@ def gain_page(state, surface="mixer1", bank=None):
         else:
             src = " + ".join(strip_tag(i) for i in idxs)
         mapped = [e for e in exps if e in exp_to_idx]
-        if mapped:
-            src += "  EXP " + "/".join(exp_txt(e) for e in mapped)
+        if mapped:                                   # comme le float : « A 7/8 = EXP 7/8 »
+            src += " = EXP " + "/".join(exp_txt(e) for e in mapped)
         color = (info.get("color") or "").lstrip("#").upper()
-        strips.append({"ch": ch, "label": info.get("label") or ("In %d" % ch if ch > 0 else ""),
-                       "color": color if len(color) == 6 else "", "units": units, "src": src or "no X32 preamp"})
+        label = info.get("label") or ("In %d" % ch if ch > 0 else "")
+        strips.append({"ch": ch, "label": label, "name": info.get("name") or label,
+                       "color": color if len(color) == 6 else "", "units": units, "src": src or "no X32 preamp",
+                       "input": "\n".join(input_name(e, slots) for e in exps)})
     shown = lay.get("bank") if lay.get("channels") else None
     return {"title": layer_title(lay), "follow": bank is None, "bank": shown, "banks": banks, "strips": strips}
 
