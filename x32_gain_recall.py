@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a1"
+APP_VERSION = "3.2.0-a2"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -3801,6 +3801,11 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--touchosc-port", type=int, default=9300,
                     help="port UDP des tablettes TouchOSC (defaut 9300 ; 0 = desactive)")
+    ap.add_argument("--touchosc-lan", action="store_true",
+                    help="ecoute les tablettes TouchOSC sur le reseau (defaut : TouchOSC du PC en serveur, local "
+                         "seulement) ; adresses a autoriser avec --touchosc-allow")
+    ap.add_argument("--touchosc-allow", default="",
+                    help="adresses IP des tablettes autorisees en mode --touchosc-lan, separees par des virgules")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur (defaut depuis la 3.0.1)")
     ap.add_argument("--browser", action="store_true", help="ouvre aussi la page dans le navigateur au lancement")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
@@ -3986,8 +3991,10 @@ def main():
     threading.Thread(target=stage_loop, daemon=True).start()
     if a.touchosc_port:
         import touchosc.bridge
-        TOUCHOSC = touchosc.bridge.start(APP_VERSION, CLIENT.snapshot, port=a.touchosc_port,
-                                         bind="127.0.0.1" if a.local_only else "0.0.0.0")
+        # 27/10 (Joseph) : TouchOSC du PC en serveur -> local par defaut ; reseau en option, liste d'adresses
+        TOUCHOSC = touchosc.bridge.start(APP_VERSION, merged_snapshot, port=a.touchosc_port,
+                                         lan=a.touchosc_lan and not a.local_only,
+                                         allow=[x.strip() for x in a.touchosc_allow.split(",") if x.strip()])
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

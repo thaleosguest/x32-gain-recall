@@ -589,6 +589,15 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   (« connecting… » sur Wi-Fi ET Tailscale) : Wi-Fi classé **Public** + aucune règle pare-feu pour TouchOSC ; Joseph a passé
   le Wi-Fi en Privé et autorisé TouchOSC (commandes admin données, pas exécutées par Claude : réglage de sécurité).
   Tailscale (PC 100.113.68.110) : pas de découverte automatique (multicast), adresse à entrer à la main.
+- **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
+  en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
+  (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`
+  -> {adresse: arguments}, le pont (10 Hz) n'envoie à chaque tablette que ce qui a changé POUR ELLE (`sent`), tout à
+  l'arrivée et sur `/xgr/sync` (bouton SYNC). Actions : `protocol.parse_action` (liste fermée) -> `actions` {nom: fonction}
+  fournies par x32_gain_recall ; une chaîne rendue = erreur -> `/xgr/notify` (ligne orange, 6 s). L'état vient de
+  `merged_snapshot` DANS le processus (les poignées HTTP sont minces : mêmes fonctions, sans le détour HTTP). Mesuré :
+  ~1 % d'un cœur avec une tablette. En mode serveur, Gain Recall ne voit QU'UN client (TouchOSC du PC), pas les tablettes
+  clientes (ligne « TOUCHOSC »). Page : CONSOLE / LV1 / TOUCHOSC. Exe de test `dist.2.0-a2-test` (+ .tosc).
   Piège Windows : UDP -> `ConnectionResetError` (WSAECONNRESET) quand l'autre côté n'écoute pas encore : ignoré.
   Exe de test : `dist\3.2.0-a1-test` (+ le `.tosc`).
 

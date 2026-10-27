@@ -1,9 +1,10 @@
-"""Test : TouchOSC phase 0 (3.2, 27/10/2026) — template généré + présence tablette <-> Gain Recall.
-- template : XML lexml 3 relu, page 2000 x 1200, voyant / état / détail, script Lua avec le protocole, aucun jeton
-  oublié, ID uniques, fichier identique d'une génération à l'autre ;
-- protocole : hello en entier ou en réel, état du template (à jour / trop ancien / trop récent), texte de la console ;
-- pont : une fausse tablette (UDP local) envoie /xgr/hello -> /xgr/welcome reçu sur son port, avec la console ;
-  paquet illisible ignoré, état de Gain Recall en erreur sans tomber, tablette oubliée après LOST_S.
+"""Test : TouchOSC (3.2) — template généré + pont tablette <-> Gain Recall.
+Phase 0 (27/10/2026) : template relu (XML lexml 3, page 2000 x 1200, script Lua avec le protocole, ID uniques, fichier
+identique d'une génération à l'autre) ; hello -> welcome ; paquet illisible ignoré ; état en erreur sans tomber ;
+tablette oubliée après LOST_S.
+Phase 1 (27/10/2026) : local par défaut, réseau limité à une liste (refus signalé une fois) ; état traduit en messages,
+TOUT à l'arrivée d'une tablette puis SEULEMENT ce qui change, tout de nouveau sur /xgr/sync ; actions de la liste
+fermée, erreur renvoyée en /xgr/notify ; bouton SYNC du template.
 
     py tests/test_touchosc.py
 """
@@ -38,15 +39,21 @@ rp = tosc.props_of(root)
 check("racine GROUP 2000 x 1200", root.get("type") == "GROUP" and rp["frame"] == {"x": "0", "y": "0", "w": "2000", "h": "1200"})
 nodes = list(x.iter("node"))
 names = {tosc.props_of(n)["name"]: n for n in nodes}
-check("voyant, état, détail présents", {"led", "status", "detail"} <= set(names))
+check("voyant, état, lignes console / LV1 / TouchOSC, message", {"led", "status", "detail", "console", "lv1",
+      "tablets", "notify"} <= set(names))
 check("ID uniques", len({n.get("ID") for n in nodes}) == len(nodes))
 script = rp["script"]
 check("Lua : protocole et ports remplacés", "local PROTO = %d" % P.PROTO in script and str(P.PORT_IN) in script
       and "__" not in script)
-check("Lua : hello et welcome", "sendOSC('/xgr/hello'" in script and "'/xgr/welcome'" in script)
+check("Lua : hello, welcome, état, notify", all(s in script for s in ("sendOSC('/xgr/hello'", "'/xgr/welcome'",
+      "'/xgr/console'", "'/xgr/notify'")))
 st = names["status"]
 check("état = LABEL avec un texte", st.get("type") == "LABEL"
       and any(v.find("key").text == "text" for v in st.find("values")))
+sync = names["sync"]
+check("bouton SYNC : BUTTON qui envoie /xgr/sync", sync.get("type") == "BUTTON"
+      and "sendOSC('%s')" % P.SYNC in tosc.props_of(sync)["script"])
+check("libellé du bouton non interactif", tosc.props_of(names["sync_label"])["interactive"] == "0")
 
 # ── protocole
 check("hello entier", P.parse_hello([("i", 1), ("s", "R10")]) == (1, "R10"))
@@ -56,38 +63,100 @@ check("template à jour / ancien / récent", (P.template_state(P.PROTO), P.templ
       P.template_state(P.PROTO + 1)) == ("ok", "old_template", "new_template"))
 check("console", P.console_text({"connected": True, "info": {"name": "X32RACK-JS"}}) == "X32RACK-JS"
       and P.console_text({"connected": False}) == "No console" and P.console_text(None) == "No console")
+full = {"connected": True, "info": {"name": "X32RACK-JS"}, "exp_map": {0: 17, 32: 1}, "lv1_count": 64,
+        "consoles": [{"connected": True}, {"connected": True}]}
+m = P.state_messages(full, tablets=1)
+check("état : console (+ 2e console), LV1, TouchOSC", m["/xgr/console"] == (("s", "X32RACK-JS + 1 more"),)
+      and m["/xgr/console/ok"] == (("i", 1),) and m["/xgr/lv1"] == (("s", "64 LV1 channels known, 2 X32 sources on EXP"),)
+      and m["/xgr/tablets"] == (("i", 1),))
+check("état : connexion en cours / rien", P.state_messages({"trying": True, "ip": "192.168.1.201"})["/xgr/console"]
+      == (("s", "Connecting to 192.168.1.201..."),) and P.state_messages(None)["/xgr/lv1"] == (("s", "No LV1 session read"),))
+check("actions : sync seulement", P.parse_action(P.SYNC, []) == ("sync",) and P.parse_action("/xgr/rien", []) is None)
+check("autorisées : PC toujours, réseau sur liste", P.allowed("127.0.0.1", ()) and P.allowed("192.168.1.20", {"192.168.1.20"})
+      and not P.allowed("192.168.1.50", {"192.168.1.20"}))
 
 # ── pont, avec une fausse tablette
 tab = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 tab.bind(("127.0.0.1", 0))
-tab.settimeout(2.0)
+tab.settimeout(0.5)
 logs = []
-state = {"connected": True, "info": {"name": "X32RACK-JS"}}
-b = Bridge("3.2.0-a1", lambda: state, port=0, reply_port=tab.getsockname()[1], bind="127.0.0.1", log=logs.append)
+state = {"connected": True, "info": {"name": "X32RACK-JS"}, "exp_map": {0: 1}, "lv1_count": 64}
+b = Bridge("3.2.0-a2", lambda: dict(state), port=0, reply_port=tab.getsockname()[1], log=logs.append)
+b.PUBLISH_EVERY = 0.05
 b.start()
 
 
-def ask(args):
-    tab.sendto(encode_message(P.HELLO, args), ("127.0.0.1", b.port))
-    return decode_message(tab.recv(65536))
+def send(address, args=()):
+    tab.sendto(encode_message(address, list(args)), ("127.0.0.1", b.port))
 
 
-addr, args = ask([("i", P.PROTO), ("s", "R10")])
-check("welcome reçu", addr == P.WELCOME and [v for _t, v in args] == [P.PROTO, "3.2.0-a1", "X32RACK-JS", "ok"])
+def drain(wait=0.4):
+    """Messages reçus par la tablette pendant `wait` s : {adresse: [valeurs]} (dernier reçu) + liste dans l'ordre."""
+    got, order, end = {}, [], time.time() + wait
+    while time.time() < end:
+        try:
+            a, args = decode_message(tab.recv(65536))
+        except socket.timeout:
+            continue
+        got[a] = [v for _t, v in args]
+        order.append(a)
+    return got, order
+
+
+check("pont local par défaut", b.sock.getsockname()[0] == "127.0.0.1")
+send(P.HELLO, [("i", P.PROTO), ("s", "R10")])
+got, order = drain()
+check("arrivée : welcome puis tout l'état", order[:1] == [P.WELCOME] and got[P.WELCOME] == [P.PROTO, "3.2.0-a2", "X32RACK-JS", "ok"]
+      and {"/xgr/console", "/xgr/console/ok", "/xgr/lv1", "/xgr/tablets"} <= set(got))
 check("tablette retenue", b.snapshot() == [{"ip": "127.0.0.1", "name": "R10", "proto": P.PROTO}]
       and any("tablette 127.0.0.1" in m for m in logs))
+got, order = drain(0.3)
+check("rien de changé : rien envoyé", order == [])
+state["lv1_count"] = 80
+got, order = drain(0.3)
+check("changement : seulement le message concerné", order == ["/xgr/lv1"] and got["/xgr/lv1"][0].startswith("80 LV1"))
+send(P.SYNC)
+got, order = drain(0.3)
+check("SYNC : tout l'état renvoyé", {"/xgr/console", "/xgr/console/ok", "/xgr/lv1", "/xgr/tablets"} <= set(order))
+send(P.HELLO, [("i", P.PROTO)])
+got, order = drain(0.3)
+check("hello suivant : welcome seul (pas tout l'état)", order == [P.WELCOME])
+
 tab.sendto(b"\x00\x01garbage", ("127.0.0.1", b.port))
-addr, args = ask([("f", float(P.PROTO - 1))])
-check("paquet illisible ignoré, template ancien signalé", args[3][1] == "old_template")
+send(P.HELLO, [("f", float(P.PROTO - 1))])
+got, _o = drain(0.3)
+check("paquet illisible ignoré, template ancien signalé", got[P.WELCOME][3] == "old_template")
+
+# refus d'un expéditeur hors liste (appel direct : le pont local ne reçoit rien du réseau)
+b.handle(encode_message(P.HELLO, [("i", P.PROTO)]), ("192.168.1.50", 9301))
+b.handle(encode_message(P.HELLO, [("i", P.PROTO)]), ("192.168.1.50", 9301))
+check("hors liste : refusée, signalée une fois", "192.168.1.50" not in b.tablets
+      and sum("192.168.1.50 refusée" in m for m in logs) == 1)
+
+# actions : fonction fournie par Gain Recall, erreur renvoyée à la tablette
+calls = []
+real_parse = P.parse_action
+P.parse_action = lambda a, args: ("essai", 7) if a == "/xgr/essai" else real_parse(a, args)
+b.actions = {"essai": lambda n: calls.append(n) or "Console not connected"}
+send("/xgr/essai")
+got, _o = drain(0.3)
+check("action appelée, erreur en /xgr/notify", calls == [7] and got.get(P.NOTIFY) == ["Console not connected"])
+b.actions = {"essai": lambda n: 1 / 0}
+send("/xgr/essai")
+got, _o = drain(0.3)
+check("action qui plante : message, pont vivant", "Gain Recall error" in got.get(P.NOTIFY, [""])[0] and b.is_alive())
+P.parse_action = real_parse
 
 
 def boom():
     raise RuntimeError("panne")
 
 
-b.state_fn, b._state_t = boom, 0.0
-addr, args = ask([("i", P.PROTO)])
-check("état en erreur : le pont répond quand même", addr == P.WELCOME and any("illisible" in m for m in logs))
+b.state_fn = boom
+send(P.SYNC)
+got, _o = drain(0.3)
+check("état en erreur : le pont tient (dernier état gardé)", b.is_alive() and any("illisible" in m for m in logs)
+      and "/xgr/console" in got)
 b.forget_lost(time.time() + P.LOST_S + 1)
 check("tablette oubliée après LOST_S", b.snapshot() == [] and any("partie" in m for m in logs))
 b.stop()
