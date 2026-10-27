@@ -150,6 +150,15 @@ class Bridge(threading.Thread):
                 self.notify(ip, "This strip just changed: try again")
                 return
             params = (idx,) + tuple(act[3:])
+        elif act[0] == "lv1":                     # canal LV1 de la tranche k de la page de CETTE tablette
+            with self.lock:
+                page = (self.tablets.get(ip) or {}).get("page")
+            strips = (page or {}).get("strips") or []
+            ch = strips[act[1] - 1]["ch"] if 1 <= act[1] <= len(strips) else 0
+            if not ch or ch < 0:
+                self.notify(ip, "This strip just changed: try again")
+                return
+            params = (ch, act[2], act[3])
         fn = self.actions.get(act[0])
         if fn is None:
             return

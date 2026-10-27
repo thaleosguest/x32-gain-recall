@@ -33,6 +33,8 @@ OFF = Color(90, 90, 90)                   # commandes de la LV1 : gris tant que 
 METER = Color(60, 200, 90)                # vumètres
 BANKS = ["1-16", "17-32", "33-48", "49-64", "65-80"]
 DRAG_STEP_PX = 5         # glisser vertical sur un potard : 5 px par pas de 0,5 dB (~10 px par dB ; 72 dB = 720 px)
+PAN_PX_FULL = 120        # pan : 120 px du centre à un côté (pas de 1/45 ~ 2,7 px)
+TRIM_STEP_PX, TRIM_LIMIT = 6, 30   # Trim : 6 px par pas de 0,5 dB ; ±30 dB comme XTouch-LV1 (la LV1 borne elle-même)
 
 # 16 tranches + LR, comme la page Mixer
 STRIP_X0, STRIP_PITCH, STRIP_W = 14, 116, 112
@@ -146,7 +148,27 @@ def strip(k):
             box(g + "numbar", (x, NUM[0], w, NUM[1]), DARK),
             label(g + "num", (x, NUM[0], w - 8, NUM[1]), "", 17, INK),
             *lv1_key(g + "cue", (x + 20, CUE[0], w - 40, CUE[1]), "CUE", 14)]
+    # phase 5b : gestes sur les commandes de la LV1 (boutons transparents par-dessus ; LR n'en a aucun)
+    base = "/xgr/g/%d/set/" % k
+    out += [overlay(g + "fader_drag", (x, FADER[0], w, FADER[1]),
+                    lua("fader.lua", PATH=base + "fader", FADER=g + "fader", FVAL=g + "fval", H=FADER[1] - 20,
+                        CURVE="{ %s }" % ", ".join("{%s, %s}" % p for p in views.LV1_FADER))),
+            overlay(g + "pan_drag", (x, PAN[0], w, PAN[1]),
+                    lua("pan.lua", PATH=base + "pan", KNOB=g + "pan", PX_FULL=PAN_PX_FULL)),
+            overlay(g + "trim_drag", (x, TRIM[0], w, TRIM[1]),
+                    lua("trim.lua", PATH=base + "trim", KNOB=g + "trim", VAL=g + "trim_v", STEP_PX=TRIM_STEP_PX,
+                        LIMIT=TRIM_LIMIT, SPAN=P.TRIM_SPAN)),
+            overlay(g + "mute_b", (x + 10, MUTE[0], w - 20, MUTE[1]), tap(base + "mute")),
+            overlay(g + "cue_b", (x + 20, CUE[0], w - 40, CUE[1]), tap(base + "solo")),
+            overlay(g + "phase_b", (x + 6, PHASE[0], w - 12, PHASE[1]), tap(base + "phase"))]
     return out
+
+
+def tap(path):
+    """Script d'un bouton d'appui (MUTE, CUE, Ø) : envoie la bascule ; Gain Recall part de l'état annoncé par la LV1."""
+    return ("function onValueChanged(key)\n"
+            "  if key == 'x' and self.values.x == 1 then sendOSC('%s') end\n"
+            "end\n" % path)
 
 
 def lr_strip():

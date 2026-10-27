@@ -92,6 +92,14 @@ check("page Mixer : source, A / B, préampli, Ø, Trim, nom, pan, MUTE, fader, n
       [fr("g3_" + n)["y"] for n in ("srcbox", "a", "pre", "phase", "trim_t", "band", "pan", "mute", "fval", "fader",
                                      "numbar", "cue")] == sorted(fr("g3_" + n)["y"] for n in ("srcbox", "a", "pre",
                                      "phase", "trim_t", "band", "pan", "mute", "fval", "fader", "numbar", "cue")))
+fd = tosc.props_of(names["g3_fader_drag"])["script"]
+check("5b : gestes fader / pan / Trim (glisser) et MUTE / CUE / Ø (appui) sur chaque tranche", all(
+      "'/xgr/g/3/set/%s'" % f in tosc.props_of(names["g3_" + n])["script"] for n, f in (("fader_drag", "fader"),
+      ("pan_drag", "pan"), ("trim_drag", "trim"), ("mute_b", "mute"), ("cue_b", "solo"), ("phase_b", "phase")))
+      and "{0.0, 0.765}" in fd and "local SEND_MS = 30" in fd and "flush(true)" in fd)
+check("5b : LR sans aucun geste (lecture seule)", not any(n.startswith("lr_") and n.endswith(("_drag", "_b"))
+      for n in names))
+check("5b : retours ignorés pendant le geste du fader / pan / Trim", "local DRAG_OF" in script and "function applyMix" in script)
 check("vumètre : barre FADER lecture seule ; script racine : setMix / setLive", names["g3_meter"].get("type") == "FADER"
       and tosc.props_of(names["g3_meter"])["interactive"] == "0" and "function setMix" in script
       and "local function setLive" in script and "'^/xgr/lr/(%a+)$'" in script)
@@ -171,6 +179,15 @@ check("tranche sans info de la LV1 : tirets", mm["/xgr/g/2/fval"] == (("s", "-")
       and P.mix_messages("/x", {"fader": -144.0})["/x/fval"] == (("s", "-144.0"),))
 check("dB et course", views.db_text(32.5) == "32.5" and views.db_text(None) == "-" and views.gain_frac(-12) == 0.0
       and views.gain_frac(60) == 1.0 and views.gain_frac(24) == 0.5)
+check("5b : commandes LV1 décodées, bornées ; LR refusé", P.parse_action("/xgr/g/3/set/fader", [("f", -4.5)]) == ("lv1", 3, "fader", -4.5)
+      and P.parse_action("/xgr/g/3/set/fader", [("f", 50.0)]) == ("lv1", 3, "fader", 10.0)
+      and P.parse_action("/xgr/g/3/set/pan", [("f", -2.0)]) == ("lv1", 3, "pan", -1.0)
+      and P.parse_action("/xgr/g/3/set/trim", [("f", 4.5)]) == ("lv1", 3, "trim", 4.5)
+      and P.parse_action("/xgr/g/16/set/mute", []) == ("lv1", 16, "mute", None)
+      and P.parse_action("/xgr/g/1/set/solo", []) == ("lv1", 1, "solo", None)
+      and P.parse_action("/xgr/g/1/set/phase", []) == ("lv1", 1, "phase", None)
+      and P.parse_action("/xgr/g/1/set/fader", []) is None and P.parse_action("/xgr/g/1/set/rien", []) is None
+      and P.parse_action("/xgr/lr/set/fader", [("f", 0.0)]) is None and P.parse_action("/xgr/lr/set/mute", []) is None)
 gm = P.gain_messages(page)
 check("actions : banque, follow, gain borné, 48V ; le reste ignoré", P.parse_action("/xgr/view/bank", [("i", 2)]) == ("bank", 2)
       and P.parse_action("/xgr/view/bank", [("f", 1.0)]) == ("bank", 1) and P.parse_action("/xgr/view/bank", [("i", 7)]) is None
@@ -294,6 +311,19 @@ send("/xgr/g/7/m/gain", [("f", 20.0)])
 got, _o = drain(0.3)
 check("voie absente (EXP sans préampli) : message, rien envoyé", got.get(P.NOTIFY) == ["This strip just changed: try again"]
       and len(gcalls) == 2)
+lcalls = []
+b.actions["lv1"] = lambda ch, field, value: lcalls.append((ch, field, value))
+send("/xgr/view/bank", [("i", 1)])
+drain(0.3)
+send("/xgr/g/2/set/fader", [("f", -6.0)])
+send("/xgr/g/2/set/mute")
+drain(0.3)
+check("5b : commande LV1 sur le canal de la page de la tablette (banque 17-32 : tranche 2 = canal 18)",
+      lcalls == [(18, "fader", -6.0), (18, "mute", None)])
+send("/xgr/view/follow")
+drain(0.5)
+send(P.HELLO, [("i", P.PROTO)])          # présence (la vraie tablette s'annonce chaque seconde ; oubliée après LOST_S)
+drain(0.3)
 
 # actions : fonction fournie par Gain Recall, erreur renvoyée à la tablette
 calls = []

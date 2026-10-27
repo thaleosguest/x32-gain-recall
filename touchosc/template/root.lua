@@ -31,22 +31,23 @@ local lastResync = 0
 local HOLD_MS = 1000                                  -- après un glisser : retours de la console ignorés (comme le float)
 local holdUntil, wasDragging = {}, {}
 
-local function dragging(name)
-  -- name = potard « gK_U_knob » ; le geste passe par le bouton transparent « gK_U_drag » posé dessus
-  local d = c[name:gsub('_knob$', '_drag')]
-  return d ~= nil and d.values.touch
+local function busyCtl(d, now)
+  -- d = bouton transparent d'un geste (« gK_U_drag », « gK_fader_drag »…) : sous le doigt, ou lâché il y a moins de
+  -- HOLD_MS -> la valeur affichée est celle du geste, les retours ne s'y opposent pas
+  local ctl = c[d]
+  local on = ctl ~= nil and ctl.values.touch
+  if on then
+    wasDragging[d] = true
+  elseif wasDragging[d] then
+    wasDragging[d] = nil
+    holdUntil[d] = now + HOLD_MS
+  end
+  return on or (holdUntil[d] ~= nil and now < holdUntil[d])
 end
 
 local function busy(name, now)
-  -- sous le doigt, ou lâché il y a moins de HOLD_MS : la valeur affichée est celle du geste
-  local on = dragging(name)
-  if on then
-    wasDragging[name] = true
-  elseif wasDragging[name] then
-    wasDragging[name] = nil
-    holdUntil[name] = now + HOLD_MS
-  end
-  return on or (holdUntil[name] ~= nil and now < holdUntil[name])
+  -- name = potard de gain « gK_U_knob » ; son geste passe par « gK_U_drag »
+  return busyCtl((name:gsub('_knob$', '_drag')), now)
 end
 local curBank, nBanks = -1, BANKS                     -- banque affichée (-1 : couche sans banque), banques proposées
 
@@ -56,7 +57,10 @@ local OFF = Color(90 / 255, 90 / 255, 90 / 255, 1)
 local PANEL = Color(17 / 255, 17 / 255, 17 / 255, 1)
 local INK = PANEL
 local MIX_PARTS = { 'fader', 'fval', 'peak', 'meter', 'mute', 'mute_l', 'cue', 'cue_l', 'pan', 'pan_a', 'trim',
-                    'trim_v', 'trim_t', 'phase', 'phase_l', 'a', 'a_l', 'b', 'b_l' }
+                    'trim_v', 'trim_t', 'phase', 'phase_l', 'a', 'a_l', 'b', 'b_l', 'fader_drag', 'pan_drag',
+                    'trim_drag' }
+-- phase 5b : valeurs que le geste en cours (ou tout juste fini) affiche lui-même -> bouton de geste concerné
+local DRAG_OF = { fader = 'fader_drag', fval = 'fader_drag', pan = 'pan_drag', trim = 'trim_drag', trimv = 'trim_drag' }
 local live = false
 local mixState = {}                                   -- « gK_mute » … -> dernière valeur reçue (repeinte par setLive)
 
@@ -70,6 +74,12 @@ end
 
 function setMix(p, field, v)
   mixState[p .. field] = v
+  local d = DRAG_OF[field]
+  if d and busyCtl(p .. d, getMillis()) then return end
+  applyMix(p, field, v)
+end
+
+function applyMix(p, field, v)
   if field == 'fader' or field == 'meter' or field == 'pan' or field == 'trim' then
     local ctl = c[p .. field]
     if ctl then ctl.values.x = v end
@@ -210,6 +220,18 @@ function update()
          GREY)
   end
   if now - lastResync > 200 then
+    -- fader / pan / Trim lâchés depuis plus de HOLD_MS : recalés sur la LV1
+    for k = 1, STRIPS do
+      local p = 'g' .. k .. '_'
+      for f, d in pairs(DRAG_OF) do
+        local v = mixState[p .. f]
+        if v ~= nil and not busyCtl(p .. d, now) then
+          local ctl = c[p .. ((f == 'trimv') and 'trim_v' or f)]
+          local cur = (f == 'fval' or f == 'trimv') and ctl.values.text or ctl.values.x
+          if cur ~= v then applyMix(p, f, v) end
+        end
+      end
+    end
     -- potard lâché depuis plus de HOLD_MS : calé sur la valeur de la console
     lastResync = now
     for name, v in pairs(srv) do

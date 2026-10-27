@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a11"
+APP_VERSION = "3.2.0-a12"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -3639,6 +3639,51 @@ def start_mixer():
     MIXER_REMOTE.start()
 
 
+LV1_TRIM_RANGE = (-30.0, 30.0)   # comme XTouch-LV1 : la LV1 borne elle-meme et renvoie la vraie valeur
+
+
+def touchosc_lv1(ch, field, value=None):
+    """Geste d'une tablette sur une commande de la LV1 (phase 5b), canal d'entree ch (1-based) : memes commandes que
+    XTouch-LV1 (verifiees chez Joseph). Bascules (mute, solo, phase) d'apres l'etat annonce par la LV1, refusees tant
+    qu'il n'est pas connu. LR n'arrive jamais ici (lecture seule, decision de Joseph). Rend un message d'erreur ou None."""
+    if MIXER_REMOTE is None or not MIXER_REMOTE.connected() or MIXER is None:
+        return "LV1 not connected"
+    g, c = 0, int(ch) - 1
+    t = MIXER.snapshot().get((g, c))
+    if t is None:
+        return "Channel not known by the LV1"
+    stereo = 1 if t.get("stereo") else 0
+    try:
+        if field == "fader":
+            db = max(-144.0, min(10.0, round(float(value), 1)))
+            MIXER_REMOTE.send("/Set/Track/Out/Gain", [("i", g), ("i", c), ("d", db)])
+        elif field == "pan":
+            pan = max(-1.0, min(1.0, round(float(value) * 45) / 45.0))
+            MIXER_REMOTE.send("/Set/Track/Pan", [("i", g), ("i", c), ("d", pan * 45.0)])
+        elif field == "trim":
+            trim = max(LV1_TRIM_RANGE[0], min(LV1_TRIM_RANGE[1], round(float(value) * 2) / 2))
+            MIXER_REMOTE.send("/SetTrackTrim", [("i", g), ("i", c), ("i", stereo), ("f", trim)])
+        elif field == "mute":
+            if t.get("mute") is None:
+                return "Mute state not known yet"
+            on = not t["mute"]
+            MIXER_REMOTE.send("/Set/Track/Out/Mute", [("i", g), ("i", c), ("T" if on else "F", on)])
+        elif field == "solo":
+            if t.get("solo") is None:
+                return "Cue state not known yet"
+            MIXER_REMOTE.send("/Set/Solo", [("i", g), ("i", c), ("i", 0 if t["solo"] else 1)])
+        elif field == "phase":
+            if not t.get("phase"):
+                return "Phase state not known yet"
+            on = not any(t["phase"].values())
+            MIXER_REMOTE.send("/SetTrackPhaseState", [("i", g), ("i", c), ("i", stereo), ("i", 1 if on else 0)])
+        else:
+            return None
+    except OSError as e:
+        return "LV1: %s" % e
+    return None
+
+
 def touchosc_gain(idx, db):
     """Geste de gain d'une tablette (pont TouchOSC, 3.2) : meme chemin que /api/gain. Rend un message d'erreur ou None."""
     client, i = console_for(idx)
@@ -4057,7 +4102,8 @@ def main():
         start_mixer()
         TOUCHOSC = touchosc.bridge.start(APP_VERSION, touchosc_state, port=a.touchosc_port,
                                          lan=not (a.touchosc_local or a.local_only), allow=allow,
-                                         actions={"gain": touchosc_gain, "phantom": touchosc_phantom})
+                                         actions={"gain": touchosc_gain, "phantom": touchosc_phantom,
+                                                  "lv1": touchosc_lv1})
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

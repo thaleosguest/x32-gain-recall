@@ -16,6 +16,9 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
     /xgr/view/follow                                   la tablette suit de nouveau la couche de la LV1
     /xgr/g/k/u/gain f dB voulu                         voie u de la tranche k de la page de CETTE tablette
     /xgr/g/k/u/48v                                     bascule du 48V (déjà confirmée sur la tablette)
+    /xgr/g/k/set/fader f dB | pan f -1..1 | trim f dB  commandes de la LV1 du canal de la tranche k (phase 5b)
+    /xgr/g/k/set/mute | solo | phase                   bascules (d'après l'état annoncé par la LV1)
+    (rien pour LR : lecture seule, décision de Joseph du 27/10)
   Gain Recall -> tablette
     /xgr/welcome    i proto, s version, s console, s ok|old_template|new_template|pending
                     pending : tablette pas encore autorisée (rien d'autre ne lui est envoyé)
@@ -156,7 +159,8 @@ def gain_messages(page):
 
 def parse_action(address, args):
     """Message de la tablette -> action de la liste fermée : (nom, paramètres…), ou None (ignoré).
-    ("sync",) ; ("bank", n) ; ("follow",) ; ("gain", k, u, dB) ; ("phantom", k, u) — k = tranche 1..16, u = m / l / r."""
+    ("sync",) ; ("bank", n) ; ("follow",) ; ("gain", k, u, dB) ; ("phantom", k, u) ; ("lv1", k, champ, valeur) —
+    k = tranche 1..16, u = m / l / r, champ = fader / pan / trim (valeur) ou mute / solo / phase (bascule, None)."""
     vals = arg_values(args)
     num = vals[0] if vals and isinstance(vals[0], (int, float)) and not isinstance(vals[0], bool) else None
     if address == SYNC:
@@ -174,6 +178,18 @@ def parse_action(address, args):
             return ("gain", k, u, max(views.GAIN_MIN, min(views.GAIN_MAX, float(num))))
         if parts[5] == "48v":
             return ("phantom", k, u)
+    if len(parts) == 6 and parts[1:3] == ["xgr", "g"] and parts[3].isdigit() and parts[4] == "set":
+        k, field = int(parts[3]), parts[5]
+        if not 1 <= k <= views.STRIPS:
+            return None
+        if field == "fader" and num is not None:
+            return ("lv1", k, "fader", max(-144.0, min(10.0, float(num))))
+        if field == "pan" and num is not None:
+            return ("lv1", k, "pan", max(-1.0, min(1.0, float(num))))
+        if field == "trim" and num is not None:
+            return ("lv1", k, "trim", float(num))
+        if field in ("mute", "solo", "phase"):
+            return ("lv1", k, field, None)
     return None
 
 

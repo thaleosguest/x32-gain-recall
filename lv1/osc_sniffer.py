@@ -48,7 +48,8 @@ def encode_string(s: str) -> bytes:
 
 
 def encode_message(address: str, args):
-    """args: liste de tuples (type_char, value). Types gérés : i, f, s, h, d."""
+    """args: liste de tuples (type_char, value). Types gérés : i, f, s, h, d, T / F (vrai / faux : la balise seule, sans
+    donnée ; /Set/Track/Out/Mute, tablette TouchOSC 3.2)."""
     tag = "," + "".join(t for t, _ in args)
     parts = [encode_string(address), encode_string(tag)]
     for t, v in args:
@@ -62,6 +63,8 @@ def encode_message(address: str, args):
             parts.append(struct.pack(">d", float(v)))
         elif t == "s":
             parts.append(encode_string(str(v)))
+        elif t in ("T", "F"):
+            pass
         else:
             raise ValueError(f"type OSC non géré en écriture : {t}")
     return b"".join(parts)

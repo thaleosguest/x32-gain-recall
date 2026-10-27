@@ -688,8 +688,17 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Retouches a11 : TouchOSC n'affiche pas le retour à la ligne -> source stéréo « 1- EX 31/32 » (`views.input_names`) ;
   cadre préampli « L15/16 = EXP 31/32 » (sans espace après la lettre, comme le float ; texte 12) ; banques / FOLLOW en
   contour plein (`OutlineStyle.FULL` : par défaut des coins, vus comme des crochets).
-  **5b à faire** : commandes (fader / pan / Trim au glisser,
-  MUTE / CUE / Ø à l'appui), LR jamais.
+- **Phase 5b faite (3.2.0-a12, 27/10) : commandes de la LV1 depuis la tablette.** Adresses de COMMANDE à part :
+  `/xgr/g/k/set/{fader f dB, pan f -1..1, trim f dB, mute, solo, phase}` (bornées ; rien pour LR : lecture seule) ; le
+  pont prend le canal de la tranche k de la PAGE de la tablette -> `touchosc_lv1(ch, champ, valeur)` (x32_gain_recall) :
+  `/Set/Track/Out/Gain [g c d]`, `/Set/Track/Pan [g c d pan*45]` (pas 1/45), `/SetTrackTrim [g c stéréo f]` (±30, pas
+  0,5), `/Set/Track/Out/Mute [g c T|F]` (encode_message gère maintenant T / F), `/Set/Solo [g c i]`,
+  `/SetTrackPhaseState [g c stéréo i]` = celles de XTouch-LV1 ; bascules d'après l'état annoncé, refusées s'il est
+  inconnu. `LV1Remote.send`. Template : `fader.lua` (glisser vertical 1:1 sur la colonne, courbe LV1 -> dB au dixième),
+  `pan.lua` (horizontal, 120 px centre -> côté), `trim.lua` (vertical, 6 px / 0,5 dB) : envois espacés de 30 ms, valeur
+  finale au lâcher ; MUTE / CUE / Ø = boutons transparents (`tap`). Racine : `DRAG_OF` + `busyCtl` (retours ignorés
+  pendant le geste et 1 s après) + recalage 200 ms (`applyMix`). Vérifié : test (décodage, LR refusé, canal par page)
+  et faux mixer (commandes exactes). Pas encore essayé sur la vraie LV1.
 
 ## Reste à faire / idées
 

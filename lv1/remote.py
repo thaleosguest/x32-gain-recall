@@ -139,6 +139,10 @@ class LV1Remote:
                 raise OSError("LV1 non connectée")
             self.sock.sendall(frames)
 
+    def send(self, address, args):
+        """Une commande à la LV1 (tablette TouchOSC, 3.2 : fader, pan, trim, mute, solo, phase). OSError si pas connectée."""
+        self._send([(address, list(args))])
+
     def rename(self, ch, name):
         """Renomme le canal d'entrée ch (1-based)."""
         self._send([("/Set/TrackName", [("i", GROUP_INPUT), ("i", int(ch) - 1), ("s", str(name))])])
