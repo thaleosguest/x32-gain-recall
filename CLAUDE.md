@@ -611,7 +611,15 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   Receive 9301 (elle n'était PAS configurée : 0 paquet reçu) + Client vers 192.168.1.16 port 6666 entré à la main (le
   serveur n'apparaissait pas dans la liste). Diagnostic : `/api/state["touchosc"]` (écoute, autorisées, tablettes,
   refusées, `rx`, dernier expéditeur ; lisible depuis le PC sans code). À corriger : en mode réseau, le PC lui-même est
-  refusé quand il passe par son adresse réseau (seul 127.x est toujours accepté).
+  refusé quand il passe par son adresse réseau (seul 127.x est toujours accepté) -> corrigé en a4.
+- **Autorisation des tablettes (3.2.0-a4, décision de Joseph du 27/10)** : RÉSEAU par défaut (`--touchosc-local` = 127.0.0.1
+  seulement ; `--touchosc-lan` supprimé), seules les tablettes autorisées. PC toujours accepté (127.x + ses adresses,
+  `local_addresses()`). Inconnue -> `pending` (welcome « pending » : la page affiche « Waiting for approval », rien
+  d'autre envoyé, gestes ignorés) ; le float (pas une page détachée) demande « Autoriser la tablette X (nom) ? »
+  (`_ask_tablets`, Dialog Autoriser / Refuser, une fois par tablette et par lancement du float) -> POST
+  `/api/touchosc/allow` (PC seulement) -> `touchosc_decide` : oui = `settings["touchosc_allow"]` (retenu), non =
+  `denied` jusqu'au prochain lancement (rien d'enregistré ; retire l'adresse si elle était retenue). `--touchosc-allow`
+  ajoute des adresses d'office. Règle de pare-feu UDP 9300 : par l'installeur Total Control (UAC), phase 6.
 
 ## Reste à faire / idées
 

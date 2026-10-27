@@ -2,9 +2,11 @@
 Phase 0 (27/10/2026) : template relu (XML lexml 3, page 2000 x 1200, script Lua avec le protocole, ID uniques, fichier
 identique d'une génération à l'autre) ; hello -> welcome ; paquet illisible ignoré ; état en erreur sans tomber ;
 tablette oubliée après LOST_S.
-Phase 1 (27/10/2026) : local par défaut, réseau limité à une liste (refus signalé une fois) ; état traduit en messages,
-TOUT à l'arrivée d'une tablette puis SEULEMENT ce qui change, tout de nouveau sur /xgr/sync ; actions de la liste
-fermée, erreur renvoyée en /xgr/notify ; bouton SYNC du template.
+Phase 1 (27/10/2026) : état traduit en messages, TOUT à l'arrivée d'une tablette puis SEULEMENT ce qui change, tout de
+nouveau sur /xgr/sync ; actions de la liste fermée, erreur renvoyée en /xgr/notify ; bouton SYNC du template.
+Autorisation (décision de Joseph, 27/10) : tablette inconnue en attente (welcome « pending », rien d'autre), oui ->
+acceptée, non -> ignorée ; le PC lui-même toujours accepté (127.x ou ses adresses réseau). Adresses de documentation
+192.0.2.x pour les fausses tablettes réseau (aucun vrai appareil touché).
 
     py tests/test_touchosc.py
 """
@@ -45,8 +47,8 @@ check("ID uniques", len({n.get("ID") for n in nodes}) == len(nodes))
 script = rp["script"]
 check("Lua : protocole et ports remplacés", "local PROTO = %d" % P.PROTO in script and str(P.PORT_IN) in script
       and "__" not in script)
-check("Lua : hello, welcome, état, notify", all(s in script for s in ("sendOSC('/xgr/hello'", "'/xgr/welcome'",
-      "'/xgr/console'", "'/xgr/notify'")))
+check("Lua : hello, welcome, état, notify, attente", all(s in script for s in ("sendOSC('/xgr/hello'", "'/xgr/welcome'",
+      "'/xgr/console'", "'/xgr/notify'", "'pending'")))
 st = names["status"]
 check("état = LABEL avec un texte", st.get("type") == "LABEL"
       and any(v.find("key").text == "text" for v in st.find("values")))
@@ -73,7 +75,9 @@ check("état : connexion en cours / rien", P.state_messages({"trying": True, "ip
       == (("s", "Connecting to 192.168.1.201..."),) and P.state_messages(None)["/xgr/lv1"] == (("s", "No LV1 session read"),))
 check("actions : sync seulement", P.parse_action(P.SYNC, []) == ("sync",) and P.parse_action("/xgr/rien", []) is None)
 check("autorisées : PC toujours, réseau sur liste", P.allowed("127.0.0.1", ()) and P.allowed("192.168.1.20", {"192.168.1.20"})
-      and not P.allowed("192.168.1.50", {"192.168.1.20"}))
+      and not P.allowed("192.168.1.50", {"192.168.1.20"}) and P.allowed("192.168.1.16", (), own={"192.168.1.16"}))
+check("welcome en attente : rien sur la console", [v for _t, v in P.welcome(P.PROTO, "3.2", {"connected": True}, pending=True)[1]]
+      == [P.PROTO, "3.2", "", "pending"])
 
 # ── pont, avec une fausse tablette
 tab = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -127,11 +131,30 @@ send(P.HELLO, [("f", float(P.PROTO - 1))])
 got, _o = drain(0.3)
 check("paquet illisible ignoré, template ancien signalé", got[P.WELCOME][3] == "old_template")
 
-# refus d'un expéditeur hors liste (appel direct : le pont local ne reçoit rien du réseau)
-b.handle(encode_message(P.HELLO, [("i", P.PROTO)]), ("192.168.1.50", 9301))
-b.handle(encode_message(P.HELLO, [("i", P.PROTO)]), ("192.168.1.50", 9301))
-check("hors liste : refusée, signalée une fois", "192.168.1.50" not in b.tablets
-      and sum("192.168.1.50 refusée" in m for m in logs) == 1)
+# autorisation (appels directs : le pont de test n'écoute qu'en local)
+NEW, OTHER, OWN = "192.0.2.50", "192.0.2.51", "192.0.2.99"
+hello = encode_message(P.HELLO, [("i", P.PROTO), ("s", "R10")])
+b.handle(hello, (NEW, 9301))
+b.handle(hello, (NEW, 9301))
+check("inconnue : en attente, signalée une fois, pas acceptée", NEW not in b.tablets
+      and b.status()["pending"] == [{"ip": NEW, "name": "R10"}] and sum("%s (R10) en attente" % NEW in m for m in logs) == 1)
+b.handle(encode_message(P.SYNC, []), (NEW, 9301))
+check("en attente : ses gestes sont ignorés", NEW not in b.tablets)
+b.decide(NEW, True)
+b.handle(hello, (NEW, 9301))
+check("autorisée : acceptée au hello suivant, plus en attente", NEW in b.tablets and NEW in b.allow
+      and b.status()["pending"] == [])
+b.handle(hello, (OTHER, 9301))
+b.decide(OTHER, False)
+b.handle(hello, (OTHER, 9301))
+check("refusée : ignorée, ni en attente ni acceptée", OTHER not in b.tablets and b.status()["pending"] == []
+      and b.status()["denied"] == [OTHER])
+b.own = {OWN}
+b.handle(hello, (OWN, 9301))
+check("adresse réseau du PC : acceptée d'office", OWN in b.tablets)
+with b.lock:
+    for ip in (NEW, OWN):
+        b.tablets.pop(ip, None)
 
 # actions : fonction fournie par Gain Recall, erreur renvoyée à la tablette
 calls = []
@@ -158,8 +181,9 @@ got, _o = drain(0.3)
 check("état en erreur : le pont tient (dernier état gardé)", b.is_alive() and any("illisible" in m for m in logs)
       and "/xgr/console" in got)
 stt = b.status()
-check("diagnostic : écoute, paquets reçus, dernier, refusées", stt["listen"].startswith("127.0.0.1:") and stt["rx"] > 5
-      and stt["last"]["ip"] == "127.0.0.1" and stt["refused"] == ["192.168.1.50"] and len(stt["tablets"]) == 1)
+check("diagnostic : écoute, paquets reçus, dernier, autorisées, refusées", stt["listen"].startswith("127.0.0.1:")
+      and stt["rx"] > 5 and stt["last"]["ip"] == "127.0.0.1" and stt["allow"] == [NEW] and stt["denied"] == [OTHER]
+      and len(stt["tablets"]) == 1)
 b.forget_lost(time.time() + P.LOST_S + 1)
 check("tablette oubliée après LOST_S", b.snapshot() == [] and any("partie" in m for m in logs))
 b.stop()

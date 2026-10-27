@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a3"
+APP_VERSION = "3.2.0-a4"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -2483,7 +2483,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
-        if p in ("/api/quit", "/api/autostart", "/api/show"):
+        if p in ("/api/quit", "/api/autostart", "/api/show", "/api/touchosc/allow"):
             # le PC de l'appli seulement (pas une tablette) : quitter, lancement avec Windows, ré-afficher
             if not (self.client_address[0] in ("127.0.0.1", "::1")
                     and self.headers.get("Host", "") in ALLOWED_HOSTS):
@@ -2494,6 +2494,8 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/autostart":
                 ok, err = autostart_set(bool(d.get("on")))
                 return self._json({"ok": ok, "error": err, "on": AUTOSTART["on"]})
+            if p == "/api/touchosc/allow":
+                return self._json(touchosc_decide(str(d.get("ip", "")), bool(d.get("allow"))))
             show_app()
             return self._json({"ok": True})
         if p == "/api/lang":
@@ -3616,6 +3618,22 @@ def app_data_dir():
     return os.getcwd()
 
 
+def touchosc_decide(ip, allow):
+    """Reponse a « Autoriser la tablette ? » (float) : oui = retenue dans les reglages (touchosc_allow), non = ignoree
+    jusqu'au prochain lancement (rien d'enregistre)."""
+    if TOUCHOSC is None or not ip:
+        return {"ok": False}
+    TOUCHOSC.decide(ip, allow)
+    s = load_settings()
+    known = [x for x in (s.get("touchosc_allow") or []) if x != ip]
+    s["touchosc_allow"] = known + ([ip] if allow else [])
+    try:
+        save_settings(s)
+    except OSError:
+        return {"ok": False, "error": "reglages non enregistres"}
+    return {"ok": True}
+
+
 def load_settings():
     try:
         with open(os.path.join(app_data_dir(), SETTINGS_FILE), "r", encoding="utf-8-sig") as f:
@@ -3802,11 +3820,11 @@ def main():
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
     ap.add_argument("--touchosc-port", type=int, default=9300,
                     help="port UDP des tablettes TouchOSC (defaut 9300 ; 0 = desactive)")
-    ap.add_argument("--touchosc-lan", action="store_true",
-                    help="ecoute les tablettes TouchOSC sur le reseau (defaut : TouchOSC du PC en serveur, local "
-                         "seulement) ; adresses a autoriser avec --touchosc-allow")
+    ap.add_argument("--touchosc-local", action="store_true",
+                    help="tablettes TouchOSC : n'ecoute que ce PC (127.0.0.1) au lieu du reseau")
     ap.add_argument("--touchosc-allow", default="",
-                    help="adresses IP des tablettes autorisees en mode --touchosc-lan, separees par des virgules")
+                    help="adresses IP de tablettes a autoriser d'office, separees par des virgules (sinon : question "
+                         "a la 1re connexion, reponse retenue)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur (defaut depuis la 3.0.1)")
     ap.add_argument("--browser", action="store_true", help="ouvre aussi la page dans le navigateur au lancement")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
@@ -3992,10 +4010,10 @@ def main():
     threading.Thread(target=stage_loop, daemon=True).start()
     if a.touchosc_port:
         import touchosc.bridge
-        # 27/10 (Joseph) : TouchOSC du PC en serveur -> local par defaut ; reseau en option, liste d'adresses
+        # 27/10 (Joseph) : reseau par defaut, seulement les tablettes autorisees (retenues dans les reglages)
+        allow = list(st.get("touchosc_allow") or []) + [x.strip() for x in a.touchosc_allow.split(",") if x.strip()]
         TOUCHOSC = touchosc.bridge.start(APP_VERSION, merged_snapshot, port=a.touchosc_port,
-                                         lan=a.touchosc_lan and not a.local_only,
-                                         allow=[x.strip() for x in a.touchosc_allow.split(",") if x.strip()])
+                                         lan=not (a.touchosc_local or a.local_only), allow=allow)
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

@@ -73,6 +73,8 @@ function onReceiveOSC(message, connections)
     local version, console, state = args[2].value, args[3].value, args[4].value
     if state == 'ok' then
       show(true, 'Connected to X/M32 Gain Recall ' .. version, 'Console: ' .. console, BLUE)
+    elseif state == 'pending' then
+      show(true, 'Waiting for approval', 'Allow this tablet in X/M32 Gain Recall, on the LV1 PC', ORANGE)
     elseif state == 'old_template' then
       show(true, 'Template out of date', 'Get the template that comes with Gain Recall ' .. version, ORANGE)
     else

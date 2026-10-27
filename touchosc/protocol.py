@@ -1,9 +1,11 @@
 """touchosc/protocol.py — langage OSC entre la tablette (template TouchOSC) et Gain Recall. Fonctions pures, testées.
 
-Mode par défaut (décision de Joseph, 27/10/2026) : TouchOSC du PC de la LV1 en SERVEUR (template, Lua, OSC), tablette
-en CLIENT de TouchOSC. Réglage du TouchOSC du PC (Connections > OSC, UDP) : Host = 127.0.0.1, Send Port = PORT_IN,
-Receive Port = PORT_OUT. Gain Recall n'écoute alors qu'en local. Mode réseau direct (template ouvert sur la tablette,
-Host = IP du PC) en option seulement : --touchosc-lan + liste d'adresses autorisées.
+Chaque TouchOSC (PC ou tablette) fait tourner le template et parle LUI-MÊME à Gain Recall : le « serveur » de TouchOSC
+(réseau de l'éditeur) ne sert qu'à distribuer le document. Réglage (Connections > OSC, UDP) : Host = IP du PC de la LV1
+(127.0.0.1 sur ce PC), Send Port = PORT_IN, Receive Port = PORT_OUT.
+Décision de Joseph (27/10/2026) : Gain Recall écoute sur le RÉSEAU par défaut, mais n'accepte que les tablettes
+autorisées (le PC lui-même toujours) ; une inconnue est « en attente » jusqu'à la réponse à « Autoriser la tablette ? »
+(retenue si oui ; refus valable jusqu'au prochain lancement). --touchosc-local : écoute en 127.0.0.1 seulement.
 Gain Recall répond à l'IP de l'expéditeur sur PORT_OUT (TouchOSC n'envoie pas forcément depuis son port de réception).
 
 Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « template à mettre à jour ») :
@@ -11,7 +13,8 @@ Protocole PROTO (le template envoie le sien dans /xgr/hello : écart -> « templ
     /xgr/hello      i proto, s nom de l'appareil      toutes les secondes (présence) ; 1er hello -> tout l'état
     /xgr/sync                                          renvoyer tout l'état
   Gain Recall -> tablette
-    /xgr/welcome    i proto, s version, s console, s ok|old_template|new_template
+    /xgr/welcome    i proto, s version, s console, s ok|old_template|new_template|pending
+                    pending : tablette pas encore autorisée (rien d'autre ne lui est envoyé)
     état (envoyé quand il change, tout à l'arrivée et sur /xgr/sync) : voir state_messages()
     /xgr/notify     s texte                            message ponctuel (erreur d'une action…)
 """
@@ -52,8 +55,9 @@ def console_text(state):
     return str(info.get("name") or info.get("model") or "X32")
 
 
-def welcome(proto, version, state):
-    return WELCOME, [("i", PROTO), ("s", version), ("s", console_text(state)), ("s", template_state(proto))]
+def welcome(proto, version, state, pending=False):
+    return WELCOME, [("i", PROTO), ("s", version), ("s", console_text(state) if not pending else ""),
+                     ("s", "pending" if pending else template_state(proto))]
 
 
 def state_messages(state, tablets=1):
@@ -86,6 +90,6 @@ def parse_action(address, args):
     return None
 
 
-def allowed(ip, allow):
-    """Expéditeur accepté ? Le PC lui-même toujours (TouchOSC serveur en local) ; sinon seulement la liste."""
-    return ip.startswith("127.") or ip == "::1" or ip in (allow or ())
+def allowed(ip, allow, own=()):
+    """Expéditeur accepté ? Le PC lui-même toujours (127.x, ou une de ses adresses réseau `own`) ; sinon la liste."""
+    return ip.startswith("127.") or ip == "::1" or ip in (own or ()) or ip in (allow or ())

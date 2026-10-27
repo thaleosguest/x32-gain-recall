@@ -1,8 +1,9 @@
 """touchosc/bridge.py — pont UDP entre les tablettes TouchOSC et Gain Recall (3.2, plan validé par Joseph le 27/10/2026).
 
-Un fil : écoute PORT_IN (127.0.0.1 par défaut : TouchOSC du PC en serveur, tablettes en clients de TouchOSC ; réseau
-avec --touchosc-lan, expéditeurs limités à une liste), retient chaque tablette à son /xgr/hello et lui répond sur
-PORT_OUT. Toutes les PUBLISH_EVERY s, l'état de Gain Recall (`state_fn`) est traduit en messages
+Un fil : écoute PORT_IN (réseau par défaut, décision de Joseph du 27/10 ; 127.0.0.1 avec --touchosc-local), retient
+chaque tablette AUTORISÉE à son /xgr/hello et lui répond sur PORT_OUT. Le PC lui-même est toujours accepté ; une
+inconnue est mise en attente (`pending`, welcome « pending », rien d'autre) jusqu'à `decide(ip, oui/non)` (question
+« Autoriser la tablette ? » du float) ; refusée = ignorée jusqu'au prochain lancement. Toutes les PUBLISH_EVERY s, l'état de Gain Recall (`state_fn`) est traduit en messages
 (protocol.state_messages) et chaque tablette ne reçoit que ce qui a changé pour ELLE (tout à son arrivée ou sur
 /xgr/sync). Les gestes passent par protocol.parse_action (liste fermée) puis par `actions` {nom: fonction} fournies
 par x32_gain_recall (mêmes fonctions que l'API web : rien d'importé d'ici, testable avec des fausses).
@@ -29,7 +30,9 @@ class Bridge(threading.Thread):
         self.port = self.sock.getsockname()[1]
         self.lock = threading.Lock()
         self.tablets = {}        # ip -> {"name", "proto", "seen", "sent": {adresse: arguments déjà envoyés}}
-        self.refused = set()     # adresses refusées déjà signalées au journal
+        self.pending = {}        # ip -> {"name", "seen"} : tablettes inconnues qui attendent une réponse
+        self.denied = set()      # refusées pendant ce lancement
+        self.own = local_addresses()
         self.rx, self.last_rx = 0, None   # diagnostic (27/10, R10 muette) : paquets reçus, dernier (ip, adresse, instant)
         self._state, self._published = {}, 0.0
         self._stop = threading.Event()
@@ -83,10 +86,18 @@ class Bridge(threading.Thread):
         ip = addr[0]
         self.rx += 1
         self.last_rx = (ip, address, time.time())
-        if not P.allowed(ip, self.allow):
-            if ip not in self.refused:
-                self.refused.add(ip)
-                self.log("TouchOSC : %s refusée (pas dans --touchosc-allow)" % ip)
+        if not P.allowed(ip, self.allow, self.own):
+            if ip in self.denied or address != P.HELLO:
+                return
+            hello = P.parse_hello(args)
+            if hello is None:
+                return
+            with self.lock:
+                new = ip not in self.pending
+                self.pending[ip] = {"name": hello[1], "seen": time.time()}
+            if new:
+                self.log("TouchOSC : tablette %s (%s) en attente d'autorisation" % (ip, hello[1]))
+            self.send(ip, *P.welcome(hello[0], self.version, {}, pending=True))
             return
         if address == P.HELLO:
             hello = P.parse_hello(args)
@@ -127,12 +138,28 @@ class Bridge(threading.Thread):
             self.notify(ip, str(err))
         self._published = 0.0                # retour visible tout de suite
 
+    def decide(self, ip, ok):
+        """Réponse à « Autoriser la tablette ? » : oui -> acceptée (elle reçoit tout à son prochain hello), non ->
+        ignorée jusqu'au prochain lancement. La liste retenue est enregistrée par x32_gain_recall."""
+        with self.lock:
+            self.pending.pop(ip, None)
+            if ok:
+                self.allow.add(ip)
+                self.denied.discard(ip)
+            else:
+                self.denied.add(ip)
+                self.allow.discard(ip)
+                self.tablets.pop(ip, None)
+        self.log("TouchOSC : tablette %s %s" % (ip, "autorisée" if ok else "refusée (jusqu'au prochain lancement)"))
+
     def forget_lost(self, now=None):
         now = time.time() if now is None else now
         with self.lock:
             for ip in [ip for ip, t in self.tablets.items() if now - t["seen"] > P.LOST_S]:
                 del self.tablets[ip]
                 self.log("TouchOSC : tablette %s partie" % ip)
+            for ip in [ip for ip, t in self.pending.items() if now - t["seen"] > P.LOST_S]:
+                del self.pending[ip]           # partie sans réponse : la question tombe
 
     def snapshot(self):
         """Tablettes vues : [{"ip", "name", "proto"}]."""
@@ -140,10 +167,14 @@ class Bridge(threading.Thread):
             return [{"ip": ip, "name": t["name"], "proto": t["proto"]} for ip, t in sorted(self.tablets.items())]
 
     def status(self):
-        """État du pont pour /api/state["touchosc"] : écoute, tablettes, refusées, paquets reçus et dernier reçu."""
+        """État du pont pour /api/state["touchosc"] : écoute, autorisées, tablettes, en attente (question du float),
+        refusées, paquets reçus et dernier reçu."""
         last = self.last_rx
+        with self.lock:
+            pending = [{"ip": ip, "name": t["name"]} for ip, t in sorted(self.pending.items())]
+            allow, denied = sorted(self.allow), sorted(self.denied)
         return {"listen": "%s:%d" % (self.sock.getsockname()[0], self.port), "reply_port": self.reply_port,
-                "allow": sorted(self.allow), "tablets": self.snapshot(), "refused": sorted(self.refused),
+                "allow": allow, "tablets": self.snapshot(), "pending": pending, "denied": denied,
                 "rx": self.rx, "last": {"ip": last[0], "address": last[1], "ago": round(time.time() - last[2], 1)}
                 if last else None}
 
@@ -173,9 +204,17 @@ class Bridge(threading.Thread):
             pass
 
 
-def start(version, state_fn, port=P.PORT_IN, lan=False, allow=(), actions=None, log=print):
-    """Pont démarré, ou None (port pris, réseau absent) : Gain Recall continue sans tablette. Local (127.0.0.1) par
-    défaut ; lan : toutes les interfaces, expéditeurs limités à `allow` (+ le PC lui-même)."""
+def local_addresses():
+    """Adresses IPv4 de ce PC (Wi-Fi, Ethernet, Tailscale…) : un TouchOSC du PC qui passe par l'une d'elles est accepté."""
+    try:
+        return set(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        return set()
+
+
+def start(version, state_fn, port=P.PORT_IN, lan=True, allow=(), actions=None, log=print):
+    """Pont démarré, ou None (port pris, réseau absent) : Gain Recall continue sans tablette. Réseau par défaut,
+    tablettes limitées à `allow` (+ le PC lui-même, + celles autorisées ensuite) ; lan False : 127.0.0.1 seulement."""
     try:
         b = Bridge(version, state_fn, port=port, bind="0.0.0.0" if lan else "127.0.0.1", allow=allow,
                    actions=actions, log=log)
