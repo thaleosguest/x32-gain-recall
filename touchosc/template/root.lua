@@ -51,46 +51,6 @@ end
 -- Navigation (couches de la LV1, 27/10) : modes proposés, mode et couche affichés, noms des 8 couches du mode
 local navKinds, navKind, navIndex = '', '', -1
 
--- Page SCENES (phase 3a) : la liste entière arrive de Gain Recall ; page affichée et sélection sont sur la tablette
--- (libellés cachés sc_off / sc_sel / sc_selid, écrits par les boutons de la page). Sélection gardée par id.
-local SC_ROWS = 12
-local scNames, scInfo, scIds, scCount = {}, {}, {}, 0
-local scSelId, scDirty, scLastOff = '', true, nil
-local SC_INK = Color(17 / 255, 17 / 255, 17 / 255, 1)       -- texte sur la ligne sélectionnée (bleue)
-
-function paintScenes(off)
-  if off > 0 and off >= scCount then
-    off = 0
-    c.sc_off.values.text = '0'
-  end
-  scLastOff = off
-  local selIndex = nil
-  for n = 1, scCount do
-    if scIds[n] == scSelId then selIndex = n end
-  end
-  if selIndex == nil and scSelId ~= '' then           -- scène supprimée sur le PC : plus de sélection
-    scSelId = ''
-    c.sc_selid.values.text = ''
-  end
-  for r = 1, SC_ROWS do
-    local n = off + r
-    local on = n <= scCount
-    local sel = on and n == selIndex
-    c['sc_row' .. r .. '_name'].values.text = on and (scNames[n] or '') or ''
-    c['sc_row' .. r .. '_info'].values.text = on and (scInfo[n] or '') or ''
-    c['sc_row' .. r].color = sel and BLUE or DARK
-    c['sc_row' .. r .. '_name'].textColor = sel and SC_INK or TEXT
-    c['sc_row' .. r .. '_b'].interactive = on
-  end
-  if scCount == 0 then
-    c.sc_pageinfo.values.text = 'No scene yet: SAVE NEW stores the current gains'
-  else
-    c.sc_pageinfo.values.text = string.format('%d-%d / %d', off + 1, math.min(off + SC_ROWS, scCount), scCount)
-  end
-  c.sc_sel_name.values.text = selIndex and (scNames[selIndex] or '') or 'No scene selected'
-  c.sc_sel_info.values.text = selIndex and (scInfo[selIndex] or '') or ''
-end
-
 -- Commandes de la LV1 (phase 5a, lecture seule) : « gK_ » pour une tranche, « lr_ » pour LR. Couleurs d'état comme la
 -- LV1 : MUTE actif rouge, CUE / Ø / entrée sélectionnée bleus ; tout gris tant que la LV1 n'est pas connectée.
 local OFF = Color(90 / 255, 90 / 255, 90 / 255, 1)
@@ -243,20 +203,6 @@ function init()
     c['g' .. k .. '_num'].textAlignH = AlignH.RIGHT
   end
   self:findByName('lr_num', true).textAlignH = AlignH.RIGHT
-  for _, name in ipairs({ 'sc_sel', 'sc_off', 'sc_selid', 'sc_count', 'sc_last', 'sc_undo_l', 'sc_pageinfo',
-                          'sc_sel_name', 'sc_sel_info' }) do
-    c[name] = self:findByName(name, true)
-  end
-  for r = 1, SC_ROWS do
-    for _, part in ipairs({ '', '_name', '_info', '_b' }) do
-      c['sc_row' .. r .. part] = self:findByName('sc_row' .. r .. part, true)
-    end
-    c['sc_row' .. r .. '_name'].textAlignH = AlignH.LEFT
-    c['sc_row' .. r .. '_info'].textAlignH = AlignH.RIGHT
-  end
-  for _, name in ipairs({ 'sc_title', 'sc_sel_name', 'sc_sel_info', 'sc_last', 'sc_help', 'rt_title' }) do
-    self:findByName(name, true).textAlignH = AlignH.LEFT
-  end
   for _, part in ipairs(MIX_PARTS) do
     c['lr_' .. part] = self:findByName('lr_' .. part, true)       -- nil pour ce que LR n'a pas (pan, Trim, A / B…)
   end
@@ -299,22 +245,6 @@ function update()
   if now - lastHello >= HELLO_MS then              -- en PREMIER : même si la suite plante, Gain Recall nous voit
     lastHello = now
     sendOSC('/xgr/hello', PROTO, 'TouchOSC')
-  end
-  -- page SCENES : ligne touchée (sc_sel = n° de ligne), page changée (sc_off), liste reçue
-  local off = tonumber(c.sc_off.values.text) or 0
-  local sel = c.sc_sel.values.text
-  if sel ~= '' then
-    c.sc_sel.values.text = ''
-    local id = scIds[off + (tonumber(sel) or 0)]
-    if id then
-      scSelId = id
-      c.sc_selid.values.text = id
-    end
-    scDirty = true
-  end
-  if scDirty or off ~= scLastOff then
-    scDirty = false
-    paintScenes(off)
   end
   local alive = lastSeen ~= nil and now - lastSeen < LOST_MS
   if not alive and shown ~= false then
@@ -427,28 +357,6 @@ function onReceiveOSC(message, connections)
   local lf = path:match('^/xgr/lr/(%a+)$')
   if lf then
     setMix('lr_', lf, args[1].value)
-    return true
-  end
-  if path == '/xgr/sc/count' then
-    scCount = math.floor(args[1].value)
-    c.sc_count.values.text = tostring(scCount)
-    scDirty = true
-    return true
-  end
-  local sn, sf = path:match('^/xgr/sc/(%d+)/(%a+)$')
-  if sn then
-    local n = tonumber(sn)
-    if sf == 'name' then scNames[n] = args[1].value elseif sf == 'info' then scInfo[n] = args[1].value
-    elseif sf == 'id' then scIds[n] = args[1].value end
-    scDirty = true
-    return true
-  end
-  if path == '/xgr/sc/last' then
-    c.sc_last.values.text = args[1].value
-    return true
-  end
-  if path == '/xgr/sc/canundo' then
-    c.sc_undo_l.textColor = (math.floor(args[1].value) == 1) and TEXT or GREY
     return true
   end
   if path == '/xgr/live' then

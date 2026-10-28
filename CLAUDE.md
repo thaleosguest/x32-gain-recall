@@ -607,6 +607,11 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   tour + `REFRESH_PER_TICK` 15 messages déjà envoyés renvoyés en tournant (tout l'état repasse en ~3-4 s). Template
   inchangé depuis l'a17 (seul l'exe change). Tests : `REFRESH_PER_TICK = 0` pour les vérifications « seulement ce qui a
   changé » ; renvoyer un hello dans les blocs longs (tablette oubliée après LOST_S).
+- **a19 (28/10, décision de Joseph : « focus sur le mix », publication ensuite)** : pages SCENES et ROUTING RETIRÉES
+  de la tablette (onglets, `tab.lua`, `recall.lua`, Lua des scènes, messages `/xgr/sc/*`, actions scene_*, côté serveur
+  `touchosc_scene` / `api_local` / `recall_text`, `presets` de `touchosc_state`). Code d'origine : commit de l'a13
+  (40a2195) si on les remet. Template = page Mixer seule ; FOLLOW LV1 à gauche de la rangée du haut ; script racine
+  11,9 Ko. Les phases 3b (routing) et 4 (stage patch) sont mises de côté.
 - **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
   en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
   (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`

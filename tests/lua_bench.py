@@ -180,7 +180,7 @@ def run(messages, drop=None):
 
 
 def sample_messages():
-    """Messages réalistes : welcome, puis tout l'état d'une page (couche Masters avec LR / C / M, entrées, scènes)."""
+    """Messages réalistes : welcome, puis tout l'état d'une page (couche Masters avec LR / C / M, entrées)."""
     sets80 = {"sets": {"input": [("Ch 1-16", [(0, i) for i in range(16)])],
                        "mix": [("Groups", [(1, i) for i in range(16)]), ("Masters", [(3, 0), (4, 0), (5, 0), None, (7, 0)])],
                        "custom0": [("Page-1", [(0, 61), None, (6, 0)])]},
@@ -192,7 +192,6 @@ def sample_messages():
     state = {"connected": True, "info": {"name": "X32"}, "lv1_live": True, "lv1_sets": sets80, "lv1_mixer": mixer,
              "exp_map": {32: 1, 33: 2}, "lv1_sources": {"1": [1, 2]}, "gains": [10.0] * 128, "phantom": [0] * 128,
              "lv1_channels": {"1": {"name": "P170", "label": "P170", "color": "#FF4F4F", "input": "A"}},
-             "presets": [{"id": "a1", "name": "Show 1", "created": "2026-10-27T14:32:10"}], "can_undo": True,
              "last_recall": {"name": "Show 1", "sent_gain": 2, "verified": True, "bad": []},
              "consoles": [{"n": 0, "card": 1, "connected": True}]}
     msgs = [P.welcome(P.PROTO, "3.2.0", state)]
