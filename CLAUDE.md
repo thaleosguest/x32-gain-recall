@@ -612,6 +612,14 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `touchosc_scene` / `api_local` / `recall_text`, `presets` de `touchosc_state`). Code d'origine : commit de l'a13
   (40a2195) si on les remet. Template = page Mixer seule ; FOLLOW LV1 à gauche de la rangée du haut ; script racine
   11,9 Ko. Les phases 3b (routing) et 4 (stage patch) sont mises de côté.
+- **a20 (28/10, captures de Joseph : bandeaux des bus gris en Mix / Custom)** : la télécommande n'envoie les
+  `/Notify/TrackColor` des bus qu'au hasard des connexions (sondes : 150, 27 ou 0 ; ni `/Get/Aux/Tracks` ni
+  `/Get/Layers` ne les redemandent). Couleur des bus lue dans la BASE : `object.obj_type` = n° de groupe OSC (1 Groups,
+  2 Fx, 3 LR, 4 C, 5 M, 6 Matrix, 7 Cue, 8 Talk Back, 12 Link DCA, 25 Mon), param 592 ; pas de ligne = couleur d'usine
+  du type `channelinfo.BUS_DEFAULT_COLOR` (relevée : Groups 11, Fx 2, masters / Matrix / Cue / TB 8, Link 24, Mon 3).
+  `read_bus_colors` -> `layer["_bus_pal"]` -> `PatchMap.bus_colors()` -> `touchosc_state()["lv1_bus_pal"]` ; la vue prend
+  la base d'abord, puis la télécommande. Placement des tranches vérifié = jeux annoncés par la LV1 (Custom Page-1 : In 62,
+  3 vides, LR, vide, Matrix 1-2). Template inchangé depuis l'a19.
 - **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
   en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
   (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`

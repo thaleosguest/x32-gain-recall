@@ -207,7 +207,8 @@ def gain_page(state, surface="mixer1", view=None):
         g, c = key
         if g != 0:                                   # bus / master : pas de préampli X32, pas de Trim / Ø / A-B
             t = mixer.get((g, c)) or {}
-            pal = t.get("pal")
+            # couleur : base de la LV1 d'abord (complète, 28/10), sinon la télécommande (qui ne l'envoie qu'au hasard)
+            pal = (state.get("lv1_bus_pal") or {}).get((g, c), t.get("pal"))
             color = (color_for(pal) or "").lstrip("#").upper() if pal is not None else ""
             name = t.get("name") or ""
             strips.append({"ch": c + 1, "key": (g, c), "kind": "ro" if g in MASTERS_RO else "bus", "label": name,

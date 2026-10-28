@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a19"
+APP_VERSION = "3.2.0-a20"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -3626,6 +3626,7 @@ def touchosc_state():
     s["lv1_mixer"] = MIXER.snapshot() if MIXER else {}
     s["lv1_sets"] = MIXER.layers_snapshot() if MIXER else {}
     s["lv1_live"] = bool(MIXER_REMOTE and MIXER_REMOTE.connected())
+    s["lv1_bus_pal"] = LV1.bus_colors() if LV1 else {}
     return s
 
 

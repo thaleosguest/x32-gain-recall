@@ -216,6 +216,21 @@ b1 = views.gain_page(dict(gstate, lv1_count=64), view=("input", 1))
 check("sans jeu de la LV1 : banques de secours ; vue fixe Ch 17-32", b1["title"] == "Ch 17-32" and b1["follow"] is False
       and b1["index"] == 1 and b1["kind"] == "input" and b1["strips"][0]["ch"] == 17 and b1["kinds"] == ["input"]
       and b1["names"] == ["Ch 1-16", "Ch 17-32", "Ch 33-48", "Ch 49-64", "", "", "", ""])
+# couleur des bus (28/10) : base de la LV1 (obj_type = groupe OSC, param 592, sinon couleur d'usine du type), prioritaire
+import sqlite3
+from lv1 import channelinfo
+db = sqlite3.connect(":memory:")
+db.executescript("""CREATE TABLE object (id INTEGER, obj_type INTEGER, obj_index INTEGER);
+CREATE TABLE snapshot_chainer_params (chainer_id INTEGER, snapshot_id INTEGER, param_id INTEGER, param_value REAL);
+INSERT INTO object VALUES (1, 0, 0), (2, 6, 0), (3, 6, 1), (4, 25, 0), (5, 3, 0), (6, 11, 0);
+INSERT INTO snapshot_chainer_params VALUES (2, -1, 592, 20.0), (1, -1, 592, 5.0), (3, 7, 592, 1.0);""")
+check("couleur des bus lue dans la base (sans ligne : couleur d'usine ; entrées et sorties ignorées)",
+      channelinfo.read_bus_colors(db) == {(6, 0): 20, (6, 1): 8, (25, 0): 3, (3, 0): 8})
+bst = {"lv1_sets": {"sets": {"mix": [("Masters", [(6, 0), (6, 1), (25, 0)])]}, "shown": {}},
+       "lv1_mixer": {(6, 0): {"name": "STUDIO", "pal": 1}, (6, 1): {"name": "SALON", "pal": 4}, (25, 0): {"name": "Mon 1"}},
+       "lv1_bus_pal": {(6, 0): 20, (25, 0): 3}}
+bcol = [st["color"] for st in views.gain_page(bst, view=("mix", 0))["strips"][:3]]
+check("couleur d'un bus : base d'abord, sinon télécommande", bcol == ["E7E7E7", "92C3C7", "1A8E66"])
 check("couche au-delà de la configuration : suit la LV1", views.gain_page(dict(gstate, lv1_count=64), view=("input", 4))["follow"]
       is True)
 # couches de la LV1 (27/10) : jeux vus par la télécommande (80 canaux : Input + Mix, Custom), masters en lecture seule

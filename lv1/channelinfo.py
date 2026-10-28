@@ -47,6 +47,32 @@ def display_name(channel, name):
     return name
 
 
+# Bus / masters (28/10, tablette TouchOSC) : object.obj_type = n° de groupe de la télécommande OSC (1 Groups, 2 Fx, 3 LR,
+# 4 Center, 5 Mono, 6 Matrix, 7 Cue, 8 Talk Back, 12 Link DCA, 25 Mon), couleur = même param 592. Pas de ligne = couleur
+# d'usine du type, relevée sur la LV1 de Joseph (n° annoncé par /Notify/TrackColor pour les bus sans ligne). La
+# télécommande n'envoie ces couleurs qu'au hasard des connexions (tout, une partie ou rien) : la base fait foi.
+BUS_DEFAULT_COLOR = {1: 11, 2: 2, 3: 8, 4: 8, 5: 8, 6: 8, 7: 8, 8: 8, 12: 24, 25: 3}
+
+
+def read_bus_colors(con):
+    """{(groupe, index 0-based): n° de palette} des bus et masters, depuis une COPIE de la session ; {} si illisible."""
+    try:
+        objs = con.execute("SELECT id, obj_type, obj_index FROM object WHERE obj_type IN (%s)"
+                           % ",".join(str(g) for g in BUS_DEFAULT_COLOR)).fetchall()
+        colors = dict(con.execute("SELECT chainer_id, param_value FROM snapshot_chainer_params "
+                                  "WHERE snapshot_id = -1 AND param_id = ?", (PARAM_COLOR,)).fetchall())
+    except Exception:
+        return {}
+    out = {}
+    for oid, g, c in objs:
+        v = colors.get(oid)
+        try:
+            out[(g, c)] = int(v) if v is not None else BUS_DEFAULT_COLOR[g]
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
 def read_channel_info(con):
     """{canal LV1 (1-based): {"name": str, "color": "#RRGGBB" | None}} depuis une connexion ouverte sur
     une COPIE de la session. {} si la session n'a pas ces tables (autre version de LV1)."""

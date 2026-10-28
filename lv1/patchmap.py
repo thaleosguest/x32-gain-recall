@@ -94,6 +94,7 @@ class PatchMap:
     def __init__(self, manual_path=None, session_path=None, devices=DEFAULT_DEVICES, poll=0.5):
         self.card_map = {}             # position de carte LV1 -> n° de console (plusieurs consoles)
         self._cards = []
+        self._bus_pal = {}             # {(groupe, index): n° de palette} des bus (channelinfo.read_bus_colors)
         self.manual_path = manual_path
         self.session_path = session_path
         self.devices = parse_devices(devices) if isinstance(devices, str) else (tuple(devices) if devices else None)
@@ -153,6 +154,7 @@ class PatchMap:
         try:
             routes, info, layer = read_session(f)
             self._cards = (layer or {}).pop("_cards", [])
+            self._bus_pal = (layer or {}).pop("_bus_pal", {})
             chans = pick_sources(routes, self.devices, card_map=self.card_map)
         except (sqlite3.Error, OSError) as e:
             # souvent : copie prise pendant une écriture de la LV1 - on garde le résultat précédent et on
@@ -209,6 +211,11 @@ class PatchMap:
             self.card_map = card_map
             self._session_sig = None          # relire la session avec la nouvelle association
         self.refresh()
+
+    def bus_colors(self):
+        """{(groupe, index): n° de palette} des bus et masters de la LV1 (tablette TouchOSC)."""
+        with self._lock:
+            return dict(self._bus_pal)
 
     def cards(self):
         """Appareils d'E/S du rack de la LV1 : [{"slot", "name", "model"}] (voir session_patch.load_cards)."""
