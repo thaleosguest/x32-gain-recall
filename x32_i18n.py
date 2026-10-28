@@ -286,6 +286,12 @@ EN = {
     "Autoriser la tablette %s (%s) à piloter X/M32 Gain Recall ?": "Allow the tablet %s (%s) to control X/M32 Gain Recall?",
     "Autoriser": "Allow",
     "Refuser": "Deny",
+    "Template TouchOSC…": "TouchOSC template…",
+    "Template TouchOSC": "TouchOSC template",
+    "Ouvrez ce fichier dans TouchOSC sur ce PC, puis activez Editor Network > Server pour les tablettes. OSC : Browse → "
+    "« XM32 Gain Recall », Receive Port 9301.":
+        "Open this file in TouchOSC on this PC, then turn on Editor Network > Server for the tablets. OSC: Browse → "
+        "\"XM32 Gain Recall\", Receive Port 9301.",
     # --- icône près de l'horloge
     "Ouvrir la page": "Open the web page",
     "Afficher le float": "Show the float",

@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.2.0-a20"
+APP_VERSION = "3.2.0-a21"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1746,6 +1746,7 @@ FLOAT_QT = True   # 3.0.0 : float Qt (x32_qt_float.py, multi-touch) ; float tk d
 TOUCHOSC = None   # pont des tablettes TouchOSC (touchosc/bridge.py, 3.2), None si desactive ou port pris
 MIXER = None      # lv1.model.LV1Mixer : etat du mixer de la LV1 pour les tablettes (phase 5), avec sa connexion
 MIXER_REMOTE = None
+MDNS = None       # annonce Zeroconf _osc._udp du pont (touchosc/mdns.py, 28/10) : Browse de TouchOSC
 FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
@@ -2051,6 +2052,29 @@ def open_url(url):
     webbrowser.open(url)
 
 
+TOSC_NAME = "XM32_Gain_Recall_LV1.tosc"
+
+
+def touchosc_template(reveal=True):
+    """Template TouchOSC (28/10, plug and play) : genere par l'appli elle-meme (touchosc/build_tosc.py, toujours de
+    la meme version que l'exe) dans %APPDATA%/X32 Gain Recall/TouchOSC, puis montre dans l'Explorateur. Rend
+    {"ok", "path"} ou {"ok": False, "error"}."""
+    try:
+        from touchosc import build_tosc, tosc
+        folder = os.path.join(app_data_dir(), "TouchOSC")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, TOSC_NAME)
+        tosc.write(build_tosc.build(), path)
+    except (OSError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
+    if reveal and sys.platform == "win32":
+        try:
+            subprocess.Popen(["explorer.exe", "/select,", path], creationflags=_NO_WINDOW)
+        except OSError:
+            pass
+    return {"ok": True, "path": path}
+
+
 def quit_app():
     """Quitter (icone ou float) : arrete le serveur ; le float et l'onglet du navigateur se ferment d'eux-memes
     quand l'appli ne repond plus (voir x32_gain_float._poll et la page)."""
@@ -2062,6 +2086,8 @@ def quit_app():
                 pass
     if TRAY:
         TRAY.stop()
+    if MDNS:
+        MDNS.stop()                # « au revoir » : la tablette retire Gain Recall de sa liste Browse
     if SERVER:
         SERVER.shutdown()
 
@@ -2485,7 +2511,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
-        if p in ("/api/quit", "/api/autostart", "/api/show", "/api/touchosc/allow"):
+        if p in ("/api/quit", "/api/autostart", "/api/show", "/api/touchosc/allow", "/api/touchosc/template"):
             # le PC de l'appli seulement (pas une tablette) : quitter, lancement avec Windows, ré-afficher
             if not (self.client_address[0] in ("127.0.0.1", "::1")
                     and self.headers.get("Host", "") in ALLOWED_HOSTS):
@@ -2498,6 +2524,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": ok, "error": err, "on": AUTOSTART["on"]})
             if p == "/api/touchosc/allow":
                 return self._json(touchosc_decide(str(d.get("ip", "")), bool(d.get("allow"))))
+            if p == "/api/touchosc/template":
+                return self._json(touchosc_template())
             show_app()
             return self._json({"ok": True})
         if p == "/api/lang":
@@ -3950,7 +3978,7 @@ def browse_folder(initial):
 
 
 def main():
-    global STORE, ROUTINGS, STAGE, X32_PORT, TOUCHOSC
+    global STORE, ROUTINGS, STAGE, X32_PORT, TOUCHOSC, MDNS
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--version", action="version", version="%s %s - by %s" % (APP_NAME, APP_VERSION, APP_AUTHOR))
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
@@ -3963,6 +3991,9 @@ def main():
     ap.add_argument("--touchosc-allow", default="",
                     help="adresses IP de tablettes a autoriser d'office, separees par des virgules (sinon : question "
                          "a la 1re connexion, reponse retenue)")
+    ap.add_argument("--touchosc-template", nargs="?", const="", default=None, metavar="FICHIER",
+                    help="ecrit le template TouchOSC de cette version (defaut : %%APPDATA%%/X32 Gain Recall/TouchOSC) "
+                         "puis quitte (installeur, test de la CI)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur (defaut depuis la 3.0.1)")
     ap.add_argument("--browser", action="store_true", help="ouvre aussi la page dans le navigateur au lancement")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
@@ -4027,6 +4058,20 @@ def main():
         ),
     )
     a = ap.parse_args()
+    if a.touchosc_template is not None:                    # avant tout le reste : pas de serveur ni de float
+        if a.touchosc_template:
+            from touchosc import build_tosc, tosc
+            path = os.path.abspath(a.touchosc_template)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tosc.write(build_tosc.build(), path)
+        else:
+            r = touchosc_template(reveal=False)
+            if not r.get("ok"):
+                print(r.get("error"))
+                sys.exit(1)
+            path = r["path"]
+        print(path)
+        return
     global FLOAT_QT
     FLOAT_QT = not a.tk_float
     x32_i18n.set_lang(load_settings().get("lang", "en"))     # 3.0.1 : anglais par défaut, français au choix
@@ -4155,6 +4200,9 @@ def main():
                                          lan=not (a.touchosc_local or a.local_only), allow=allow,
                                          actions={"gain": touchosc_gain, "phantom": touchosc_phantom,
                                                   "lv1": touchosc_lv1})
+        if TOUCHOSC and not (a.touchosc_local or a.local_only):
+            import touchosc.mdns            # 28/10 (Joseph) : Browse de TouchOSC remplit l'adresse et le port d'envoi
+            MDNS = touchosc.mdns.start(TOUCHOSC.port)
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

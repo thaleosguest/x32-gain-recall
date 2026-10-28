@@ -620,6 +620,19 @@ Nommer les branches `dev-X.Y` (pas `vX.Y.Z` : même nom que le tag -> `git push`
   `read_bus_colors` -> `layer["_bus_pal"]` -> `PatchMap.bus_colors()` -> `touchosc_state()["lv1_bus_pal"]` ; la vue prend
   la base d'abord, puis la télécommande. Placement des tranches vérifié = jeux annoncés par la LV1 (Custom Page-1 : In 62,
   3 vides, LR, vide, Matrix 1-2). Template inchangé depuis l'a19.
+- **a21 (28/10, plug and play, décision de Joseph : avant la 3.2.0 ; pare-feu + raccourci TouchOSC dans Total Control
+  0.8)** : **annonce Zeroconf** `touchosc/mdns.py` (répondeur mDNS en Python pur, 224.0.0.251:5353 rejoint sur chaque
+  interface, PTR/SRV/TXT/A, A = adresse du PC sur le réseau de celui qui demande (plus long préfixe : pas l'Ethernet
+  SoundGrid), annonce x2 au démarrage, « au revoir » TTL 0 dans `quit_app`, legacy = réponse directe) : instance
+  « XM32 Gain Recall (NOM-PC) », hôte `xm32-gain-recall-<pc>.local`, port du pont ; seulement en mode réseau. Vérifié sur
+  le réseau réel (réponse à côté de celle de TouchOSC, qui annonce lui-même son port 9301 sous le nom du PC). TouchOSC
+  envoie depuis un AUTRE port que son Receive Port (sockets vus : 9301 + éphémère) : Receive Port 9301 à taper. Test
+  `tests/test_mdns.py`. **Template généré par l'exe** : `touchosc_template()` -> `%APPDATA%/X32 Gain Recall/TouchOSC/
+  XM32_Gain_Recall_LV1.tosc` + Explorateur (`/select`), POST `/api/touchosc/template` (PC seulement), menu du float
+  « Template TouchOSC… » (EN « TouchOSC template… ») + notification de la marche à suivre ; option
+  `--touchosc-template [FICHIER]` (écrit puis quitte : installeur, CI). PyInstaller : `--add-data
+  "touchosc/template;touchosc/template"` + hidden-import touchosc.mdns / build_tosc (bat ET build.yml) ; la CI écrit
+  le template avec l'exe et le joint à la release. Vérifié : exe compilé -> template identique au dépôt.
 - **Phase 1 faite (3.2.0-a2, 27/10)** : décision de Joseph = **mode serveur par défaut** (pont en 127.0.0.1, TouchOSC du PC
   en serveur, OSC Host 127.0.0.1) ; réseau direct en option seulement : `--touchosc-lan` + `--touchosc-allow IP,IP`
   (le PC toujours accepté, inconnu refusé et signalé une fois au journal). Moteur d'état : `protocol.state_messages(état)`

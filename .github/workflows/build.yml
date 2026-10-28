@@ -33,11 +33,13 @@ jobs:
         # --noconsole (2.3.0) : plus de fenetre noire, l'appli vit dans une icone pres de l'horloge (tray.py)
         # 3.0.0 : float Qt (x32_qt_float + x32_qt_panels, importes a la demande) ; tkinter garde pour le float tk
         # de secours (--tk-float)
+        # 3.2.0 : scripts Lua du template TouchOSC embarques (--add-data) : l'exe genere le template (menu du float)
         run: >-
           python -m PyInstaller --onefile --noconsole --uac-admin --hidden-import tkinter
           --hidden-import x32_qt_float --hidden-import x32_qt_panels
           --hidden-import x32_qt_stage --hidden-import lv1.remote --hidden-import lv1.colorclick
-          --hidden-import touchosc.bridge --hidden-import lv1.model
+          --hidden-import touchosc.bridge --hidden-import touchosc.mdns --hidden-import touchosc.build_tosc
+          --hidden-import lv1.model --add-data "touchosc/template;touchosc/template"
           --hidden-import PySide6.QtWidgets --hidden-import PySide6.QtSvg
           --icon assets/icon.ico --name XM32_Gain_Recall_LV1 x32_gain_recall.py
 
@@ -51,6 +53,10 @@ jobs:
             if ($p.ExitCode -ne 0) { throw "XM32_Gain_Recall_LV1.exe $opts : code de sortie $($p.ExitCode)" }
             "OK : $opts"
           }
+          # 3.2.0 : template TouchOSC ecrit par l'exe lui-meme (scripts Lua embarques), publie avec la release
+          $p = Start-Process ./dist/XM32_Gain_Recall_LV1.exe -ArgumentList "--touchosc-template dist/XM32_Gain_Recall_LV1.tosc" -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or -not (Test-Path dist/XM32_Gain_Recall_LV1.tosc)) { throw "template TouchOSC non ecrit" }
+          "OK : template TouchOSC ($((Get-Item dist/XM32_Gain_Recall_LV1.tosc).Length) octets)"
 
       - name: Sommes de controle SHA-256
         shell: pwsh
@@ -59,7 +65,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: XM32_Gain_Recall_LV1-windows
-          path: dist/XM32_Gain_Recall_LV1.exe*
+          path: |
+            dist/XM32_Gain_Recall_LV1.exe*
+            dist/XM32_Gain_Recall_LV1.tosc
 
       - name: Publier la release (tags v* uniquement)
         if: startsWith(github.ref, 'refs/tags/v')
@@ -68,3 +76,4 @@ jobs:
           files: |
             dist/XM32_Gain_Recall_LV1.exe
             dist/XM32_Gain_Recall_LV1.exe.sha256
+            dist/XM32_Gain_Recall_LV1.tosc

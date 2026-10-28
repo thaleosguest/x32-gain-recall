@@ -1672,6 +1672,7 @@ class QtFloat:
         if not self.args.direct:
             e.append((T("Ouvrir la page dans le navigateur"),
                       lambda: xf.open_url("http://127.0.0.1:%d/" % self.args.port)))
+            e.append((T("Template TouchOSC…"), self._touchosc_template))
         e += [(T("Verrouiller l'édition"), self.toggle_lock, self.locked),
               (T("Fond de la fenêtre"), themes),
               ("Language / Langue", [(name, lambda c=code: self.set_language(c), code == x32_i18n.LANG, "radio")
@@ -1732,6 +1733,18 @@ class QtFloat:
             self.autostart = r.get("on")
         else:
             Dialog(self, T("Lancer avec Windows"), r.get("error") or T("Impossible"), T("OK")).ask()
+
+    def _touchosc_template(self):
+        """Template de la tablette (28/10, plug and play) : écrit par l'appli à côté de ses données et montré dans
+        l'Explorateur ; la marche à suivre en notification (toujours devant)."""
+        r = self.backend._post("/api/touchosc/template", {}) or {}
+        if r.get("ok"):
+            self.toast.say(T("Template TouchOSC"), T("Ouvrez ce fichier dans TouchOSC sur ce PC, puis activez Editor "
+                                                     "Network > Server pour les tablettes. OSC : Browse → « XM32 Gain "
+                                                     "Recall », Receive Port 9301."), ok=True, ms=15000)
+        else:
+            Dialog(self, T("Template TouchOSC"), r.get("error") or self.backend.last_error or T("Impossible"),
+                   T("OK")).ask()
 
     def _quit_app(self):
         if Dialog(self, T("Quitter l'appli ?"), T("Le float, la page et la connexion à la console s'arrêtent."),
