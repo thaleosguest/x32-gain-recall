@@ -63,15 +63,19 @@ def parse_zdns(args, src_ip=None):
                 else -50 if ip.startswith("169.254.") else -100 if ip.startswith("127.") else 40)
     ips.sort(key=rank, reverse=True)
     local = _local_ipv4()
-    if (name and name.lower() == socket.gethostname().lower()) or (src_ip in local) or local & set(ips):
+    is_local = bool((name and name.lower() == socket.gethostname().lower()) or (src_ip in local) or local & set(ips))
+    if is_local:
         host = "127.0.0.1"                      # la LV1 tourne sur ce PC (cas normal : même machine que l'appli)
     else:
         host = ips[0] if ips else src_ip
-    return {"host": host, "port": port, "ips": ips, "name": name, "uuid": vals[1]}
+    return {"host": host, "port": port, "ips": ips, "name": name, "uuid": vals[1], "local": is_local}
 
 
-def discover(timeout=4.0):
-    """Écoute les annonces de la LV1 pendant ``timeout`` s ; rend la 1re trouvée (dict de parse_zdns) ou None."""
+def discover(timeout=4.0, wait_local=2.5):
+    """Écoute les annonces de la LV1 pendant ``timeout`` s ; rend celle de CE PC (dict de parse_zdns), sinon une autre,
+    sinon None. Deux LV1 sur le réseau (vu le 02/11/2026 : pc-portable-js et emo-lv1) : la 1re annonce entendue pouvait
+    venir de l'autre PC -> après une annonce d'ailleurs, on écoute encore ``wait_local`` s (une annonce par seconde)."""
+    other, t_other = None, None
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
     try:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -84,7 +88,7 @@ def discover(timeout=4.0):
                 pass
         s.settimeout(0.5)
         end = time.time() + timeout
-        while time.time() < end:
+        while time.time() < end and not (t_other and time.time() - t_other > wait_local):
             try:
                 data, addr = s.recvfrom(8192)
             except socket.timeout:
@@ -95,13 +99,15 @@ def discover(timeout=4.0):
                 continue
             if address == "/zDNS":
                 found = parse_zdns(args, addr[0])
-                if found:
+                if found and found["local"]:
                     return found
+                if found and other is None:
+                    other, t_other = found, time.time()
     except OSError:
-        return None
+        return other
     finally:
         s.close()
-    return None
+    return other
 
 
 class LV1Remote:
