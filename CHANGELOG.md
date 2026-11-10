@@ -2,6 +2,17 @@
 
 Format : [SemVer](https://semver.org/lang/fr/). Historique reconstitué à partir des étapes de développement.
 
+## [3.2.0] — 2026-11-10
+**Tablette TouchOSC** : la page Mixer de la LV1 et les gains X32 sur une tablette, en Wi-Fi.
+- **Template TouchOSC fourni par l'appli** : menu du float → *TouchOSC template…* écrit le fichier `.tosc` de cette version et le montre dans l'Explorateur (aussi joint à chaque release ; `--touchosc-template [FICHIER]` l'écrit sans lancer l'appli).
+- **Page Mixer de la LV1 sur la tablette** : 16 tranches au style de la LV1 (source, A / B, cadre préampli, Ø, Trim, nom, pan, MUTE, fader et vumètre, cue) + LR. **Toutes les couches** : Input / Factory, Mix, Custom (noms de la LV1), **FOLLOW LV1** (suit le Mixer 1) ou couche choisie sur la tablette sans toucher à la LV1.
+- **Gains et 48V X32** au doigt : glisser vertical sur le cadre préampli (0,5 dB par pas, stéréo côte à côte), 48V avec confirmation (« OK? » puis 2e appui).
+- **Commandes de la LV1** : fader, pan, trim, mute, cue (solo), phase. Masters (LR, C, M) en lecture seule.
+- **Plug and play** : l'appli s'annonce sur le réseau (*Browse* dans TouchOSC → « XM32 Gain Recall (nom du PC) »). Une tablette inconnue doit être **autorisée une fois** : le float demande « Allow the tablet … ? ».
+- Ports : l'appli écoute **UDP 9300**, la tablette reçoit sur **9301**. Le pare-feu de Windows doit laisser entrer UDP 9300 (réseau Privé) : l'installeur Total Control for LV1 crée la règle.
+- Options : `--touchosc-port N` (0 = coupé), `--touchosc-local` (ce PC seulement), `--touchosc-allow IP,IP` (tablettes autorisées d'office).
+- **Deux LV1 sur le réseau** : l'appli se connecte d'abord à la LV1 de **son** PC (avant : la première annonce entendue, parfois celle d'un autre PC).
+
 ## [3.1.0] — 2026-10-20
 **STAGE PATCH** : le patch physique de la scène (prises nommées et colorées) jusqu'aux canaux de la LV1.
 - **Fenêtre STAGE PATCH, au style de la LV1** : bouton *Stage Patch* en bas de la colonne Input A / Input B de la page Patch (ou menu du float → *Stage patch…*). Elle se pose sur la zone du patch de la LV1 et se cache quand on quitte la page Patch.

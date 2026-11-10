@@ -53,7 +53,7 @@ import x32_stage
 APP_NAME = "X/M32 Gain Recall for eMotion LV1"
 APP_SHORT = "X/M32 Gain Recall"
 APP_AUTHOR = "Joseph Savigny"
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.2.0"
 X32_PORT = 10023
 GAIN_MIN, GAIN_MAX, GAIN_STEP = -12.0, 60.0, 0.5
 N_HA = 128
@@ -1743,6 +1743,10 @@ def scan_network(timeout=1.5, port=X32_PORT):
 
 
 FLOAT_QT = True   # 3.0.0 : float Qt (x32_qt_float.py, multi-touch) ; float tk de la 2.x en secours (--tk-float)
+TOUCHOSC = None   # pont des tablettes TouchOSC (touchosc/bridge.py, 3.2), None si desactive ou port pris
+MIXER = None      # lv1.model.LV1Mixer : etat du mixer de la LV1 pour les tablettes (phase 5), avec sa connexion
+MIXER_REMOTE = None
+MDNS = None       # annonce Zeroconf _osc._udp du pont (touchosc/mdns.py, 28/10) : Browse de TouchOSC
 FLOAT_PROCS = {}  # floats lances par cette appli : "main", et un par Mixer detache ("MIXER2"...)
 
 
@@ -2048,6 +2052,29 @@ def open_url(url):
     webbrowser.open(url)
 
 
+TOSC_NAME = "XM32_Gain_Recall_LV1.tosc"
+
+
+def touchosc_template(reveal=True):
+    """Template TouchOSC (28/10, plug and play) : genere par l'appli elle-meme (touchosc/build_tosc.py, toujours de
+    la meme version que l'exe) dans %APPDATA%/X32 Gain Recall/TouchOSC, puis montre dans l'Explorateur. Rend
+    {"ok", "path"} ou {"ok": False, "error"}."""
+    try:
+        from touchosc import build_tosc, tosc
+        folder = os.path.join(app_data_dir(), "TouchOSC")
+        os.makedirs(folder, exist_ok=True)
+        path = os.path.join(folder, TOSC_NAME)
+        tosc.write(build_tosc.build(), path)
+    except (OSError, ValueError) as e:
+        return {"ok": False, "error": str(e)}
+    if reveal and sys.platform == "win32":
+        try:
+            subprocess.Popen(["explorer.exe", "/select,", path], creationflags=_NO_WINDOW)
+        except OSError:
+            pass
+    return {"ok": True, "path": path}
+
+
 def quit_app():
     """Quitter (icone ou float) : arrete le serveur ; le float et l'onglet du navigateur se ferment d'eux-memes
     quand l'appli ne repond plus (voir x32_gain_float._poll et la page)."""
@@ -2059,6 +2086,8 @@ def quit_app():
                 pass
     if TRAY:
         TRAY.stop()
+    if MDNS:
+        MDNS.stop()                # « au revoir » : la tablette retire Gain Recall de sa liste Browse
     if SERVER:
         SERVER.shutdown()
 
@@ -2284,6 +2313,7 @@ class Handler(BaseHTTPRequestHandler):
             snap["update"] = dict(UPDATE) if UPDATE["version"] else None
             snap["autostart_ok"] = autostart_command() is not None
             snap["lang"] = x32_i18n.LANG
+            snap["touchosc"] = TOUCHOSC.status() if TOUCHOSC else None   # 3.2 : pont des tablettes
             self._json(snap)
         elif path == "/api/meters":
             self._json(merged_meters())
@@ -2481,7 +2511,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True})
         if p == "/api/scan":
             return self._json({"ok": True, "found": scan_network()})
-        if p in ("/api/quit", "/api/autostart", "/api/show"):
+        if p in ("/api/quit", "/api/autostart", "/api/show", "/api/touchosc/allow", "/api/touchosc/template"):
             # le PC de l'appli seulement (pas une tablette) : quitter, lancement avec Windows, ré-afficher
             if not (self.client_address[0] in ("127.0.0.1", "::1")
                     and self.headers.get("Host", "") in ALLOWED_HOSTS):
@@ -2492,6 +2522,10 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/autostart":
                 ok, err = autostart_set(bool(d.get("on")))
                 return self._json({"ok": ok, "error": err, "on": AUTOSTART["on"]})
+            if p == "/api/touchosc/allow":
+                return self._json(touchosc_decide(str(d.get("ip", "")), bool(d.get("allow"))))
+            if p == "/api/touchosc/template":
+                return self._json(touchosc_template())
             show_app()
             return self._json({"ok": True})
         if p == "/api/lang":
@@ -3614,6 +3648,158 @@ def app_data_dir():
     return os.getcwd()
 
 
+def touchosc_state():
+    """Etat donne au pont TouchOSC : merged_snapshot + mixer de la LV1 (lv1/model.py, phase 5)."""
+    s = merged_snapshot()
+    s["lv1_mixer"] = MIXER.snapshot() if MIXER else {}
+    s["lv1_sets"] = MIXER.layers_snapshot() if MIXER else {}
+    s["lv1_live"] = bool(MIXER_REMOTE and MIXER_REMOTE.connected())
+    s["lv1_bus_pal"] = LV1.bus_colors() if LV1 else {}
+    return s
+
+
+LAYERS_FILE = "lv1_layers_seen.json"   # jeux de couches de la LV1 deja vus (tablette : modes pas affiches)
+
+
+def start_mixer():
+    """Connexion OSC dediee a la LV1 (comme MyFOH ; elle accepte plusieurs telecommandes) qui tient lv1/model.py.
+    Couches : a chaque connexion, /Get/Layers des deux Mixers (la LV1 ne les envoie pas toujours d'elle-meme, essai du
+    27/10) ; les jeux vus sont gardes dans LAYERS_FILE (en 80 canaux, seul le mode affiche sur chaque Mixer arrive)."""
+    global MIXER, MIXER_REMOTE
+    from lv1.model import LV1Mixer
+    from lv1.remote import LV1Remote
+    MIXER = LV1Mixer()
+    path = os.path.join(app_data_dir(), LAYERS_FILE)
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            MIXER.load_sets(json.load(f))
+    except (OSError, ValueError):
+        pass
+    MIXER_REMOTE = LV1Remote(log=lambda m: print("Mixer " + m))
+    MIXER_REMOTE.listeners.append(MIXER.handle)
+    MIXER_REMOTE.start()
+
+    def keep():
+        since, asked, saved = None, 0.0, MIXER.sets_rev
+        while True:
+            time.sleep(1.0)
+            now = time.time()
+            if not MIXER_REMOTE.connected():
+                since = None
+                continue
+            since = since or now
+            # demande 2 s apres la connexion (plus tot, la LV1 l'ignore : essai du 27/10), puis toutes les 5 s tant
+            # qu'un des deux Mixers n'a pas de couche connue
+            missing = [v for v in (0, 1) if v not in MIXER.layers_snapshot()["shown"]]
+            if missing and now - since >= 2.0 and now - asked >= 5.0:
+                asked = now
+                try:
+                    for v in missing:
+                        MIXER_REMOTE.send("/Get/Layers", [("i", v), ("i", 0)])
+                except OSError:
+                    pass
+            if MIXER.sets_rev != saved:
+                saved = MIXER.sets_rev
+                try:
+                    tmp = path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(MIXER.layers_snapshot()["sets"], f, ensure_ascii=False)
+                    os.replace(tmp, path)
+                except OSError:
+                    pass
+    threading.Thread(target=keep, daemon=True, name="lv1-layers").start()
+
+
+LV1_TRIM_RANGE = (-30.0, 30.0)   # comme XTouch-LV1 : la LV1 borne elle-meme et renvoie la vraie valeur
+
+
+LV1_MASTERS_RO = (3, 4, 5)       # LR, C, M : lecture seule sur la tablette (decision de Joseph, 27/10)
+
+
+def touchosc_lv1(g, c, field, value=None):
+    """Geste d'une tablette sur une commande de la LV1 (phase 5b), piste (groupe, canal) : memes commandes que
+    XTouch-LV1 (verifiees chez Joseph). Bascules (mute, solo, phase) d'apres l'etat annonce par la LV1, refusees tant
+    qu'il n'est pas connu. Masters (LR, C, M) refuses : lecture seule (le pont les refuse deja). Trim / phase : entrees
+    seulement. Rend un message d'erreur ou None."""
+    if int(g) in LV1_MASTERS_RO:
+        return "Masters are read-only"
+    if field in ("trim", "phase") and int(g) != 0:
+        return "Trim and phase are on input channels only"
+    if MIXER_REMOTE is None or not MIXER_REMOTE.connected() or MIXER is None:
+        return "LV1 not connected"
+    g, c = int(g), int(c)
+    t = MIXER.snapshot().get((g, c))
+    if t is None:
+        return "Channel not known by the LV1"
+    stereo = 1 if t.get("stereo") else 0
+    try:
+        if field == "fader":
+            db = max(-144.0, min(10.0, round(float(value), 1)))
+            MIXER_REMOTE.send("/Set/Track/Out/Gain", [("i", g), ("i", c), ("d", db)])
+        elif field == "pan":
+            pan = max(-1.0, min(1.0, round(float(value) * 45) / 45.0))
+            MIXER_REMOTE.send("/Set/Track/Pan", [("i", g), ("i", c), ("d", pan * 45.0)])
+        elif field == "trim":
+            trim = max(LV1_TRIM_RANGE[0], min(LV1_TRIM_RANGE[1], round(float(value) * 2) / 2))
+            MIXER_REMOTE.send("/SetTrackTrim", [("i", g), ("i", c), ("i", stereo), ("f", trim)])
+        elif field == "mute":
+            if t.get("mute") is None:
+                return "Mute state not known yet"
+            on = not t["mute"]
+            MIXER_REMOTE.send("/Set/Track/Out/Mute", [("i", g), ("i", c), ("T" if on else "F", on)])
+        elif field == "solo":
+            if t.get("solo") is None:
+                return "Cue state not known yet"
+            MIXER_REMOTE.send("/Set/Solo", [("i", g), ("i", c), ("i", 0 if t["solo"] else 1)])
+        elif field == "phase":
+            if not t.get("phase"):
+                return "Phase state not known yet"
+            on = not any(t["phase"].values())
+            MIXER_REMOTE.send("/SetTrackPhaseState", [("i", g), ("i", c), ("i", stereo), ("i", 1 if on else 0)])
+        else:
+            return None
+    except OSError as e:
+        return "LV1: %s" % e
+    return None
+
+
+def touchosc_gain(idx, db):
+    """Geste de gain d'une tablette (pont TouchOSC, 3.2) : meme chemin que /api/gain. Rend un message d'erreur ou None."""
+    client, i = console_for(idx)
+    if client is None or not client.snapshot()["connected"]:
+        return "Console not connected"
+    return None if client.set_gain(i, float(db)) is not None else "Gain not sent"
+
+
+def touchosc_phantom(idx):
+    """48V d'une tablette (deja confirme sur la tablette) : bascule d'apres l'etat connu de la console, comme /api/phantom."""
+    client, i = console_for(idx)
+    if client is None or not client.snapshot()["connected"]:
+        return "Console not connected"
+    with client.lock:
+        on = client.phantom[i]
+    if on is None:                      # etat pas encore lu : « basculer » l'allumerait a l'aveugle
+        return "48V state not read yet"
+    client.set_phantom(i, not on)
+    return None
+
+
+def touchosc_decide(ip, allow):
+    """Reponse a « Autoriser la tablette ? » (float) : oui = retenue dans les reglages (touchosc_allow), non = ignoree
+    jusqu'au prochain lancement (rien d'enregistre)."""
+    if TOUCHOSC is None or not ip:
+        return {"ok": False}
+    TOUCHOSC.decide(ip, allow)
+    s = load_settings()
+    known = [x for x in (s.get("touchosc_allow") or []) if x != ip]
+    s["touchosc_allow"] = known + ([ip] if allow else [])
+    try:
+        save_settings(s)
+    except OSError:
+        return {"ok": False, "error": "reglages non enregistres"}
+    return {"ok": True}
+
+
 def load_settings():
     try:
         with open(os.path.join(app_data_dir(), SETTINGS_FILE), "r", encoding="utf-8-sig") as f:
@@ -3792,12 +3978,22 @@ def browse_folder(initial):
 
 
 def main():
-    global STORE, ROUTINGS, STAGE, X32_PORT
+    global STORE, ROUTINGS, STAGE, X32_PORT, TOUCHOSC, MDNS
     ap = argparse.ArgumentParser(description=APP_NAME)
     ap.add_argument("--version", action="version", version="%s %s - by %s" % (APP_NAME, APP_VERSION, APP_AUTHOR))
     ap.add_argument("--ip", help="adresse IP de la X32 (pre-remplit le champ)")
     ap.add_argument("--sim", action="store_true", help="demarre un simulateur de X32 et s'y connecte")
     ap.add_argument("--web-port", type=int, default=8032, help="port de l'interface web locale (defaut 8032)")
+    ap.add_argument("--touchosc-port", type=int, default=9300,
+                    help="port UDP des tablettes TouchOSC (defaut 9300 ; 0 = desactive)")
+    ap.add_argument("--touchosc-local", action="store_true",
+                    help="tablettes TouchOSC : n'ecoute que ce PC (127.0.0.1) au lieu du reseau")
+    ap.add_argument("--touchosc-allow", default="",
+                    help="adresses IP de tablettes a autoriser d'office, separees par des virgules (sinon : question "
+                         "a la 1re connexion, reponse retenue)")
+    ap.add_argument("--touchosc-template", nargs="?", const="", default=None, metavar="FICHIER",
+                    help="ecrit le template TouchOSC de cette version (defaut : %%APPDATA%%/X32 Gain Recall/TouchOSC) "
+                         "puis quitte (installeur, test de la CI)")
     ap.add_argument("--no-browser", action="store_true", help="n'ouvre pas le navigateur (defaut depuis la 3.0.1)")
     ap.add_argument("--browser", action="store_true", help="ouvre aussi la page dans le navigateur au lancement")
     ap.add_argument("--no-float", action="store_true", help="n'ouvre pas la fenetre flottante au demarrage")
@@ -3862,6 +4058,20 @@ def main():
         ),
     )
     a = ap.parse_args()
+    if a.touchosc_template is not None:                    # avant tout le reste : pas de serveur ni de float
+        if a.touchosc_template:
+            from touchosc import build_tosc, tosc
+            path = os.path.abspath(a.touchosc_template)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tosc.write(build_tosc.build(), path)
+        else:
+            r = touchosc_template(reveal=False)
+            if not r.get("ok"):
+                print(r.get("error"))
+                sys.exit(1)
+            path = r["path"]
+        print(path)
+        return
     global FLOAT_QT
     FLOAT_QT = not a.tk_float
     x32_i18n.set_lang(load_settings().get("lang", "en"))     # 3.0.1 : anglais par défaut, français au choix
@@ -3981,6 +4191,18 @@ def main():
     update_card_map()
     threading.Thread(target=consoles_loop, daemon=True).start()
     threading.Thread(target=stage_loop, daemon=True).start()
+    if a.touchosc_port:
+        import touchosc.bridge
+        # 27/10 (Joseph) : reseau par defaut, seulement les tablettes autorisees (retenues dans les reglages)
+        allow = list(st.get("touchosc_allow") or []) + [x.strip() for x in a.touchosc_allow.split(",") if x.strip()]
+        start_mixer()
+        TOUCHOSC = touchosc.bridge.start(APP_VERSION, touchosc_state, port=a.touchosc_port,
+                                         lan=not (a.touchosc_local or a.local_only), allow=allow,
+                                         actions={"gain": touchosc_gain, "phantom": touchosc_phantom,
+                                                  "lv1": touchosc_lv1})
+        if TOUCHOSC and not (a.touchosc_local or a.local_only):
+            import touchosc.mdns            # 28/10 (Joseph) : Browse de TouchOSC remplit l'adresse et le port d'envoi
+            MDNS = touchosc.mdns.start(TOUCHOSC.port)
     start_tray()
     if not a.no_update_check:
         threading.Thread(target=update_loop, daemon=True).start()

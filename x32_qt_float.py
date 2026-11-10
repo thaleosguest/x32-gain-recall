@@ -753,7 +753,7 @@ QPushButton#ok { background: %(okbg)s; color: %(okfg)s; }
 class Dialog(QDialog):
     """Fenêtre au style du float : gros boutons pour le doigt, toujours devant, centrée sur le float."""
 
-    def __init__(self, app, title, text, ok_text, danger=False, edit=None, parent=None):
+    def __init__(self, app, title, text, ok_text, danger=False, edit=None, parent=None, cancel_text=None):
         # parent : fenêtre sur laquelle se centrer (STAGE PATCH). Toujours devant : app._modal, passé en dernier par
         # le float quand il remet ses fenêtres au premier plan (3.1 : un message passé derrière la fenêtre STAGE
         # PATCH bloquait tout, Joseph : « il faut que tous les messages soient devant »)
@@ -786,7 +786,7 @@ class Dialog(QDialog):
             self.edit.returnPressed.connect(self.accept)
             lay.addWidget(self.edit)
         row = QHBoxLayout()
-        c = QPushButton(T("Annuler"))
+        c = QPushButton(cancel_text or T("Annuler"))
         c.setObjectName("cancel")
         c.clicked.connect(self.reject)
         o = QPushButton(ok_text)
@@ -1138,6 +1138,27 @@ class QtFloat:
         col.color = info.get("color")
         col.name = info.get("label") or ("In %d" % ch if ch else "")
 
+    def _ask_tablets(self, snap):
+        """3.2 (décision de Joseph, 27/10) : tablette TouchOSC inconnue -> « Autoriser la tablette ? » (une fois par
+        tablette et par lancement du float) ; oui = retenue par Gain Recall, non = ignorée jusqu'à son prochain
+        lancement. Rien depuis une page détachée (un seul float pose la question)."""
+        if self.args.lv1_window or getattr(self, "_tablet_open", False):
+            return
+        asked = self.__dict__.setdefault("_tablets_asked", set())
+        for t in ((snap or {}).get("touchosc") or {}).get("pending") or []:
+            ip = t.get("ip")
+            if not ip or ip in asked:
+                continue
+            asked.add(ip)
+            self._tablet_open = True
+            try:
+                text = T("Autoriser la tablette %s (%s) à piloter X/M32 Gain Recall ?") % (ip, t.get("name") or "?")
+                ok = Dialog(self, T("Tablette TouchOSC"), text, T("Autoriser"), cancel_text=T("Refuser")).ask()
+                self.backend._post("/api/touchosc/allow", {"ip": ip, "allow": bool(ok)})
+            finally:
+                self._tablet_open = False
+            return
+
     # -- boucle d'état (200 ms) --------------------------------------------------
     def apply_state(self):
         b = self.backend
@@ -1149,6 +1170,7 @@ class QtFloat:
                 b.login(code)
             self._login_open = False
         snap = self.link.snap
+        self._ask_tablets(snap)
         if not self.args.direct:
             if b.reachable:
                 self._server_seen, self._refused_since = True, None
@@ -1650,6 +1672,7 @@ class QtFloat:
         if not self.args.direct:
             e.append((T("Ouvrir la page dans le navigateur"),
                       lambda: xf.open_url("http://127.0.0.1:%d/" % self.args.port)))
+            e.append((T("Template TouchOSC…"), self._touchosc_template))
         e += [(T("Verrouiller l'édition"), self.toggle_lock, self.locked),
               (T("Fond de la fenêtre"), themes),
               ("Language / Langue", [(name, lambda c=code: self.set_language(c), code == x32_i18n.LANG, "radio")
@@ -1710,6 +1733,18 @@ class QtFloat:
             self.autostart = r.get("on")
         else:
             Dialog(self, T("Lancer avec Windows"), r.get("error") or T("Impossible"), T("OK")).ask()
+
+    def _touchosc_template(self):
+        """Template de la tablette (28/10, plug and play) : écrit par l'appli à côté de ses données et montré dans
+        l'Explorateur ; la marche à suivre en notification (toujours devant)."""
+        r = self.backend._post("/api/touchosc/template", {}) or {}
+        if r.get("ok"):
+            self.toast.say(T("Template TouchOSC"), T("Ouvrez ce fichier dans TouchOSC sur ce PC, puis activez Editor "
+                                                     "Network > Server pour les tablettes. OSC : Browse → « XM32 Gain "
+                                                     "Recall », Receive Port 9301."), ok=True, ms=15000)
+        else:
+            Dialog(self, T("Template TouchOSC"), r.get("error") or self.backend.last_error or T("Impossible"),
+                   T("OK")).ask()
 
     def _quit_app(self):
         if Dialog(self, T("Quitter l'appli ?"), T("Le float, la page et la connexion à la console s'arrêtent."),

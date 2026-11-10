@@ -281,6 +281,17 @@ EN = {
     "Couleur différente dans la LV1 : à régler à la main (la LV1 ne laisse pas changer la couleur à distance).":
         "Different color in the LV1: set it by hand (the LV1 does not allow remote color changes).",
     "● orange : couleur LV1 différente, à régler à la main.": "● orange: different LV1 color, set it by hand.",
+    # --- tablette TouchOSC (3.2)
+    "Tablette TouchOSC": "TouchOSC tablet",
+    "Autoriser la tablette %s (%s) à piloter X/M32 Gain Recall ?": "Allow the tablet %s (%s) to control X/M32 Gain Recall?",
+    "Autoriser": "Allow",
+    "Refuser": "Deny",
+    "Template TouchOSC…": "TouchOSC template…",
+    "Template TouchOSC": "TouchOSC template",
+    "Ouvrez ce fichier dans TouchOSC sur ce PC, puis activez Editor Network > Server pour les tablettes. OSC : Browse → "
+    "« XM32 Gain Recall », Receive Port 9301.":
+        "Open this file in TouchOSC on this PC, then turn on Editor Network > Server for the tablets. OSC: Browse → "
+        "\"XM32 Gain Recall\", Receive Port 9301.",
     # --- icône près de l'horloge
     "Ouvrir la page": "Open the web page",
     "Afficher le float": "Show the float",

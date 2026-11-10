@@ -247,6 +247,27 @@ Avec plusieurs X32 / M32 qui ont chacune leur carte dans le rack de la LV1 : flo
 
 Connexion non chiffrée : réseau de confiance seulement, pas le Wi-Fi public d'un festival.
 
+## 9. Tablette TouchOSC (facultatif)
+
+La page Mixer de la LV1 et les gains X32 sur une tablette, avec l'appli **TouchOSC** (Hexler, payante, Android / iPad).
+
+1. **Le template** : menu du float → **TouchOSC template…** (ou raccourci *TouchOSC template* de Total Control for
+   LV1). Le fichier `XM32_Gain_Recall_LV1.tosc` s'affiche dans l'Explorateur. Ouvrez-le dans TouchOSC (sur la tablette,
+   ou sur le PC puis *Editor Network > Server* et, sur la tablette, *Connections > Client*).
+2. **La connexion** (sur la tablette, *Connections > OSC*) : *Browse* → **XM32 Gain Recall (nom du PC)**, ou à la main :
+   UDP, Host = adresse du PC, **Send Port 9300**, **Receive Port 9301**.
+3. **Le pare-feu** : Windows doit laisser entrer **UDP 9300** et le Wi-Fi doit être un réseau **Privé**. L'installeur
+   Total Control for LV1 crée la règle ; sinon, dans un PowerShell administrateur :
+   `netsh advfirewall firewall add rule name=XM32_Gain_Recall_TouchOSC dir=in action=allow protocol=UDP localport=9300 profile=private`
+4. **Autoriser la tablette** : à la première connexion, le float demande *Allow the tablet … ?* → **Allow** (retenu).
+   La tablette affiche *Waiting for approval* en attendant.
+
+Sur la tablette : **FOLLOW LV1** (suit le Mixer 1) ou une couche au choix (Input / Factory, Mix, Custom) sans toucher à
+la LV1. Gain X32 = glisser vertical sur le cadre préampli ; 48V = « OK? » puis 2e appui ; fader, pan, trim, mute, cue,
+phase de la LV1 ; LR, C, M en lecture seule. **SYNC** renvoie tout l'état.
+
+Si le template ne correspond plus à l'appli (après une mise à jour), la tablette le dit : refaites l'étape 1.
+
 ---
 
 ## Lancer avec Windows

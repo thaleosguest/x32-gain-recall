@@ -55,7 +55,7 @@ import sys
 import tempfile
 import time
 
-from .channelinfo import read_channel_info
+from .channelinfo import read_bus_colors, read_channel_info
 from .layers import read_layers
 
 # La carte SoundGrid de la X32/M32 est reconnue par son MODELE (device.description = "DN32-WSG", vu sur
@@ -198,7 +198,10 @@ def read_session(db_path):
         cards = load_cards(con)
         widths = load_channel_widths(con)
         info = read_channel_info(con)
+        bus_pal = read_bus_colors(con)
         selected = load_input_select(con)
+        for ch, i in info.items():                  # entrée A / B, affichée par la tablette TouchOSC (3.2)
+            i["input"] = selected.get(ch, "A")
         layer = read_layers(con)
         cur.execute("""
             SELECT id, dst_cluster_type, dst_cluster_type_index, dst_section_index, dst_channel_index,
@@ -240,6 +243,7 @@ def read_session(db_path):
         channels.setdefault(ch, []).append(g)
     layer = dict(layer or {})
     layer["_cards"] = cards              # transporté avec les couches (pas un champ de canal)
+    layer["_bus_pal"] = bus_pal          # couleurs des bus / masters (tablette TouchOSC, 28/10)
     return channels, info, layer
 
 
